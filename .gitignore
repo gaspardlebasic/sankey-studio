@@ -1,0 +1,17 @@
+# Dépendances
+node_modules/
+
+# Sorties de build
+sankey-app/dist/
+sankey-app/release/
+sankey-flux-visual/dist/
+sankey-flux-visual/.tmp/
+
+# OS
+.DS_Store
+
+# Réglages locaux Claude Code (personnels, non partagés)
+.claude/settings.local.json
+
+# Divers
+*.log

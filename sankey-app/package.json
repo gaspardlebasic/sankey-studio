@@ -1,0 +1,78 @@
+{
+  "name": "sankey-app",
+  "version": "0.1.0",
+  "description": "Éditeur graphique de diagrammes de flux (Sankey) synchronisé avec Excel",
+  "main": "src/main/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node build.mjs && electron .",
+    "serve": "node build.mjs && node serve.mjs",
+    "dist": "node build.mjs && electron-builder --mac",
+    "dist:dir": "node build.mjs && electron-builder --mac --dir",
+    "dist:win": "node build.mjs && electron-builder --win",
+    "dist:all": "node build.mjs && electron-builder --mac --win"
+  },
+  "author": "Mathieu Peychet",
+  "license": "MIT",
+  "build": {
+    "appId": "com.mathieupeychet.sankeystudio",
+    "productName": "Sankey Studio",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/main/**/*",
+      "dist/renderer/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
+      "identity": null
+    },
+    "dmg": {
+      "title": "Sankey Studio ${version}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-${version}-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    }
+  },
+  "dependencies": {
+    "d3-sankey": "^0.12.3",
+    "d3-selection": "^3.0.0",
+    "jszip": "^3.10.1"
+  },
+  "devDependencies": {
+    "@types/d3-sankey": "^0.12.4",
+    "@types/d3-selection": "^3.0.10",
+    "electron": "^32.2.0",
+    "electron-builder": "^24.13.3",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.4.5"
+  }
+}

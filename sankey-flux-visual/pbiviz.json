@@ -1,0 +1,24 @@
+{
+  "visual": {
+    "name": "sankeyFluxVisual",
+    "displayName": "Sankey Flux (colonnes)",
+    "guid": "sankeyFluxVisual80a0d7a675784b43a016497c425ccd1a",
+    "visualClassName": "Visual",
+    "version": "3.2.0.0",
+    "description": "Diagramme de Sankey personnalisable : nœuds arrangés en colonnes (numéro + intitulé définis dans les données), couleur par lien, bordures, type de courbe et mise en forme du texte.",
+    "supportUrl": "https://community.powerbi.com",
+    "gitHubUrl": ""
+  },
+  "apiVersion": "5.11.0",
+  "author": {
+    "name": "Mathieu Peychet",
+    "email": "mathieu.peychet@gmail.com"
+  },
+  "assets": {
+    "icon": "assets/icon.png"
+  },
+  "style": "style/visual.less",
+  "capabilities": "capabilities.json",
+  "dependencies": null,
+  "stringResources": []
+}

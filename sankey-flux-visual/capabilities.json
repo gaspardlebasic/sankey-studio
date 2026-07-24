@@ -1,0 +1,289 @@
+{
+  "privileges": [],
+  "dataRoles": [
+    {
+      "displayName": "Origine",
+      "description": "Nœud de départ du flux (colonne A)",
+      "name": "source",
+      "kind": "Grouping"
+    },
+    {
+      "displayName": "Destination",
+      "description": "Nœud d'arrivée du flux (colonne B)",
+      "name": "destination",
+      "kind": "Grouping"
+    },
+    {
+      "displayName": "Numéro de colonne d'affichage",
+      "description": "Position horizontale (numéro de colonne) du nœud de départ (colonne D)",
+      "name": "columnNumber",
+      "kind": "Grouping"
+    },
+    {
+      "displayName": "Intitulé de colonne",
+      "description": "Titre affiché en haut de la colonne du nœud de départ (colonne C). Laisser vide pour ne pas afficher de titre.",
+      "name": "columnTitle",
+      "kind": "Grouping"
+    },
+    {
+      "displayName": "Valeur du flux",
+      "description": "Épaisseur du lien (colonne E)",
+      "name": "value",
+      "kind": "Measure"
+    },
+    {
+      "displayName": "Couleur du lien",
+      "description": "Couleur de chaque lien : nom CSS (ex. red, orange) ou code hex #RRGGBB (colonne G)",
+      "name": "linkColor",
+      "kind": "Grouping"
+    },
+    {
+      "displayName": "Ordre d'affichage des liens",
+      "description": "Nombre définissant l'ordre vertical (de haut en bas) des liens partant d'un même nœud",
+      "name": "linkOrder",
+      "kind": "GroupingOrMeasure"
+    },
+    {
+      "displayName": "Unité de la valeur",
+      "description": "Texte d'unité affiché après la valeur du flux (ex. tonnes). Peut être une mesure.",
+      "name": "unit",
+      "kind": "GroupingOrMeasure"
+    },
+    {
+      "displayName": "Infobulle / mesure secondaire",
+      "description": "Champs supplémentaires affichés dans l'infobulle (ex. Part en bio, Hypothèses)",
+      "name": "tooltip",
+      "kind": "GroupingOrMeasure"
+    }
+  ],
+  "dataViewMappings": [
+    {
+      "table": {
+        "rows": {
+          "select": [
+            { "for": { "in": "source" } },
+            { "for": { "in": "destination" } },
+            { "for": { "in": "columnNumber" } },
+            { "for": { "in": "columnTitle" } },
+            { "for": { "in": "value" } },
+            { "for": { "in": "linkColor" } },
+            { "for": { "in": "linkOrder" } },
+            { "for": { "in": "unit" } },
+            { "for": { "in": "tooltip" } }
+          ],
+          "dataReductionAlgorithm": {
+            "top": { "count": 30000 }
+          }
+        }
+      }
+    }
+  ],
+  "objects": {
+    "links": {
+      "displayName": "Liens",
+      "properties": {
+        "defaultColor": {
+          "displayName": "Couleur par défaut",
+          "type": { "fill": { "solid": { "color": true } } }
+        },
+        "useDataColors": {
+          "displayName": "Utiliser la couleur des données",
+          "type": { "bool": true }
+        },
+        "useGradient": {
+          "displayName": "Dégradé vers la couleur d'arrivée",
+          "type": { "bool": true }
+        },
+        "opacity": {
+          "displayName": "Opacité (%)",
+          "type": { "numeric": true }
+        },
+        "curveType": {
+          "displayName": "Type de courbe",
+          "type": {
+            "enumeration": [
+              { "displayName": "Courbe", "value": "courbe" },
+              { "displayName": "Ligne droite", "value": "droite" },
+              { "displayName": "Marches", "value": "marches" }
+            ]
+          }
+        },
+        "curvature": {
+          "displayName": "Courbure",
+          "type": { "numeric": true }
+        },
+        "showBorder": {
+          "displayName": "Afficher la bordure",
+          "type": { "bool": true }
+        },
+        "borderColor": {
+          "displayName": "Couleur de bordure",
+          "type": { "fill": { "solid": { "color": true } } }
+        },
+        "borderWidth": {
+          "displayName": "Épaisseur de bordure",
+          "type": { "numeric": true }
+        }
+      }
+    },
+    "nodes": {
+      "displayName": "Nœuds",
+      "properties": {
+        "nodeColor": {
+          "displayName": "Couleur des nœuds",
+          "type": { "fill": { "solid": { "color": true } } }
+        },
+        "colorFromFirstLink": {
+          "displayName": "Couleur = 1er lien sortant",
+          "type": { "bool": true }
+        },
+        "nodeWidth": {
+          "displayName": "Largeur des nœuds",
+          "type": { "numeric": true }
+        },
+        "nodePadding": {
+          "displayName": "Espacement vertical des nœuds",
+          "type": { "numeric": true }
+        }
+      }
+    },
+    "nodeLabels": {
+      "displayName": "Étiquettes des nœuds",
+      "properties": {
+        "show": {
+          "displayName": "Afficher",
+          "type": { "bool": true }
+        },
+        "fontColor": {
+          "displayName": "Couleur du texte",
+          "type": { "fill": { "solid": { "color": true } } }
+        },
+        "fontFamily": {
+          "displayName": "Police",
+          "type": { "formatting": { "fontFamily": true } }
+        },
+        "fontSize": {
+          "displayName": "Taille",
+          "type": { "formatting": { "fontSize": true } }
+        },
+        "bold": {
+          "displayName": "Gras",
+          "type": { "bool": true }
+        },
+        "italic": {
+          "displayName": "Italique",
+          "type": { "bool": true }
+        },
+        "showValue": {
+          "displayName": "Afficher la valeur",
+          "type": { "bool": true }
+        },
+        "position": {
+          "displayName": "Position",
+          "type": {
+            "enumeration": [
+              { "displayName": "À côté du nœud", "value": "cote" },
+              { "displayName": "En dessous du nœud", "value": "dessous" }
+            ]
+          }
+        },
+        "showBackground": {
+          "displayName": "Arrière-plan",
+          "type": { "bool": true }
+        },
+        "backgroundColor": {
+          "displayName": "Couleur d'arrière-plan",
+          "type": { "fill": { "solid": { "color": true } } }
+        },
+        "backgroundOpacity": {
+          "displayName": "Opacité de l'arrière-plan (%)",
+          "type": { "numeric": true }
+        },
+        "wrap": {
+          "displayName": "Retour à la ligne",
+          "type": { "bool": true }
+        },
+        "maxChars": {
+          "displayName": "Longueur max. par ligne (caractères)",
+          "type": { "numeric": true }
+        }
+      }
+    },
+    "columnHeaders": {
+      "displayName": "Titres de colonnes",
+      "properties": {
+        "show": {
+          "displayName": "Afficher",
+          "type": { "bool": true }
+        },
+        "fontColor": {
+          "displayName": "Couleur du texte",
+          "type": { "fill": { "solid": { "color": true } } }
+        },
+        "backgroundColor": {
+          "displayName": "Couleur de fond",
+          "type": { "fill": { "solid": { "color": true } } }
+        },
+        "fontFamily": {
+          "displayName": "Police",
+          "type": { "formatting": { "fontFamily": true } }
+        },
+        "fontSize": {
+          "displayName": "Taille",
+          "type": { "formatting": { "fontSize": true } }
+        },
+        "bold": {
+          "displayName": "Gras",
+          "type": { "bool": true }
+        },
+        "italic": {
+          "displayName": "Italique",
+          "type": { "bool": true }
+        },
+        "marginTop": {
+          "displayName": "Marge au-dessus",
+          "type": { "numeric": true }
+        },
+        "marginBottom": {
+          "displayName": "Marge en dessous",
+          "type": { "numeric": true }
+        }
+      }
+    },
+    "linkValueLabels": {
+      "displayName": "Valeurs des liens",
+      "properties": {
+        "show": {
+          "displayName": "Afficher la valeur du flux",
+          "type": { "bool": true }
+        },
+        "unitText": {
+          "displayName": "Unité (si aucun champ Unité)",
+          "type": { "text": true }
+        },
+        "fontColor": {
+          "displayName": "Couleur du texte",
+          "type": { "fill": { "solid": { "color": true } } }
+        },
+        "fontFamily": {
+          "displayName": "Police",
+          "type": { "formatting": { "fontFamily": true } }
+        },
+        "fontSize": {
+          "displayName": "Taille",
+          "type": { "formatting": { "fontSize": true } }
+        },
+        "bold": {
+          "displayName": "Gras",
+          "type": { "bool": true }
+        },
+        "italic": {
+          "displayName": "Italique",
+          "type": { "bool": true }
+        }
+      }
+    }
+  },
+  "supportsHighlight": false,
+  "suppressDefaultTitle": true
+}
