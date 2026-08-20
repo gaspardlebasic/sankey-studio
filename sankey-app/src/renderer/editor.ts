@@ -3,9 +3,13 @@
 
 import { FlowModel, FlowNode, FlowLink, SankeyOptions, defaultOptions } from "./types";
 import { renderSankey } from "./engine";
+import { openColorPopover, openModal, normalizeHex } from "./ui";
 
 const NODE_W = 132;
 const NODE_H = 38;
+const DOT_R = 6; // rayon des points de liaison
+const DOT_GAP = 15; // écart entre le bord du nœud et son point de liaison
+const PLUS_R = 11;
 const SVGNS = "http://www.w3.org/2000/svg";
 
 // Grille d'édition : colonnes d'affichage (X) × ordre vertical (Y).
@@ -59,7 +63,6 @@ function moveNodeToCell(n: FlowNode, column: number, rank: number): void {
     }
 }
 
-type Mode = "move" | "link";
 type View = "edit" | "preview";
 
 interface Selection {
@@ -69,10 +72,8 @@ interface Selection {
 
 let model: FlowModel = { nodes: [], links: [] };
 let options: SankeyOptions = defaultOptions();
-let mode: Mode = "move";
 let view: View = "edit";
 let selection: Selection = { type: null, id: "" };
-let linkSourceId: string | null = null;
 let projectPath: string | null = null;
 let excelPath: string | null = null;
 let idCounter = 1;
@@ -82,6 +83,15 @@ let syncedNodeIds = new Set<string>();
 let syncedLinkIds = new Set<string>();
 let pendingExcelWrite = false;
 let dirtySinceSync = false; // modifications app non encore poussées vers Excel
+let excelLocked = false; // le classeur est ouvert dans Excel -> édition suspendue
+let lockDialogOpen = false; // évite d'empiler les avertissements
+let lastLockCheck = 0; // limite les relectures du verrou
+let lockMode = ""; // comment le verrou a été déterminé (« refuse » = détection dégradée)
+let pushEnCours = false; // évite qu'une écriture Excel se relance sur elle-même
+
+/** Ce que l'utilisateur essayait de faire quand le verrou l'a arrêté. */
+type LockContexte = "edition" | "ecriture";
+let prefs = defaultPrefs();
 let hiddenFilieres = new Set<string>(); // filières masquées du schéma
 
 interface ExcelNode {
@@ -116,7 +126,10 @@ export function createApp(root: HTMLElement): void {
     window.addEventListener("keydown", onGlobalKey);
     window.addEventListener("resize", render);
 
+    loadPrefs();
     wireExcelWatchers();
+    // Excel peut avoir été fermé pendant que l'app était en arrière-plan.
+    window.addEventListener("focus", () => { refreshExcelLock(); });
 
     // Crochet de test (utilisé pour la vérification hors Electron)
     (window as any).__sankeyTest = {
@@ -125,7 +138,21 @@ export function createApp(root: HTMLElement): void {
         model: () => model,
         refresh: () => { render(); buildSidebar(); },
         setDirty: (v: boolean) => { dirtySinceSync = v; },
-        wireWatchers: () => wireExcelWatchers()
+        wireWatchers: () => wireExcelWatchers(),
+        setExcelLocked: (v: boolean) => { excelLocked = v; buildSidebar(); },
+        setExcelPath: (v: string | null) => { excelPath = v; buildSidebar(); },
+        nodeCount: () => model.nodes.length,
+        prefs: () => prefs,
+        // --- crochets utilisés par tests/run.js ---
+        loadProject: (p: ProjectFile) => {
+            applyProject(p);
+            render();
+            buildSidebar();
+        },
+        links: () => model.links,
+        selection: () => selection,
+        view: () => view,
+        hidden: () => Array.from(hiddenFilieres)
     };
 
     dirtySinceSync = false; // le chargement initial n'est pas une « modification »
@@ -139,24 +166,11 @@ function buildToolbar(): void {
     toolbar.innerHTML = "";
     toolbar.appendChild(btn("＋ Nœud", () => addNode()));
 
-    const moveBtn = btn("✋ Déplacer", () => setMode("move"));
-    const linkBtn = btn("↳ Lier", () => setMode("link"));
-    moveBtn.dataset.role = "move";
-    linkBtn.dataset.role = "link";
-    toolbar.appendChild(moveBtn);
-    toolbar.appendChild(linkBtn);
-
     toolbar.appendChild(sep());
 
-    const editBtn = btn("✎ Édition", () => setView("edit"));
-    const prevBtn = btn("▦ Aperçu", () => setView("preview"));
-    editBtn.dataset.role = "edit";
-    prevBtn.dataset.role = "preview";
-    toolbar.appendChild(editBtn);
-    toolbar.appendChild(prevBtn);
+    toolbar.appendChild(viewToggle());
 
     toolbar.appendChild(sep());
-    toolbar.appendChild(btn("Exemple", () => { loadExample(); render(); buildSidebar(); }));
     const saveBtn = btn("Enregistrer", () => saveProject());
     saveBtn.title = "Écrase le fichier projet ouvert (Cmd+S)";
     toolbar.appendChild(saveBtn);
@@ -174,20 +188,29 @@ function buildToolbar(): void {
     updateToolbarState();
 }
 
-function updateToolbarState(): void {
-    toolbar.querySelectorAll("button[data-role]").forEach(b => {
-        const r = (b as HTMLElement).dataset.role;
-        const active = r === mode || r === view;
-        b.classList.toggle("active", active);
-    });
+/** Édition / Aperçu réunis en une bascule à deux segments. */
+function viewToggle(): HTMLElement {
+    const group = document.createElement("div");
+    group.className = "segmented";
+    group.setAttribute("role", "group");
+    const seg = (label: string, role: View) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "seg";
+        b.textContent = label;
+        b.dataset.role = role;
+        b.addEventListener("click", () => setView(role));
+        group.appendChild(b);
+    };
+    seg("Édition", "edit");
+    seg("Aperçu", "preview");
+    return group;
 }
 
-function setMode(m: Mode): void {
-    mode = m;
-    linkSourceId = null;
-    updateToolbarState();
-    setStatus(m === "link" ? "Mode lien : clique un nœud d'origine puis un nœud de destination." : "");
-    render();
+function updateToolbarState(): void {
+    toolbar.querySelectorAll("button[data-role]").forEach(b => {
+        b.classList.toggle("active", (b as HTMLElement).dataset.role === view);
+    });
 }
 
 function setView(v: View): void {
@@ -198,8 +221,22 @@ function setView(v: View): void {
 
 /* ----------------------------- modèle ------------------------------ */
 
+function idExists(id: string): boolean {
+    return model.nodes.some(n => n.id === id) || model.links.some(l => l.id === id);
+}
+
+/**
+ * Identifiant neuf, garanti libre.
+ *
+ * Le compteur enregistré dans un projet peut être en retard sur les
+ * identifiants réellement présents (réconciliation depuis Excel, fusion de
+ * fichiers…). Réattribuer un identifiant existant corrompt tout : `nodeById`
+ * renvoie alors le mauvais nœud et les liens se raccrochent ailleurs.
+ */
 function newId(prefix: string): string {
-    return `${prefix}${idCounter++}`;
+    let id = `${prefix}${idCounter++}`;
+    while (idExists(id)) id = `${prefix}${idCounter++}`;
+    return id;
 }
 
 /** Filière par défaut d'un nouveau nœud (celle du nœud sélectionné). */
@@ -212,7 +249,7 @@ function currentFiliereForNew(): string {
 }
 
 function addNode(column?: number, rank?: number): void {
-    snapshot();
+    if (!beginEdit()) return;
     // Colonne : donnée (double-clic) sinon colonne du nœud de référence + 1
     if (column === undefined) {
         const ref =
@@ -244,7 +281,7 @@ function addLink(sourceId: string, targetId: string): void {
     if (sourceId === targetId) return;
     const exists = model.links.some(l => l.source === sourceId && l.target === targetId);
     if (exists) return;
-    snapshot();
+    if (!beginEdit()) return;
     const l: FlowLink = {
         id: newId("l"),
         source: sourceId,
@@ -261,7 +298,7 @@ function addLink(sourceId: string, targetId: string): void {
 
 function deleteSelected(): void {
     if (!selection.type) return;
-    snapshot();
+    if (!beginEdit()) return;
     if (selection.type === "node") {
         model.nodes = model.nodes.filter(n => n.id !== selection.id);
         model.links = model.links.filter(
@@ -350,7 +387,7 @@ function linkPathD(x1: number, y1: number, x2: number, y2: number): string {
 }
 
 function renderEditor(): void {
-    canvas.setAttribute("class", mode === "link" ? "mode-link" : "mode-move");
+    canvas.setAttribute("class", "mode-move");
     nodeEls = new Map();
     linkEls = [];
 
@@ -369,12 +406,19 @@ function renderEditor(): void {
             band.setAttribute("height", String(canvasH));
             gGrid.appendChild(band);
         }
+        const title = columnTitle(c);
         const label = document.createElementNS(SVGNS, "text");
-        label.setAttribute("class", "grid-col-label");
+        label.setAttribute("class", "grid-col-label" + (title ? "" : " placeholder"));
         label.setAttribute("x", String(gridX(c) + NODE_W / 2));
         label.setAttribute("y", "30");
         label.setAttribute("text-anchor", "middle");
-        label.textContent = "Colonne " + c;
+        label.textContent = title || "Colonne " + c;
+        label.appendChild(svgTitle("Double-clic pour renommer la colonne"));
+        const col = c;
+        label.addEventListener("dblclick", e => {
+            e.stopPropagation(); // sinon le double-clic du canevas crée un nœud
+            editColumnTitle(col);
+        });
         gGrid.appendChild(label);
     }
 
@@ -393,7 +437,7 @@ function renderEditor(): void {
         const line = document.createElementNS(SVGNS, "path");
         line.setAttribute("class", "link-line");
         line.setAttribute("d", d);
-        line.setAttribute("stroke", l.colorOverride || s.color || "#9aa7b4"); // couleur du nœud d'origine
+        line.setAttribute("stroke", l.colorOverride || s.color || "#6b6b6b"); // couleur du nœud d'origine
         g.appendChild(line);
 
         const hit = document.createElementNS(SVGNS, "path");
@@ -412,16 +456,16 @@ function renderEditor(): void {
     viewNodes().forEach(n => {
         const g = document.createElementNS(SVGNS, "g");
         g.setAttribute("transform", `translate(${n.x},${n.y})`);
+        g.dataset.id = n.id; // repère stable pour les tests et le débogage
         let cls = "edit-node";
         if (selection.type === "node" && selection.id === n.id) cls += " selected";
-        if (linkSourceId === n.id) cls += " pending";
         g.setAttribute("class", cls);
 
         const rect = document.createElementNS(SVGNS, "rect");
         rect.setAttribute("class", "node-box");
         rect.setAttribute("width", String(NODE_W));
         rect.setAttribute("height", String(NODE_H));
-        rect.setAttribute("rx", "6");
+        rect.setAttribute("rx", "0");
         g.appendChild(rect);
 
         const badge = document.createElementNS(SVGNS, "text");
@@ -452,61 +496,92 @@ function renderEditor(): void {
         g.addEventListener("click", e => onNodeClick(e, n));
         g.addEventListener("dblclick", e => {
             e.stopPropagation();
-            if (view === "edit" && mode === "move") editNodeName(n);
+            if (view === "edit") editNodeName(n);
         });
         gn.appendChild(g);
         nodeEls.set(n.id, g);
     });
 
-    // Bouton « + » à droite du nœud sélectionné : ajoute un nœud lié.
+    // Nœud sélectionné : points de liaison de part et d'autre + bouton « + ».
     if (selection.type === "node") {
         const n = nodeById(selection.id);
-        if (n) gn.appendChild(plusHandle(n));
+        if (n && !hiddenFilieres.has(n.filiere || "")) {
+            gn.appendChild(linkDot(n, "in"));
+            gn.appendChild(linkDot(n, "out"));
+            gn.appendChild(plusHandle(n));
+        }
     }
 }
 
+/**
+ * Point de liaison sur un bord du nœud sélectionné.
+ * « out » (bord droit) : le nœud est l'ORIGINE du lien à tracer.
+ * « in »  (bord gauche) : le nœud en est la DESTINATION.
+ */
+function linkDot(n: FlowNode, dir: LinkDir): SVGGElement {
+    const cx = dir === "out" ? n.x + NODE_W + DOT_GAP : n.x - DOT_GAP;
+    const cy = n.y + NODE_H / 2;
+    const g = document.createElementNS(SVGNS, "g");
+    g.setAttribute("class", "link-dot");
+
+    const hit = document.createElementNS(SVGNS, "circle");
+    hit.setAttribute("cx", String(cx));
+    hit.setAttribute("cy", String(cy));
+    hit.setAttribute("r", "10");
+    hit.setAttribute("fill", "transparent");
+    g.appendChild(hit);
+
+    const c = document.createElementNS(SVGNS, "circle");
+    c.setAttribute("class", "link-dot-circle");
+    c.setAttribute("cx", String(cx));
+    c.setAttribute("cy", String(cy));
+    c.setAttribute("r", String(DOT_R));
+    g.appendChild(c);
+
+    g.appendChild(svgTitle(
+        dir === "out"
+            ? "Tire vers un nœud pour partir d'ici"
+            : "Tire vers un nœud pour arriver ici"
+    ));
+
+    g.addEventListener("mousedown", e => {
+        e.stopPropagation(); // n'entraîne pas le déplacement du nœud
+        e.preventDefault();
+        startLinkDrag(n, dir, cx, cy);
+    });
+    g.addEventListener("click", e => e.stopPropagation());
+    g.addEventListener("dblclick", e => e.stopPropagation());
+    return g;
+}
+
 function plusHandle(src: FlowNode): SVGGElement {
-    const cx = src.x + NODE_W + 18;
+    const cx = src.x + NODE_W + 42; // au-delà du point de liaison droit
     const cy = src.y + NODE_H / 2;
     const g = document.createElementNS(SVGNS, "g");
     g.setAttribute("class", "plus-handle");
 
-    const connector = document.createElementNS(SVGNS, "line");
-    connector.setAttribute("x1", String(src.x + NODE_W));
-    connector.setAttribute("y1", String(cy));
-    connector.setAttribute("x2", String(cx - 11));
-    connector.setAttribute("y2", String(cy));
-    connector.setAttribute("stroke", "#2b6cff");
-    connector.setAttribute("stroke-width", "1.5");
-    connector.setAttribute("stroke-dasharray", "3 2");
-    g.appendChild(connector);
-
     const circle = document.createElementNS(SVGNS, "circle");
+    circle.setAttribute("class", "plus-circle");
     circle.setAttribute("cx", String(cx));
     circle.setAttribute("cy", String(cy));
-    circle.setAttribute("r", "11");
-    circle.setAttribute("fill", "#2b6cff");
+    circle.setAttribute("r", String(PLUS_R));
     g.appendChild(circle);
 
     // Le « + » dessiné avec deux traits -> parfaitement centré.
     const hLine = document.createElementNS(SVGNS, "line");
+    hLine.setAttribute("class", "plus-sign");
     hLine.setAttribute("x1", String(cx - 5));
     hLine.setAttribute("y1", String(cy));
     hLine.setAttribute("x2", String(cx + 5));
     hLine.setAttribute("y2", String(cy));
-    hLine.setAttribute("stroke", "#fff");
-    hLine.setAttribute("stroke-width", "2");
-    hLine.setAttribute("stroke-linecap", "round");
     g.appendChild(hLine);
 
     const vLine = document.createElementNS(SVGNS, "line");
+    vLine.setAttribute("class", "plus-sign");
     vLine.setAttribute("x1", String(cx));
     vLine.setAttribute("y1", String(cy - 5));
     vLine.setAttribute("x2", String(cx));
     vLine.setAttribute("y2", String(cy + 5));
-    vLine.setAttribute("stroke", "#fff");
-    vLine.setAttribute("stroke-width", "2");
-    vLine.setAttribute("stroke-linecap", "round");
     g.appendChild(vLine);
 
     const hit = document.createElementNS(SVGNS, "circle");
@@ -516,6 +591,7 @@ function plusHandle(src: FlowNode): SVGGElement {
     hit.setAttribute("fill", "transparent");
     g.appendChild(hit);
 
+    g.appendChild(svgTitle("Ajouter un nœud déjà relié à celui-ci"));
     g.addEventListener("click", e => { e.stopPropagation(); addLinkedNode(src); });
     g.addEventListener("mousedown", e => e.stopPropagation());
     g.addEventListener("dblclick", e => e.stopPropagation());
@@ -538,8 +614,113 @@ interface DragState {
 }
 let dragState: DragState | null = null;
 
+/* ------------------- création d'un lien par glisser-déposer ------------- */
+
+type LinkDir = "in" | "out";
+
+interface LinkDragState {
+    from: FlowNode;
+    dir: LinkDir;
+    originX: number;
+    originY: number;
+    overId: string | null;
+    preview: SVGPathElement | null;
+}
+let linkDrag: LinkDragState | null = null;
+
+function startLinkDrag(from: FlowNode, dir: LinkDir, originX: number, originY: number): void {
+    if (view !== "edit") return;
+    const preview = document.createElementNS(SVGNS, "path");
+    preview.setAttribute("class", "link-preview");
+    canvas.appendChild(preview);
+    linkDrag = { from, dir, originX, originY, overId: null, preview };
+    canvas.classList.add("linking");
+    updateLinkPreview(originX, originY);
+    setStatus(
+        dir === "out"
+            ? `Relâche sur le nœud de destination du lien partant de « ${from.name} ».`
+            : `Relâche sur le nœud d'origine du lien arrivant sur « ${from.name} ».`
+    );
+    window.addEventListener("mousemove", onLinkDragMove);
+    window.addEventListener("mouseup", onLinkDragEnd);
+}
+
+/** Nœud visible sous un point du canevas (les nœuds sont des rectangles fixes). */
+function nodeAtPoint(x: number, y: number): FlowNode | null {
+    return (
+        viewNodes().find(
+            n => x >= n.x && x <= n.x + NODE_W && y >= n.y && y <= n.y + NODE_H
+        ) || null
+    );
+}
+
+/** Le lien envisagé est-il traçable (pas de boucle, pas de doublon) ? */
+function linkDragTarget(over: FlowNode | null): FlowNode | null {
+    if (!linkDrag || !over || over.id === linkDrag.from.id) return null;
+    const src = linkDrag.dir === "out" ? linkDrag.from.id : over.id;
+    const dst = linkDrag.dir === "out" ? over.id : linkDrag.from.id;
+    if (model.links.some(l => l.source === src && l.target === dst)) return null;
+    return over;
+}
+
+function onLinkDragMove(e: MouseEvent): void {
+    if (!linkDrag) return;
+    const pt = toCanvas(e);
+    const over = linkDragTarget(nodeAtPoint(pt.x, pt.y));
+
+    if ((over ? over.id : null) !== linkDrag.overId) {
+        if (linkDrag.overId) nodeEls.get(linkDrag.overId)?.classList.remove("drop-target");
+        linkDrag.overId = over ? over.id : null;
+        if (over) nodeEls.get(over.id)?.classList.add("drop-target");
+    }
+    // Aimante l'extrémité sur le bord du nœud survolé.
+    if (over) {
+        updateLinkPreview(
+            linkDrag.dir === "out" ? over.x : over.x + NODE_W,
+            over.y + NODE_H / 2
+        );
+    } else {
+        updateLinkPreview(pt.x, pt.y);
+    }
+}
+
+function updateLinkPreview(x: number, y: number): void {
+    if (!linkDrag || !linkDrag.preview) return;
+    // Le tracé va toujours de l'origine vers la destination : la courbe garde
+    // le sens de lecture du diagramme, quel que soit le point tiré.
+    const d =
+        linkDrag.dir === "out"
+            ? linkPathD(linkDrag.originX, linkDrag.originY, x, y)
+            : linkPathD(x, y, linkDrag.originX, linkDrag.originY);
+    linkDrag.preview.setAttribute("d", d);
+}
+
+function onLinkDragEnd(): void {
+    if (!linkDrag) return;
+    const { from, dir, overId } = linkDrag;
+    endLinkDrag();
+    if (!overId) {
+        setStatus("Liaison annulée.");
+        return;
+    }
+    if (dir === "out") addLink(from.id, overId);
+    else addLink(overId, from.id);
+}
+
+function endLinkDrag(): void {
+    if (!linkDrag) return;
+    if (linkDrag.overId) nodeEls.get(linkDrag.overId)?.classList.remove("drop-target");
+    linkDrag.preview?.remove();
+    linkDrag = null;
+    canvas.classList.remove("linking");
+    window.removeEventListener("mousemove", onLinkDragMove);
+    window.removeEventListener("mouseup", onLinkDragEnd);
+}
+
+/* ----------------------- déplacement d'un nœud ------------------------- */
+
 function onNodeMouseDown(e: MouseEvent, n: FlowNode): void {
-    if (mode !== "move" || view !== "edit") return;
+    if (view !== "edit") return;
     e.preventDefault();
     const pt = toCanvas(e);
     dragState = {
@@ -571,7 +752,7 @@ function onDragMove(e: MouseEvent): void {
     const n = nodeById(ds.id);
     if (!n) return;
     if (!ds.moved) {
-        snapshot(); // capture l'état avant déplacement
+        if (!beginEdit()) { onDragEnd(); return; } // classeur ouvert dans Excel
         ds.moved = true;
         // Positions affichées initiales = grille actuelle
         layoutGrid();
@@ -653,24 +834,12 @@ function onDragEnd(): void {
 function onNodeClick(e: MouseEvent, n: FlowNode): void {
     e.stopPropagation();
     if (view !== "edit") return;
-    if (mode === "link") {
-        if (!linkSourceId) {
-            linkSourceId = n.id;
-            setStatus(`Origine : « ${n.name} ». Clique maintenant la destination.`);
-            render();
-        } else {
-            addLink(linkSourceId, n.id);
-            linkSourceId = null;
-            setStatus("Mode lien : clique un nœud d'origine puis un nœud de destination.");
-        }
-        return;
-    }
     if (dragState && dragState.moved) return;
     select("node", n.id);
 }
 
 function onCanvasDblClick(e: MouseEvent): void {
-    if (view !== "edit" || mode !== "move") return;
+    if (view !== "edit") return;
     if ((e.target as Element).tagName !== "svg") return;
     const pt = toCanvas(e);
     const column = Math.max(1, Math.round((pt.x - GRID_X) / COL_W) + 1);
@@ -709,8 +878,10 @@ function onGlobalKey(e: KeyboardEvent): void {
         return;
     }
     if (e.key === "Escape") {
-        linkSourceId = null;
-        render();
+        if (linkDrag) {
+            endLinkDrag();
+            setStatus("Liaison annulée.");
+        }
     }
 }
 
@@ -723,6 +894,162 @@ function isEditingText(): boolean {
         a.tagName === "SELECT" ||
         a.isContentEditable
     );
+}
+
+/* ---------------- garde-fou : classeur ouvert dans Excel ----------------- */
+
+/**
+ * Point de passage OBLIGATOIRE avant toute modification de la structure
+ * (nœuds et liens) : renvoie false si le classeur est ouvert dans Excel.
+ *
+ * Pourquoi bloquer : Excel garde sa copie du classeur en mémoire. Si l'app
+ * écrit pendant ce temps, la sauvegarde suivante d'Excel écrase tout ce que
+ * l'app a produit. On exige donc un classeur fermé avant d'éditer.
+ */
+function beginEdit(): boolean {
+    if (!excelLocked) {
+        // Le surveillant de fichiers peut avoir raté l'ouverture d'Excel :
+        // on revérifie en tâche de fond (au plus une fois par seconde).
+        if (Date.now() - lastLockCheck > 1000) {
+            lastLockCheck = Date.now();
+            refreshExcelLock();
+        }
+        snapshot();
+        return true;
+    }
+    resolveExcelLock(); // sans await : prévient / ferme Excel en arrière-plan
+    return false;
+}
+
+/** Relit l'état du verrou auprès du process principal. */
+async function refreshExcelLock(): Promise<boolean> {
+    const d = desktop();
+    if (!d || !d.isElectron || !excelPath) {
+        excelLocked = false;
+        return false;
+    }
+    let r: { locked?: boolean; mode?: string } | null = null;
+    try {
+        r = await d.isExcelLocked(excelPath);
+    } catch {
+        return excelLocked; // IPC indisponible : on garde le dernier état connu
+    }
+    const was = excelLocked;
+    const wasMode = lockMode;
+    excelLocked = !!(r && r.locked);
+    lockMode = (r && r.mode) || "";
+    if (wasMode !== lockMode) buildSidebar();
+    if (was !== excelLocked) buildSidebar();
+    return excelLocked;
+}
+
+/** Demande à Excel d'enregistrer puis de fermer le classeur lié. */
+async function closeWorkbookInExcel(): Promise<boolean> {
+    const d = desktop();
+    if (!d || !d.isElectron || !excelPath) return false;
+    setStatus("Demande à Excel d'enregistrer et de fermer le classeur…");
+    const r = await d.closeExcelWorkbook(excelPath);
+    excelLocked = !!(r && r.locked);
+    buildSidebar();
+    if (!excelLocked) {
+        setStatus(
+            r.state === "closed"
+                ? "Excel a enregistré et fermé le classeur — l'édition est de nouveau possible."
+                : "Le classeur n'est plus ouvert dans Excel — l'édition est de nouveau possible."
+        );
+        // Le classeur est libre : on pousse les modifications en attente.
+        if (pendingExcelWrite) { pendingExcelWrite = false; pushToExcel(); }
+        return true;
+    }
+    await openModal({
+        title: "Excel n'a pas pu fermer le classeur",
+        lines: [excelCloseFailure(r)],
+        buttons: [{ label: "Compris", value: "ok", kind: "primary" }]
+    });
+    return false;
+}
+
+function excelCloseFailure(r: { state?: string; error?: string }): string {
+    switch (r && r.state) {
+        case "denied":
+            return "macOS a refusé le pilotage d'Excel. Autorise « Sankey Studio » à contrôler " +
+                "« Microsoft Excel » dans Réglages Système ▸ Confidentialité et sécurité ▸ Automatisation, " +
+                "puis réessaie.";
+        case "save-failed":
+            return "Excel n'a pas réussi à enregistrer le classeur : il reste ouvert et rien n'a été " +
+                "perdu. Enregistre-le manuellement, puis ferme-le.";
+        case "timeout":
+            return "Excel n'a pas répondu. Une boîte de dialogue y est peut-être ouverte : " +
+                "règle-la, enregistre puis ferme le classeur.";
+        case "unsupported":
+            return "Le pilotage d'Excel n'est disponible que sur macOS et Windows. " +
+                "Enregistre et ferme le classeur manuellement.";
+        default:
+            return "Le classeur est toujours ouvert dans Excel. Enregistre-le et ferme-le manuellement." +
+                (r && r.error ? "\n\n(" + r.error + ")" : "");
+    }
+}
+
+/** Prévient l'utilisateur (ou ferme Excel tout seul si l'option est active). */
+async function resolveExcelLock(contexte: LockContexte = "edition"): Promise<boolean> {
+    if (lockDialogOpen) return false;
+    lockDialogOpen = true;
+    try {
+        // Le verrou peut dater : on revérifie avant d'embêter l'utilisateur.
+        if (!(await refreshExcelLock())) {
+            setStatus(
+                contexte === "ecriture"
+                    ? "Le classeur n'est plus ouvert dans Excel."
+                    : "Le classeur n'est plus ouvert dans Excel — reprends ta modification."
+            );
+            return true;
+        }
+        const d = desktop();
+        if (prefs.autoCloseExcel && d && d.canControlExcel) {
+            return await closeWorkbookInExcel();
+        }
+        const buttons: { label: string; value: string; kind?: "primary" | "ghost" | "danger" }[] = [];
+        if (d && d.canControlExcel) {
+            buttons.push({ label: "Enregistrer et fermer Excel", value: "close", kind: "primary" });
+        }
+        buttons.push({ label: "J'ai fermé le classeur", value: "recheck" });
+        buttons.push({ label: "Annuler", value: "cancel", kind: "ghost" });
+
+        const res = await openModal({
+            title: "Le classeur est ouvert dans Excel",
+            lines: [
+                "« " + basename(excelPath || "") + " » est actuellement ouvert dans Excel. " +
+                (contexte === "ecriture"
+                    ? "Enregistre-le et ferme-le pour que l'application puisse y écrire."
+                    : "Enregistre-le et ferme-le avant de modifier les nœuds et les liens."),
+                "Tant qu'Excel garde le classeur ouvert, il en conserve sa propre copie en mémoire : " +
+                "sa prochaine sauvegarde écraserait la structure écrite par l'application."
+            ],
+            checkbox: d && d.canControlExcel
+                ? {
+                    label: "Laisser Sankey Studio enregistrer et fermer Excel automatiquement",
+                    checked: prefs.autoCloseExcel
+                }
+                : undefined,
+            buttons
+        });
+        if (d && d.canControlExcel && res.checked !== prefs.autoCloseExcel) {
+            prefs.autoCloseExcel = res.checked;
+            savePrefs();
+            buildSidebar();
+        }
+        if (res.value === "close") return await closeWorkbookInExcel();
+        if (res.value === "recheck") {
+            if (!(await refreshExcelLock())) {
+                setStatus("Classeur fermé — l'édition est de nouveau possible.");
+                return true;
+            }
+            setStatus("Le classeur est toujours ouvert dans Excel.");
+        }
+        return false;
+    } finally {
+        lockDialogOpen = false;
+    }
 }
 
 /* ------------------------------ historique ------------------------- */
@@ -765,7 +1092,7 @@ function selectionValid(): boolean {
 /* ---------------------- ajout de nœud lié (bouton +) --------------- */
 
 function addLinkedNode(src: FlowNode): void {
-    snapshot();
+    if (!beginEdit()) return;
     const column = src.column + 1;
     const n: FlowNode = {
         id: newId("n"),
@@ -819,7 +1146,7 @@ function editNodeName(n: FlowNode): void {
         done = true;
         const v = input.value.trim();
         if (save && v && v !== n.name) {
-            snapshot();
+            if (!beginEdit()) { input.remove(); canvas.focus(); return; }
             n.name = v;
             render();
             buildSidebar();
@@ -837,6 +1164,63 @@ function editNodeName(n: FlowNode): void {
             e.preventDefault();
             commit(false);
         }
+    });
+    input.addEventListener("blur", () => commit(true));
+}
+
+function svgTitle(text: string): SVGTitleElement {
+    const t = document.createElementNS(SVGNS, "title") as SVGTitleElement;
+    t.textContent = text;
+    return t;
+}
+
+/** Intitulé affiché d'une colonne : le 1er titre non vide de ses nœuds. */
+function columnTitle(column: number): string {
+    const n = model.nodes.find(x => x.column === column && !!x.title);
+    return n ? n.title : "";
+}
+
+/**
+ * Renomme une colonne depuis le canevas (double-clic sur son intitulé).
+ * Le titre appartenant à chaque nœud dans le modèle Excel, on l'applique à
+ * TOUS les nœuds de la colonne — y compris ceux d'une filière masquée.
+ */
+function editColumnTitle(column: number): void {
+    const wrap = canvas.parentElement as HTMLElement;
+    const current = columnTitle(column);
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = current;
+    input.placeholder = "Intitulé de la colonne";
+    input.className = "inline-edit";
+    const w = COL_W - 24;
+    input.style.left = gridX(column) + NODE_W / 2 - w / 2 + "px";
+    input.style.top = "12px";
+    input.style.width = w + "px";
+    input.style.height = "24px";
+    wrap.appendChild(input);
+    input.focus();
+    input.select();
+
+    let done = false;
+    const commit = (save: boolean) => {
+        if (done) return;
+        done = true;
+        const v = input.value.trim();
+        if (save && v !== current) {
+            if (!beginEdit()) { input.remove(); canvas.focus(); return; }
+            model.nodes.forEach(n => { if (n.column === column) n.title = v; });
+            render();
+            buildSidebar();
+            persist();
+        }
+        input.remove();
+        canvas.focus();
+    };
+    input.addEventListener("keydown", e => {
+        e.stopPropagation();
+        if (e.key === "Enter") { e.preventDefault(); commit(true); }
+        else if (e.key === "Escape") { e.preventDefault(); commit(false); }
     });
     input.addEventListener("blur", () => commit(true));
 }
@@ -865,8 +1249,18 @@ function buildSidebar(): void {
             s.appendChild(numberField("Colonne", n.column, v => { n.column = Math.max(1, Math.round(v)); render(); persist(); }));
             s.appendChild(numberField("Ordre vertical", n.order, v => { n.order = v; render(); persist(); }));
             s.appendChild(textField("Intitulé de colonne", n.title, v => { n.title = v; render(); persist(); }));
-            s.appendChild(textField("Filière", n.filiere || "", v => { n.filiere = v; render(); buildSidebar(); persist(); }));
-            s.appendChild(colorField("Couleur", n.color || options.nodes.nodeColor, v => { n.color = v; render(); persist(); }));
+            // Le panneau « Filières affichées » n'est reconstruit qu'à la validation :
+            // le faire à chaque frappe ferait perdre le focus (cf. tests).
+            s.appendChild(textField(
+                "Filière", n.filiere || "",
+                v => { n.filiere = v; render(); persist(); },
+                () => buildSidebar()
+            ));
+            s.appendChild(colorField(
+                "Couleur", n.color || options.nodes.nodeColor,
+                v => { n.color = v; render(); persist(); },
+                true // couleur écrite dans Excel -> soumise au garde-fou
+            ));
             s.appendChild(dangerBtn("Supprimer le nœud", deleteSelected));
             attachSnapshotOnFocus(s);
             sidebar.appendChild(s);
@@ -974,7 +1368,7 @@ function buildExcelPanel(): HTMLElement {
     }
 
     const fileBox = document.createElement("div");
-    fileBox.className = "excel-file" + (excelPath ? "" : " none");
+    fileBox.className = "excel-file" + (excelPath ? (excelLocked ? " locked" : "") : " none");
     if (excelPath) {
         const name = document.createElement("div");
         name.className = "excel-name";
@@ -982,7 +1376,7 @@ function buildExcelPanel(): HTMLElement {
         name.title = excelPath;
         const sub = document.createElement("div");
         sub.className = "excel-sub";
-        sub.textContent = "Classeur connecté";
+        sub.textContent = excelLocked ? "Ouvert dans Excel" : "Classeur connecté";
         fileBox.appendChild(name);
         fileBox.appendChild(sub);
     } else {
@@ -1012,6 +1406,49 @@ function buildExcelPanel(): HTMLElement {
             "Remplacer le diagramme de l'app par le contenu du classeur Excel",
             () => pullExcel(true)
         ));
+        if (excelLocked) {
+            const warn = document.createElement("p");
+            warn.className = "hint warn";
+            warn.textContent =
+                "Classeur ouvert dans Excel : l'édition des nœuds et des liens est suspendue. " +
+                "Enregistre-le et ferme-le pour reprendre.";
+            s.appendChild(warn);
+            if (d.canControlExcel) {
+                s.appendChild(wideBtn(
+                    "⏻  Enregistrer et fermer Excel",
+                    "Demander à Excel d'enregistrer le classeur puis de le fermer",
+                    () => { closeWorkbookInExcel(); }
+                ));
+            }
+        }
+        if (lockMode === "refuse" || lockMode === "indetermine") {
+            const deg = document.createElement("p");
+            deg.className = "hint warn";
+            deg.textContent = lockMode === "refuse"
+                ? "Détection dégradée : macOS refuse à l'app de consulter Excel. Autorise-la dans "
+                  + "Réglages Système ▸ Confidentialité et sécurité ▸ Automatisation, sinon "
+                  + "l'app ne peut pas voir qu'un classeur OneDrive est ouvert."
+                : "Détection dégradée : Excel n'a pas répondu. Un classeur ouvert depuis OneDrive "
+                  + "peut passer inaperçu — ferme-le avant d'écrire.";
+            s.appendChild(deg);
+        }
+        if (d.canControlExcel) {
+            s.appendChild(checkField(
+                "Piloter Excel automatiquement",
+                prefs.autoCloseExcel,
+                v => {
+                    prefs.autoCloseExcel = v;
+                    savePrefs();
+                    if (v && excelLocked) closeWorkbookInExcel();
+                }
+            ));
+            const note = document.createElement("p");
+            note.className = "hint";
+            note.textContent =
+                "L'app enregistre et ferme le classeur elle-même dès qu'une modification " +
+                "l'exige, au lieu de te le demander.";
+            s.appendChild(note);
+        }
         if (dirtySinceSync) {
             const warn = document.createElement("p");
             warn.className = "hint warn";
@@ -1037,6 +1474,7 @@ function wideBtn(label: string, title: string, onClick: () => void): HTMLButtonE
 }
 
 const FONT_FAMILIES: [string, string][] = [
+    ["\"Source Sans Pro\", system-ui, -apple-system, Helvetica, Arial, sans-serif", "Source Sans Pro"],
     ["Segoe UI, system-ui, -apple-system, Helvetica, Arial, sans-serif", "Segoe UI"],
     ["Arial, sans-serif", "Arial"],
     ["Helvetica, Arial, sans-serif", "Helvetica"],
@@ -1057,11 +1495,41 @@ function fontControls(
         v => { o.fontFamily = v; rr(); }));
     parent.appendChild(numberField("Taille", o.fontSize, v => { o.fontSize = v; rr(); }));
     parent.appendChild(colorField("Couleur du texte", o.fontColor, v => { o.fontColor = v; rr(); }));
-    const row = document.createElement("div");
-    row.className = "check-row";
-    row.appendChild(checkField("Gras", o.bold, v => { o.bold = v; rr(); }));
-    row.appendChild(checkField("Italique", o.italic, v => { o.italic = v; rr(); }));
-    parent.appendChild(row);
+    parent.appendChild(styleToggles(o, rr));
+}
+
+/** Gras / italique compactés en deux bascules [G] [i], comme dans Word. */
+function styleToggles(
+    o: { bold: boolean; italic: boolean },
+    rr: () => void
+): HTMLElement {
+    const group = document.createElement("div");
+    group.className = "style-toggles";
+    const mk = (
+        label: string,
+        title: string,
+        cls: string,
+        get: () => boolean,
+        set: (v: boolean) => void
+    ) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "style-toggle " + cls;
+        b.textContent = label;
+        b.title = title;
+        b.setAttribute("aria-pressed", String(get()));
+        b.classList.toggle("active", get());
+        b.addEventListener("click", () => {
+            set(!get());
+            b.classList.toggle("active", get());
+            b.setAttribute("aria-pressed", String(get()));
+            rr();
+        });
+        group.appendChild(b);
+    };
+    mk("G", "Gras", "bold", () => o.bold, v => { o.bold = v; });
+    mk("i", "Italique", "italic", () => o.italic, v => { o.italic = v; });
+    return field("Style", group);
 }
 
 function buildAppearance(): DocumentFragment {
@@ -1200,11 +1668,22 @@ function field(label: string, control: HTMLElement): HTMLElement {
     w.appendChild(control);
     return w;
 }
-function textField(label: string, value: string, onChange: (v: string) => void): HTMLElement {
+/**
+ * Champ texte. `onCommit` est appelé à la validation (perte de focus ou Entrée),
+ * jamais à chaque frappe : un gestionnaire qui reconstruit le panneau détruirait
+ * le champ en cours de saisie et ferait perdre le focus dès le 1er caractère.
+ */
+function textField(
+    label: string,
+    value: string,
+    onChange: (v: string) => void,
+    onCommit?: (v: string) => void
+): HTMLElement {
     const i = document.createElement("input");
     i.type = "text";
     i.value = value;
     i.addEventListener("input", () => onChange(i.value));
+    if (onCommit) i.addEventListener("change", () => onCommit(i.value));
     return field(label, i);
 }
 function numberField(label: string, value: number, onChange: (v: number) => void): HTMLElement {
@@ -1214,95 +1693,48 @@ function numberField(label: string, value: number, onChange: (v: number) => void
     i.addEventListener("input", () => { const n = parseFloat(i.value); if (!isNaN(n)) onChange(n); });
     return field(label, i);
 }
-/* Palette du design system : versions claires + foncées de chaque couleur. */
-const DESIGN_COLORS: { name: string; light: string; dark: string }[] = [
-    { name: "wheat", light: "#ffe141", dark: "#9e8c28" },
-    { name: "peach", light: "#fdbd5d", dark: "#9d753a" },
-    { name: "buckwheat", light: "#f18831", dark: "#95541e" },
-    { name: "horse", light: "#b29654", dark: "#6e5d34" },
-    { name: "concrete", light: "#6e7777", dark: "#444a4a" },
-    { name: "pig", light: "#e794be", dark: "#8f5c76" },
-    { name: "apple", light: "#e9465b", dark: "#902b38" },
-    { name: "beef", light: "#ae3c4c", dark: "#6c252f" },
-    { name: "oak", light: "#b97b79", dark: "#734c4b" },
-    { name: "eggplant", light: "#a563a5", dark: "#663d66" },
-    { name: "wine", light: "#7159a3", dark: "#463765" },
-    { name: "fish", light: "#0074bd", dark: "#004875" },
-    { name: "milk", light: "#00ace7", dark: "#006b8f" },
-    { name: "algae", light: "#2dc5bd", dark: "#1c7a75" },
-    { name: "forest", light: "#079264", dark: "#045b3e" },
-    { name: "mint", light: "#7ddd8b", dark: "#4e8956" },
-    { name: "field", light: "#adcb47", dark: "#6b7e2c" }
-];
-let paletteOpen = false; // état partagé : la palette reste ouverte d'un champ à l'autre
+/**
+ * Champ « couleur » : un bouton pastille qui ouvre la palette en surcouche
+ * (une teinte par colonne, les nuances en lignes — comme dans Word/Excel).
+ *
+ * `gated` : true pour les couleurs qui partent dans Excel (couleur d'un nœud),
+ * afin de passer par le garde-fou « classeur ouvert dans Excel ».
+ */
+function colorField(
+    label: string,
+    value: string,
+    onChange: (v: string) => void,
+    gated?: boolean
+): HTMLElement {
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "color-btn";
 
-function colorField(label: string, value: string, onChange: (v: string) => void): HTMLElement {
-    const box = document.createElement("div");
-
-    const wrap = document.createElement("div");
-    wrap.className = "color-wrap";
-    const c = document.createElement("input");
-    c.type = "color";
-    c.value = toHex(value);
-    const t = document.createElement("input");
-    t.type = "text";
-    t.value = value;
-    c.addEventListener("input", () => { t.value = c.value; onChange(c.value); });
-    t.addEventListener("input", () => { c.value = toHex(t.value); onChange(t.value); });
-    wrap.appendChild(c);
-    wrap.appendChild(t);
-
-    // Grille des couleurs du design system (paires claire/foncée)
-    const grid = document.createElement("div");
-    grid.className = "swatch-grid";
-    grid.hidden = !paletteOpen;
-    const swatches: HTMLButtonElement[] = [];
-    const refreshSelected = () => {
-        const cur = toHex(t.value).toLowerCase();
-        swatches.forEach(sw => sw.classList.toggle("selected", sw.dataset.hex === cur));
+    const chip = document.createElement("span");
+    chip.className = "color-chip";
+    const hex = document.createElement("span");
+    hex.className = "color-hex";
+    const paint = (v: string) => {
+        const h = normalizeHex(v) || toHex(v);
+        chip.style.background = h;
+        hex.textContent = h;
     };
-    const mkSwatch = (hex: string, title: string): HTMLButtonElement => {
-        const sw = document.createElement("button");
-        sw.type = "button";
-        sw.className = "swatch";
-        sw.dataset.hex = hex.toLowerCase();
-        sw.title = title;
-        sw.style.background = hex;
-        sw.addEventListener("click", () => {
-            snapshot();
-            c.value = hex;
-            t.value = hex;
-            onChange(hex);
-            refreshSelected();
+    paint(value);
+    trigger.appendChild(chip);
+    trigger.appendChild(hex);
+
+    trigger.addEventListener("click", () => {
+        if (gated && excelLocked) { resolveExcelLock(); return; }
+        openColorPopover({
+            anchor: trigger,
+            label,
+            value: normalizeHex(value) || toHex(value),
+            onBeforeChange: () => { if (gated) beginEdit(); else snapshot(); },
+            onPick: v => { paint(v); onChange(v); }
         });
-        swatches.push(sw);
-        return sw;
-    };
-    DESIGN_COLORS.forEach(dc => {
-        const pair = document.createElement("div");
-        pair.className = "swatch-pair";
-        pair.appendChild(mkSwatch(dc.light, `${dc.name} (claire)`));
-        pair.appendChild(mkSwatch(dc.dark, `${dc.name} (foncée)`));
-        grid.appendChild(pair);
     });
-    refreshSelected();
 
-    const pal = document.createElement("button");
-    pal.type = "button";
-    pal.className = "pal-toggle";
-    pal.title = "Palette du design system";
-    pal.textContent = "▦";
-    pal.classList.toggle("active", paletteOpen);
-    pal.addEventListener("click", () => {
-        paletteOpen = !paletteOpen;
-        grid.hidden = !paletteOpen;
-        pal.classList.toggle("active", paletteOpen);
-    });
-    wrap.appendChild(pal);
-
-    box.appendChild(wrap);
-    box.appendChild(grid);
-    return field(label, box);
+    return field(label, trigger);
 }
 function checkField(label: string, value: boolean, onChange: (v: boolean) => void): HTMLElement {
     const i = document.createElement("input");
@@ -1354,8 +1786,13 @@ function dangerBtn(label: string, onClick: () => void): HTMLElement {
 
 function attachSnapshotOnFocus(container: HTMLElement): void {
     // Snapshot avant la 1re modification d'un champ (permet l'annulation Cmd+Z)
+    // et refus de la saisie tant qu'Excel tient le classeur ouvert.
     container.querySelectorAll("input, select").forEach(el => {
-        el.addEventListener("focus", () => snapshot());
+        el.addEventListener("focus", () => {
+            // blur différé : pendant l'évènement « focus », le navigateur ignore
+            // un blur() synchrone et le champ resterait éditable.
+            if (!beginEdit()) setTimeout(() => (el as HTMLInputElement).blur(), 0);
+        });
     });
 }
 
@@ -1374,7 +1811,26 @@ function toHex(c: string): string {
         red: "#ff0000", orange: "#ffa500", blue: "#0000ff", green: "#008000",
         black: "#000000", white: "#ffffff", grey: "#808080", gray: "#808080"
     };
-    return named[c.toLowerCase()] || "#8c9bab";
+    return named[c.toLowerCase()] || "#6b6b6b";
+}
+
+/* -------------------- préférences (poste de travail) ---------------- */
+
+interface Prefs {
+    /** Autoriser l'app à demander à Excel d'enregistrer + fermer le classeur. */
+    autoCloseExcel: boolean;
+}
+function defaultPrefs(): Prefs {
+    return { autoCloseExcel: false };
+}
+function loadPrefs(): void {
+    try {
+        const raw = localStorage.getItem("sankey-prefs");
+        if (raw) prefs = Object.assign(defaultPrefs(), JSON.parse(raw));
+    } catch { /* ignore */ }
+}
+function savePrefs(): void {
+    try { localStorage.setItem("sankey-prefs", JSON.stringify(prefs)); } catch { /* ignore */ }
 }
 
 /* --------------------------- persistance --------------------------- */
@@ -1400,17 +1856,57 @@ function applyProject(p: ProjectFile): void {
     // Compat : garantit le champ filiere sur les anciens projets
     model.nodes.forEach(n => { if (n.filiere === undefined) n.filiere = ""; });
     options = Object.assign(defaultOptions(), p.options);
-    idCounter = p.idCounter || guessCounter();
+    // Le compteur du fichier n'est jamais cru sur parole : on prend le plus grand
+    // entre lui et le maximum réellement utilisé.
+    idCounter = Math.max(p.idCounter || 0, guessCounter());
+    const repares = repairDuplicateIds();
+    if (repares) {
+        setStatus(
+            repares + " identifiant(s) en double corrigé(s) à l'ouverture — " +
+            "vérifie les liens des nœuds concernés."
+        );
+    }
     excelPath = p.excelPath || null;
     hiddenFilieres = new Set(p.hiddenFilieres || []);
     selection = { type: null, id: "" };
 }
+/**
+ * Renumérote les nœuds/liens qui partagent un identifiant.
+ * On garde le premier porteur (les liens existants le désignent) et on donne un
+ * identifiant neuf aux suivants. Renvoie le nombre de corrections.
+ */
+function repairDuplicateIds(): number {
+    let corriges = 0;
+    const vus = new Set<string>();
+    model.nodes.forEach(n => {
+        if (vus.has(n.id)) {
+            n.id = newId("n");
+            corriges++;
+        }
+        vus.add(n.id);
+    });
+    const vusL = new Set<string>();
+    model.links.forEach(l => {
+        if (vusL.has(l.id)) {
+            l.id = newId("l");
+            corriges++;
+        }
+        vusL.add(l.id);
+    });
+    return corriges;
+}
+
 function guessCounter(): number {
     const ids = [...model.nodes.map(n => n.id), ...model.links.map(l => l.id)];
     let max = 0;
     ids.forEach(id => { const m = id.match(/\d+/); if (m) max = Math.max(max, +m[0]); });
     return max + 1;
 }
+/** Le titre de la fenêtre porte le nom du projet ouvert (usage macOS). */
+function updateWindowTitle(): void {
+    document.title = projectPath ? basename(projectPath) : "Sankey Studio";
+}
+
 function persist(): void {
     dirtySinceSync = true; // toute modification rend l'app « en avance » sur Excel
     try {
@@ -1425,6 +1921,7 @@ function loadFromStorage(): void {
         // Se souvient du fichier projet ouvert (écrasé sans confirmation ensuite)
         projectPath = localStorage.getItem("sankey-project-path") || null;
     } catch { /* ignore */ }
+    updateWindowTitle();
 }
 
 async function saveProject(forceDialog?: boolean): Promise<void> {
@@ -1436,6 +1933,7 @@ async function saveProject(forceDialog?: boolean): Promise<void> {
         if (!r.canceled) {
             projectPath = r.path;
             try { localStorage.setItem("sankey-project-path", projectPath as string); } catch { /* ignore */ }
+            updateWindowTitle();
             setStatus("Projet enregistré : " + basename(projectPath as string));
         }
     } else {
@@ -1454,7 +1952,8 @@ async function openProject(): Promise<void> {
             applyProject(JSON.parse(r.content));
             projectPath = r.path;
             try { localStorage.setItem("sankey-project-path", projectPath as string); } catch { /* ignore */ }
-            if (excelPath) d.watchExcel(excelPath);
+            updateWindowTitle();
+            if (excelPath) startWatch(excelPath);
             dirtySinceSync = false;
             render();
             buildSidebar();
@@ -1551,17 +2050,31 @@ function desktop(): any {
 function wireExcelWatchers(): void {
     const d = desktop();
     if (!d || !d.isElectron) return;
-    if (excelPath) d.watchExcel(excelPath);
+    if (excelPath) startWatch(excelPath);
     d.onExcelChanged(() => onExcelFileChanged());
-    d.onExcelLock((p: { locked: boolean }) => {
+    d.onExcelLock((p: { locked: boolean; mode?: string }) => {
+        excelLocked = p.locked;
+        if (p.mode) lockMode = p.mode;
+        buildSidebar();
         if (!p.locked && pendingExcelWrite) {
             pendingExcelWrite = false;
             setStatus("Excel fermé — écriture des modifications en attente…");
             pushToExcel();
-        } else if (p.locked) {
-            setStatus("Excel a le classeur ouvert.");
+        } else if (!p.locked) {
+            setStatus("Classeur fermé — l'édition des nœuds et des liens est de nouveau possible.");
+        } else {
+            setStatus("Classeur ouvert dans Excel — édition des nœuds et des liens suspendue.");
         }
     });
+}
+
+/** Lance la surveillance et récupère l'état initial du verrou. */
+async function startWatch(filePath: string): Promise<void> {
+    const d = desktop();
+    if (!d || !d.isElectron) return;
+    const r = await d.watchExcel(filePath);
+    excelLocked = !!(r && r.locked);
+    buildSidebar();
 }
 
 function basename(p: string): string {
@@ -1580,7 +2093,7 @@ async function connectExcel(): Promise<boolean> {
     const chosen: string = r.path;
     excelPath = chosen;
     persist();
-    d.watchExcel(chosen);
+    startWatch(chosen);
     buildSidebar();
     setStatus("Classeur connecté : " + basename(chosen));
     return true;
@@ -1616,7 +2129,7 @@ async function connectExistingExcel(): Promise<void> {
         reconcileFromExcel(read.data);
         markAllSynced();
     }
-    d.watchExcel(chosen);
+    startWatch(chosen);
     dirtySinceSync = false;
     render();
     buildSidebar();
@@ -1627,6 +2140,7 @@ async function connectExistingExcel(): Promise<void> {
 
 function disconnectExcel(): void {
     excelPath = null;
+    excelLocked = false;
     persist();
     buildSidebar();
     setStatus("Classeur Excel dissocié.");
@@ -1637,26 +2151,52 @@ async function pushToExcel(): Promise<void> {
     const d = desktop();
     if (!d || !d.isElectron) return;
     if (!excelPath && !(await connectExcel())) return;
+    // closeWorkbookInExcel() relance l'écriture en attente : sans ce garde-fou,
+    // « App → Excel » se rappellerait lui-même.
+    if (pushEnCours) return;
+    pushEnCours = true;
+    try {
+        // Deux tentatives : la seconde sert au cas où le classeur aurait été
+        // rouvert entre la vérification et l'écriture.
+        for (let essai = 0; essai < 2; essai++) {
+            if (await refreshExcelLock()) {
+                // Le classeur est ouvert : on le dit (ou on le ferme), au lieu
+                // de différer silencieusement l'écriture.
+                if (!(await resolveExcelLock("ecriture"))) {
+                    pendingExcelWrite = true;
+                    buildSidebar();
+                    setStatus("Écriture différée : le classeur est toujours ouvert dans Excel.");
+                    return;
+                }
+            }
 
-    // Conserve les valeurs déjà saisies dans Excel pour les liens existants
-    const rd = await d.readExcel(excelPath);
-    if (rd.ok && rd.data) mergeValuesFromExcel(rd.data);
+            // Conserve les valeurs déjà saisies dans Excel pour les liens existants
+            const rd = await d.readExcel(excelPath);
+            if (rd.ok && rd.data) mergeValuesFromExcel(rd.data);
 
-    const res = await d.writeExcel({ nodes: model.nodes, links: model.links }, excelPath);
-    if (res.ok) {
-        pendingExcelWrite = false;
-        markAllSynced();
-        dirtySinceSync = false;
-        render();
-        buildSidebar();
-        persist();
-        dirtySinceSync = false;
-        setStatus("Écrit vers Excel : " + basename(res.path));
-    } else if (res.locked) {
+            const res = await d.writeExcel({ nodes: model.nodes, links: model.links }, excelPath);
+            if (res.ok) {
+                pendingExcelWrite = false;
+                markAllSynced();
+                dirtySinceSync = false;
+                render();
+                buildSidebar();
+                persist();
+                dirtySinceSync = false;
+                setStatus("Écrit vers Excel : " + basename(res.path));
+                return;
+            }
+            if (!res.locked) {
+                setStatus("Échec de l'écriture Excel : " + res.error);
+                return;
+            }
+            excelLocked = true; // rouvert entre-temps : on repasse par l'avertissement
+        }
         pendingExcelWrite = true;
-        setStatus("Excel a le classeur ouvert — écriture différée jusqu'à sa fermeture.");
-    } else {
-        setStatus("Échec de l'écriture Excel : " + res.error);
+        buildSidebar();
+        setStatus("Écriture différée : le classeur est toujours ouvert dans Excel.");
+    } finally {
+        pushEnCours = false;
     }
 }
 
@@ -1702,6 +2242,11 @@ function onExcelFileChanged(): void {
     } else {
         pullExcel(false);
     }
+}
+
+/** Après un import, des identifiants du classeur peuvent dépasser le compteur. */
+function syncCounterWithModel(): void {
+    idCounter = Math.max(idCounter, guessCounter());
 }
 
 function mergeValuesFromExcel(data: ExcelData): void {
@@ -1819,6 +2364,9 @@ function reconcileFromExcel(data: ExcelData): boolean {
 
     syncedNodeIds = newSyncedNodes;
     syncedLinkIds = newSyncedLinks; // contient désormais des clés de couple
+
+    // Le classeur peut contenir des identifiants au-delà du compteur courant.
+    syncCounterWithModel();
     return assigned;
 }
 

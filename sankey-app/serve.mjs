@@ -10,7 +10,8 @@ const types = {
   ".html": "text/html",
   ".js": "text/javascript",
   ".css": "text/css",
-  ".map": "application/json"
+  ".map": "application/json",
+  ".otf": "font/otf"
 };
 
 createServer((req, res) => {

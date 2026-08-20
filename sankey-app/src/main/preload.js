@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld("desktop", {
   readExcel: (filePath, sheetName) =>
     ipcRenderer.invoke("excel:read", filePath, sheetName),
   watchExcel: filePath => ipcRenderer.invoke("excel:watch", filePath),
+  isExcelLocked: filePath => ipcRenderer.invoke("excel:isLocked", filePath),
+  closeExcelWorkbook: filePath => ipcRenderer.invoke("excel:closeInExcel", filePath),
+  canControlExcel: ["darwin", "win32"].includes(process.platform),
   exportSave: (name, data, binary) =>
     ipcRenderer.invoke("export:save", name, data, binary),
   onExcelChanged: cb => ipcRenderer.on("excel:changed", () => cb()),

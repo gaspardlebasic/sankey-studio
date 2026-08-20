@@ -19,6 +19,7 @@ const options = {
 function copyStatic() {
   cpSync("src/renderer/index.html", "dist/renderer/index.html");
   cpSync("src/renderer/styles.css", "dist/renderer/styles.css");
+  cpSync("src/renderer/fonts", "dist/renderer/fonts", { recursive: true });
 }
 
 if (watch) {

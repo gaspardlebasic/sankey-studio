@@ -1,0 +1,13 @@
+<!-- Icône de l'application : le glyphe du dictionnaire BASIC sur la tuile
+     noire de la charte. La forme suit la grille des icônes macOS (corps de
+     824×824 centré dans 1024, rayon 185,4) : le système ne rogne pas les
+     icônes, une tuile pleine déborderait des bords arrondis du Dock. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect x="100" y="100" width="824" height="824" rx="185.4" ry="185.4" fill="#000000"/>
+  <g transform="translate(79.5 79.5) scale(17.3)"
+     fill="none" stroke="#ffffff" stroke-miterlimit="10" stroke-width="2.5">
+    <path d="M10 15C22 15 28 10 40 10L40 23C28 23 22 28 10 28Z"/>
+    <path d="M10 31C22 31 28 33 40 33L40 40C28 40 22 40 10 40Z"/>
+    <path d="M10 28v3"/>
+  </g>
+</svg>

@@ -81,12 +81,12 @@ export interface SankeyOptions {
     };
 }
 
-const FONT = "Segoe UI, system-ui, -apple-system, Helvetica, Arial, sans-serif";
+const FONT = "\"Source Sans Pro\", system-ui, -apple-system, Helvetica, Arial, sans-serif";
 
 export function defaultOptions(): SankeyOptions {
     return {
         links: {
-            defaultColor: "#8c9bab",
+            defaultColor: "#6b6b6b",
             useGradient: false,
             opacity: 75,
             curveType: "courbe",
@@ -96,13 +96,13 @@ export function defaultOptions(): SankeyOptions {
             borderWidth: 1
         },
         nodes: {
-            nodeColor: "#2b2b2b",
+            nodeColor: "#000000",
             nodeWidth: 16,
             nodePadding: 14
         },
         nodeLabels: {
             show: true,
-            fontColor: "#222222",
+            fontColor: "#000000",
             fontFamily: FONT,
             fontSize: 12,
             bold: false,
@@ -129,7 +129,7 @@ export function defaultOptions(): SankeyOptions {
         linkValueLabels: {
             show: false,
             unitText: "",
-            fontColor: "#222222",
+            fontColor: "#000000",
             fontFamily: FONT,
             fontSize: 10,
             bold: false,

@@ -412,8 +412,8 @@ function drawMessage(
         .attr("x", width / 2)
         .attr("y", height / 2)
         .attr("text-anchor", "middle")
-        .attr("fill", "#8a97a4")
-        .style("font-family", "Segoe UI, system-ui, sans-serif")
+        .attr("fill", "#6b6b6b")
+        .style("font-family", "\"Source Sans Pro\", system-ui, sans-serif")
         .style("font-size", "13px")
         .text(msg);
 }

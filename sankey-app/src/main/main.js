@@ -4,17 +4,34 @@ const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { writeDiagram, readDiagram, isWorkbookLocked } = require("./excel");
+const { saveAndCloseInExcel, workbookState, forgetOpenState } = require("./excel-control");
 
 let excelWatcher = null;
+let excelPoll = null;
 let lastWriteTs = 0;
 let lockPresent = false;
 let notifyTimer = null;
+
+async function pollExcelState(win, filePath) {
+  forgetOpenState();
+  const etat = await workbookState(filePath);
+  if (etat.locked !== lockPresent) {
+    lockPresent = etat.locked;
+    if (!win.isDestroyed()) win.webContents.send("excel:lock", { locked: etat.locked, mode: etat.mode });
+  }
+}
 
 function startExcelWatch(win, filePath) {
   stopExcelWatch();
   const dir = path.dirname(filePath);
   const base = path.basename(filePath);
   lockPresent = isWorkbookLocked(filePath);
+  // fs.watch ne voit rien quand le classeur est sur OneDrive (aucun fichier
+  // verrou n'y est créé) : on interroge Excel à intervalle régulier.
+  excelPoll = setInterval(() => {
+    pollExcelState(win, filePath).catch(() => { /* Excel muet : on réessaiera */ });
+  }, 4000);
+  pollExcelState(win, filePath).catch(() => { /* ignoré */ });
   try {
     excelWatcher = fs.watch(dir, (_evt, fname) => {
       const nowLock = isWorkbookLocked(filePath);
@@ -35,6 +52,10 @@ function stopExcelWatch() {
   if (excelWatcher) {
     excelWatcher.close();
     excelWatcher = null;
+  }
+  if (excelPoll) {
+    clearInterval(excelPoll);
+    excelPoll = null;
   }
 }
 
@@ -129,8 +150,10 @@ ipcMain.handle("excel:openExisting", async () => {
 // la fermeture du classeur.
 ipcMain.handle("excel:write", async (_e, model, filePath, sheetName) => {
   try {
-    if (fs.existsSync(filePath) && isWorkbookLocked(filePath)) {
-      return { ok: false, error: "Classeur ouvert dans Excel", locked: true };
+    // Dernière ligne de défense : l'état vu par le renderer peut dater.
+    const etat = await workbookState(filePath);
+    if (etat.locked) {
+      return { ok: false, error: "Classeur ouvert dans Excel", locked: true, mode: etat.mode };
     }
     lastWriteTs = Date.now();
     const res = await writeDiagram(filePath, model, sheetName || "Diagramme");
@@ -175,5 +198,24 @@ ipcMain.handle("export:save", async (_e, defaultName, data, binary) => {
 ipcMain.handle("excel:watch", (e, filePath) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   if (win && filePath) startExcelWatch(win, filePath);
-  return true;
+  return { ok: true, locked: filePath ? isWorkbookLocked(filePath) : false };
+});
+
+ipcMain.handle("excel:isLocked", (_e, filePath) => workbookState(filePath));
+
+// Demande à Excel d'enregistrer puis de fermer le classeur (option explicite
+// de l'utilisateur). On revérifie le verrou ensuite : Excel met un instant à
+// libérer le fichier ~$…, d'où les quelques tentatives espacées.
+ipcMain.handle("excel:closeInExcel", async (_e, filePath) => {
+  if (!filePath) return { ok: false, state: "error", error: "Aucun classeur." };
+  const res = await saveAndCloseInExcel(filePath);
+  forgetOpenState();
+  if (!res.ok) return Object.assign(await workbookState(filePath), res);
+  for (let i = 0; i < 12; i++) {
+    forgetOpenState();
+    const etat = await workbookState(filePath);
+    if (!etat.locked) return Object.assign(etat, res);
+    await new Promise(r => setTimeout(r, 250));
+  }
+  return Object.assign(await workbookState(filePath), res);
 });

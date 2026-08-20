@@ -10,7 +10,11 @@
     "dist": "node build.mjs && electron-builder --mac",
     "dist:dir": "node build.mjs && electron-builder --mac --dir",
     "dist:win": "node build.mjs && electron-builder --win",
-    "dist:all": "node build.mjs && electron-builder --mac --win"
+    "dist:all": "node build.mjs && electron-builder --mac --win",
+    "install:app": "node build.mjs && electron-builder --mac --dir && node scripts/install-macos.mjs",
+    "smoke": "node build.mjs && electron scripts/smoke.js",
+    "test": "node build.mjs && electron tests/run.js",
+    "verifier": "node scripts/verifier-projet.mjs"
   },
   "author": "Mathieu Peychet",
   "license": "MIT",
@@ -30,7 +34,10 @@
       "target": "dmg",
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
-      "identity": null
+      "identity": null,
+      "extendInfo": {
+        "NSAppleEventsUsageDescription": "Sankey Studio demande à Microsoft Excel d'enregistrer et de fermer le classeur lié, afin de pouvoir y écrire le diagramme sans risque de perte."
+      }
     },
     "dmg": {
       "title": "Sankey Studio ${version}"

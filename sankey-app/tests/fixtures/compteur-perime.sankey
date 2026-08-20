@@ -1,0 +1,349 @@
+{
+  "version": 1,
+  "model": {
+    "nodes": [
+      {
+        "id": "n1",
+        "name": "Culture bio de blé tendre",
+        "column": 1,
+        "title": "Production",
+        "order": 0,
+        "filiere": "Blé tendre",
+        "color": "#adcb47",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n2",
+        "name": "Blé tendre bio",
+        "column": 2,
+        "title": "",
+        "order": 0,
+        "filiere": "Blé tendre",
+        "color": "#adcb47",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n3",
+        "name": "Meunerie",
+        "column": 3,
+        "title": "Transformation",
+        "order": 1,
+        "filiere": "Blé tendre",
+        "color": "#b29654",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n4",
+        "name": "Farine",
+        "column": 4,
+        "title": "",
+        "order": 0,
+        "filiere": "Blé tendre",
+        "color": "#b29654",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n7",
+        "name": "Distribution",
+        "column": 5,
+        "title": "Distribution",
+        "order": 0,
+        "filiere": "Blé tendre",
+        "color": "#0074bd",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n8",
+        "name": "Exportation de produits transformés",
+        "column": 6,
+        "title": "",
+        "order": 0,
+        "filiere": "Blé tendre",
+        "color": "#079264",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n9",
+        "name": "Consommation locale",
+        "column": 6,
+        "title": "",
+        "order": 1,
+        "filiere": "Blé tendre",
+        "color": "#079264",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n44",
+        "name": "Production végétale, collecte, stockage",
+        "column": 1,
+        "title": "",
+        "order": 0,
+        "filiere": "Lentilles",
+        "color": "#079264",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n62",
+        "name": "Importation hors bretagne",
+        "column": 2,
+        "title": "",
+        "order": 0,
+        "filiere": "Lentilles",
+        "color": "#6e7777",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n45",
+        "name": "Féverolle",
+        "column": 2,
+        "title": "",
+        "order": 1,
+        "filiere": "Lentilles",
+        "color": "#f18831",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n65",
+        "name": "Exportation hors bretagne",
+        "column": 2,
+        "title": "",
+        "order": 2,
+        "filiere": "Lentilles",
+        "color": "#6e7777",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n54",
+        "name": "Tri, décorticage, conditionnement",
+        "column": 3,
+        "title": "",
+        "order": 0,
+        "filiere": "Lentilles",
+        "color": "#f18831",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n57",
+        "name": "Lentilles sèches",
+        "column": 4,
+        "title": "",
+        "order": 0,
+        "filiere": "Lentilles",
+        "color": "#ffe141",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n60",
+        "name": "Exportation hors bretagne",
+        "column": 4,
+        "title": "",
+        "order": 1,
+        "filiere": "Lentilles",
+        "color": "#6e7777",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n75",
+        "name": "Importation hors bretagne",
+        "column": 5,
+        "title": "",
+        "order": 0,
+        "filiere": "Lentilles",
+        "color": "#6e7777",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n48",
+        "name": "Trempage, cuisson",
+        "column": 5,
+        "title": "",
+        "order": 1,
+        "filiere": "Lentilles",
+        "color": "#e79a3c",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n67",
+        "name": "GMS Bretagne",
+        "column": 6,
+        "title": "",
+        "order": 0,
+        "filiere": "Lentilles",
+        "color": "#0074bd",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n70",
+        "name": "Restauration scolaire",
+        "column": 6,
+        "title": "",
+        "order": 1,
+        "filiere": "Lentilles",
+        "color": "#0074bd",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n73",
+        "name": "Exportation hors Bretagne",
+        "column": 6,
+        "title": "",
+        "order": 2,
+        "filiere": "Lentilles",
+        "color": "#6e7777",
+        "x": 0,
+        "y": 0
+      }
+    ],
+    "links": [
+      {
+        "id": "l33",
+        "source": "n1",
+        "target": "n2",
+        "value": 1200,
+        "unit": "t"
+      },
+      {
+        "id": "l34",
+        "source": "n2",
+        "target": "n3",
+        "value": 1100,
+        "unit": "t"
+      },
+      {
+        "id": "l35",
+        "source": "n3",
+        "target": "n4",
+        "value": 900,
+        "unit": "t"
+      },
+      {
+        "id": "l36",
+        "source": "n4",
+        "target": "n7",
+        "value": 850,
+        "unit": "t"
+      },
+      {
+        "id": "l37",
+        "source": "n7",
+        "target": "n8",
+        "value": 300,
+        "unit": "t"
+      },
+      {
+        "id": "l38",
+        "source": "n7",
+        "target": "n9",
+        "value": 550,
+        "unit": "t"
+      },
+      {
+        "id": "l40",
+        "source": "n45",
+        "target": "n54",
+        "value": 320,
+        "unit": "t"
+      },
+      {
+        "id": "l41",
+        "source": "n54",
+        "target": "n57",
+        "value": 260,
+        "unit": "t"
+      },
+      {
+        "id": "l42",
+        "source": "n57",
+        "target": "n48",
+        "value": 180,
+        "unit": "t"
+      },
+      {
+        "id": "l43",
+        "source": "n54",
+        "target": "n60",
+        "value": 60,
+        "unit": "t"
+      },
+      {
+        "id": "l44",
+        "source": "n62",
+        "target": "n54",
+        "value": 90,
+        "unit": "t"
+      },
+      {
+        "id": "l45",
+        "source": "n44",
+        "target": "n65",
+        "value": 80,
+        "unit": "t"
+      },
+      {
+        "id": "l46",
+        "source": "n48",
+        "target": "n67",
+        "value": 120,
+        "unit": "t"
+      },
+      {
+        "id": "l47",
+        "source": "n57",
+        "target": "n67",
+        "value": 40,
+        "unit": "t"
+      },
+      {
+        "id": "l48",
+        "source": "n48",
+        "target": "n70",
+        "value": 45,
+        "unit": "t"
+      },
+      {
+        "id": "l49",
+        "source": "n57",
+        "target": "n70",
+        "value": 25,
+        "unit": "t"
+      },
+      {
+        "id": "l50",
+        "source": "n48",
+        "target": "n73",
+        "value": 15,
+        "unit": "t"
+      },
+      {
+        "id": "l51",
+        "source": "n75",
+        "target": "n67",
+        "value": 70,
+        "unit": "t"
+      }
+    ]
+  },
+  "idCounter": 45,
+  "excelPath": null,
+  "hiddenFilieres": [
+    "Blé tendre"
+  ]
+}
