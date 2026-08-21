@@ -10,8 +10,9 @@ contextBridge.exposeInMainWorld("desktop", {
   openProject: () => ipcRenderer.invoke("project:open"),
   chooseExcel: () => ipcRenderer.invoke("excel:choose"),
   openExistingExcel: () => ipcRenderer.invoke("excel:openExisting"),
-  writeExcel: (model, filePath, sheetName) =>
-    ipcRenderer.invoke("excel:write", model, filePath, sheetName),
+  // options.save : demander à Excel d'enregistrer après une écriture à chaud.
+  writeExcel: (model, filePath, sheetName, options) =>
+    ipcRenderer.invoke("excel:write", model, filePath, sheetName, options),
   readExcel: (filePath, sheetName) =>
     ipcRenderer.invoke("excel:read", filePath, sheetName),
   watchExcel: filePath => ipcRenderer.invoke("excel:watch", filePath),

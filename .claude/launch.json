@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sankey-renderer",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "sankey-app", "run", "serve"],
+      "port": 8811
+    }
+  ]
+}

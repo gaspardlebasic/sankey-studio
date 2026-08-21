@@ -42,8 +42,12 @@ const selectNode = async id => {
     const p = centerOf(id), el = elOf(id);
     if (!el) throw new Error('nœud non rendu : ' + id);
     el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: p.x, clientY: p.y }));
-    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: p.x, clientY: p.y }));
-    el.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: p.x, clientY: p.y }));
+    // Le mousedown peut avoir reconstruit le canevas : l'élément d'origine est
+    // alors détaché. Comme le navigateur, on remet le relâchement sur la fenêtre
+    // (c'est là qu'écoute le glisser) et le clic sur l'élément retrouvé.
+    window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: p.x, clientY: p.y }));
+    const apres = elOf(id) || el;
+    apres.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: p.x, clientY: p.y }));
     await sleep(60);
     return T.selection();
 };
@@ -77,6 +81,65 @@ const dragNode = async (id, cols, rows) => {
     await sleep(80);
     window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     await sleep(140);
+};
+
+/** Glisser un nœud d'un nombre de PIXELS donné (pour viser une bande précise). */
+const dragNodePx = async (id, dx, dy) => {
+    const el = elOf(id), p = centerOf(id);
+    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: p.x, clientY: p.y }));
+    window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
+        clientX: p.x + dx, clientY: p.y + dy }));
+    await sleep(80);
+    window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    await sleep(140);
+};
+
+/** Boîte peinte d'un nœud, en coordonnées écran. */
+const boxOf = id => elOf(id).querySelector('.node-box').getBoundingClientRect();
+
+/**
+ * Clic RÉEL : la cible est re-résolue par elementFromPoint à chaque évènement,
+ * comme le fait le navigateur. Indispensable pour détecter un élément remplacé
+ * entre le mousedown et le mouseup — le clic ne parvient alors jamais au nœud.
+ */
+const clicReel = async (x, y) => {
+    // Un vrai clic retire d'abord le focus du champ en cours : c'est ce blur qui
+    // déclenche la validation, donc la reconstruction du panneau et du canevas.
+    const actif = document.activeElement;
+    if (actif && (actif.tagName === 'INPUT' || actif.tagName === 'SELECT')) {
+        actif.blur();
+        await sleep(60);
+    }
+    const evt = (type) => {
+        const el = document.elementFromPoint(x, y);
+        if (!el) return null;
+        el.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y }));
+        return el;
+    };
+    evt('mousedown');
+    await sleep(10);
+    evt('mouseup');
+    evt('click');
+    await sleep(80);
+};
+/**
+ * Sélectionne un nœud par un clic réel sur sa boîte.
+ * On l'amène d'abord dans la fenêtre : elementFromPoint ne voit que ce qui est
+ * réellement affiché, un nœud hors champ renverrait le panneau latéral.
+ */
+const selectNodeReel = async id => {
+    const wrap = document.querySelector('#canvas-wrap');
+    const n = byId(id);
+    const vue = wrap.getBoundingClientRect();
+    if (n.x + NODE_W > wrap.scrollLeft + vue.width - 20) {
+        wrap.scrollLeft = Math.max(0, n.x + NODE_W - vue.width + 60);
+    } else if (n.x < wrap.scrollLeft + 20) {
+        wrap.scrollLeft = Math.max(0, n.x - 40);
+    }
+    await sleep(60);
+    const p = centerOf(id);
+    await clicReel(p.x, p.y);
+    return T.selection();
 };
 
 /** Champ du panneau latéral, repéré par son intitulé. */

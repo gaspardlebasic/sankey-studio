@@ -181,6 +181,8 @@ export interface ColorPopoverOptions {
     anchor: HTMLElement;
     value: string;
     label: string;
+    /** Couleurs déjà employées dans le diagramme, proposées en premier. */
+    usedColors?: string[];
     /** Appelé avant la première modification (pour l'historique undo). */
     onBeforeChange?: () => void;
     onPick: (hex: string) => void;
@@ -248,6 +250,22 @@ export function openColorPopover(o: ColorPopoverOptions): void {
         grid.appendChild(col);
     });
     pop.appendChild(grid);
+
+    // Couleurs du document : ce sont celles qu'on veut réutiliser le plus souvent.
+    const utilisees = (o.usedColors || [])
+        .map(normalizeHex)
+        .filter((h): h is string => !!h);
+    const uniques = Array.from(new Set(utilisees));
+    if (uniques.length) {
+        const sousTitre = document.createElement("div");
+        sousTitre.className = "cp-sub";
+        sousTitre.textContent = "Couleurs utilisées dans le document";
+        pop.appendChild(sousTitre);
+        const ligne = document.createElement("div");
+        ligne.className = "cp-row cp-row-wrap";
+        uniques.forEach(hex => ligne.appendChild(mkSwatch(hex, hex + " — déjà utilisée")));
+        pop.appendChild(ligne);
+    }
 
     const sub = document.createElement("div");
     sub.className = "cp-sub";

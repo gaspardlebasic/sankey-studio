@@ -131,13 +131,18 @@ const SCENARIO = `(async () => {
   out.bascules_gras_italique = gi.length >= 2
       && gi[0].classList.contains('bold') && gi[1].classList.contains('italic');
 
-  // --- garde-fou : édition refusée quand Excel tient le classeur
+  // --- garde-fou : édition refusée quand Excel tient le classeur ET que
+  // l'app ne sait pas y écrire ; autorisée quand elle le sait.
   T.setExcelPath('/tmp/inexistant.xlsx');
   T.setExcelLocked(true);
+  T.setExcelLive(false);
   const avantGarde = T.nodeCount();
   document.querySelector('#toolbar button').click(); // ＋ Nœud
   out.garde_fou_excel = T.nodeCount() === avantGarde;
-  T.setExcelLocked(false); T.setExcelPath(null);
+  T.setExcelLive(true);
+  document.querySelector('#toolbar button').click();
+  out.edition_pendant_ecriture_a_chaud = T.nodeCount() === avantGarde + 1;
+  T.setExcelLocked(false); T.setExcelLive(false); T.setExcelPath(null);
 
   return out;
 })()`;
@@ -150,7 +155,7 @@ function record(obj) {
 // La fenêtre du test est autonome : on remplace les canaux Excel de main.js par
 // des bouchons, sinon chaque appel IPC du renderer échoue bruyamment.
 function stubExcelIpc() {
-  ipcMain.handle("excel:isLocked", () => ({ locked: false, exists: false, mode: "absent" }));
+  ipcMain.handle("excel:isLocked", () => ({ locked: false, exists: false, mode: "absent", live: false }));
   ipcMain.handle("excel:watch", () => ({ ok: true, locked: false }));
   ipcMain.handle("excel:read", () => ({ ok: false, error: "bouchon" }));
   ipcMain.handle("excel:write", () => ({ ok: false, error: "bouchon" }));

@@ -13,8 +13,10 @@
     "dist:all": "node build.mjs && electron-builder --mac --win",
     "install:app": "node build.mjs && electron-builder --mac --dir && node scripts/install-macos.mjs",
     "smoke": "node build.mjs && electron scripts/smoke.js",
-    "test": "node build.mjs && electron tests/run.js",
-    "verifier": "node scripts/verifier-projet.mjs"
+    "test": "node build.mjs && node tests/excel-live.test.js && electron tests/run.js",
+    "verifier": "node scripts/verifier-projet.mjs",
+    "test:live": "node tests/excel-live.test.js",
+    "proto:excel": "node scripts/proto-excel-live.mjs"
   },
   "author": "Mathieu Peychet",
   "license": "MIT",

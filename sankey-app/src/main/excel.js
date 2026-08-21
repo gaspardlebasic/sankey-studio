@@ -36,6 +36,13 @@ const CT_SHEET = "application/vnd.openxmlformats-officedocument.spreadsheetml.wo
 const REL_TABLE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table";
 const REL_SHEET = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet";
 
+// « Couloir » est ajouté EN FIN de liste, et non à sa place logique après
+// l'ordre vertical : les classeurs existants gardent ainsi leurs colonnes A à G
+// exactement où elles sont, et n'en gagnent qu'une, en H.
+//
+// Voir GAP plus bas : l'écriture « à chaud » ajoute cette colonne dans le
+// classeur ouvert, où le tableau des liens n'a pas encore de colonne vide avant
+// lui — c'est sans conséquence, les tableaux se retrouvent par leurs en-têtes.
 const NODE_COLS = [
   "Filière",
   "Noeud",
@@ -43,7 +50,8 @@ const NODE_COLS = [
   "Intitulé de la colonne d'affichage",
   "Ordre vertical d'affichage",
   "Couleur",
-  "ID"
+  "ID",
+  "Couloir"
 ];
 // Un lien est identifié par le couple (ID origine, ID destination) — aucune
 // donnée « externe » : les deux IDs vivent dans le tableau des nœuds.
@@ -57,8 +65,13 @@ const LINK_COLS = [
 ];
 
 const NODE_START = 1; // colonne A
-const GAP = 1; // une colonne vide entre les deux tableaux
-const LINK_START = NODE_START + NODE_COLS.length + GAP; // colonne H
+// Une colonne vide sépare les deux tableaux : elle aère la lecture et laisse de
+// la place au tableau des nœuds pour gagner une colonne sans bousculer son
+// voisin. Les tableaux étant retrouvés par leurs EN-TÊTES et non par leur
+// adresse, un classeur déjà écrit (liens en I) reste lisible ; il n'adopte la
+// colonne vide qu'à la prochaine réécriture complète du fichier.
+const GAP = 1;
+const LINK_START = NODE_START + NODE_COLS.length + GAP; // colonne J
 
 /* ----------------------------- utilitaires ----------------------------- */
 
@@ -70,6 +83,12 @@ function colLetter(n) {
     n = Math.floor((n - 1) / 26);
   }
   return s;
+}
+
+/** Couloir d'un nœud, ramené à un entier >= 1 (1 par défaut). */
+function couloirDe(n) {
+  const v = Math.round(Number(n && n.lane));
+  return isFinite(v) && v >= 1 ? v : 1;
 }
 
 function esc(v) {
@@ -112,7 +131,8 @@ function buildModelRows(model, formulaMap) {
     { t: "s", v: n.title || "" },
     { t: "n", v: typeof n.order === "number" ? n.order : 0 },
     { t: "s", v: n.color || "" },
-    { t: "s", v: n.id }
+    { t: "s", v: n.id },
+    { t: "n", v: couloirDe(n) }
   ]);
   const linkRows = model.links.map(l => {
     const sName = nameById.get(l.source) || "";
@@ -198,7 +218,7 @@ function buildSheetAndTables(model, tableIds, tableNames, formulaMap, preserve) 
       `<col min="1" max="1" width="14" customWidth="1"/>` +
       `<col min="2" max="2" width="26" customWidth="1"/>` +
       `<col min="3" max="5" width="20" customWidth="1"/>` +
-      `<col min="6" max="7" width="14" customWidth="1"/>` +
+      `<col min="6" max="8" width="14" customWidth="1"/>` +
       `<col min="${LINK_START}" max="${LINK_START + 1}" width="26" customWidth="1"/>` +
       `<col min="${LINK_START + 2}" max="${LINK_START + 4}" width="14" customWidth="1"/>` +
       `</cols>`;
@@ -749,6 +769,7 @@ async function readDiagram(filePath, sheetName) {
         column: toInt(r["Numéro de colonne d'affichage"], 1),
         title: String(r["Intitulé de la colonne d'affichage"] || ""),
         order: toInt(r["Ordre vertical d'affichage"], 0),
+        lane: Math.max(1, toInt(r["Couloir"], 1)),
         filiere: String(r["Filière"] || ""),
         color: String(r["Couleur"] || "").trim() || null
       });
@@ -770,7 +791,10 @@ async function readDiagram(filePath, sheetName) {
       });
     }
   }
-  return { sheetName, nodes, links };
+  // Un classeur écrit avant l'arrivée des couloirs n'a pas la colonne : l'app
+  // doit alors GARDER les couloirs qu'elle connaît au lieu de tout remettre à 1.
+  const aCouloir = !!(nodesT && nodesT.columns.includes("Couloir"));
+  return { sheetName, nodes, links, hasLane: aCouloir };
 }
 
 function toInt(v, dflt) {

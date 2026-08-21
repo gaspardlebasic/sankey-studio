@@ -6,6 +6,7 @@ export interface FlowNode {
     column: number; // numéro de colonne d'affichage (entier)
     title: string; // intitulé de la colonne (facultatif)
     order: number; // ordre vertical d'affichage dans la colonne (croissant = haut)
+    lane: number; // couloir horizontal (1 = premier, en haut) ; sépare des familles de flux
     filiere: string; // filière étudiée (permet de filtrer l'affichage) ; peut être vide
     color: string | null; // couleur du nœud (nom CSS ou #hex) ; null = défaut
     x: number; // position libre dans l'éditeur (pas utilisée par le Sankey)
@@ -79,6 +80,43 @@ export interface SankeyOptions {
         bold: boolean;
         italic: boolean;
     };
+    /** Marges extérieures du graphique (aperçu et export). */
+    chart: {
+        marginTop: number;
+        marginBottom: number;
+    };
+    /**
+     * Couloirs horizontaux : bandes empilées dans lesquelles les nœuds se rangent
+     * selon leur `lane`. Sert à isoler des familles de flux (entrants hors
+     * périmètre, cœur, sortants hors périmètre…). Sans couloir déclaré, tout tient
+     * dans le couloir 1 et la mise en page est celle d'avant.
+     */
+    lanes: {
+        gap: number; // espace vertical entre deux couloirs
+        showTitles: boolean;
+        /** Nom de chaque couloir, indexé par son numéro. Vide = « Couloir N ». */
+        titles: Record<string, string>;
+        fontColor: string;
+        fontFamily: string;
+        fontSize: number;
+        bold: boolean;
+        italic: boolean;
+    };
+    /** Empilement d'un Sankey par filière, avec le nom de la filière en titre. */
+    filieres: {
+        split: boolean;
+        showTitle: boolean;
+        gap: number; // espace entre deux diagrammes
+        titleSpace: number; // espace sous le titre d'une filière
+        /** Même échelle pour tous : 1 unité de flux = la même épaisseur partout. */
+        sameScale: boolean;
+        align: "gauche" | "centre" | "droite";
+        fontColor: string;
+        fontFamily: string;
+        fontSize: number;
+        bold: boolean;
+        italic: boolean;
+    };
 }
 
 const FONT = "\"Source Sans Pro\", system-ui, -apple-system, Helvetica, Arial, sans-serif";
@@ -133,6 +171,33 @@ export function defaultOptions(): SankeyOptions {
             fontFamily: FONT,
             fontSize: 10,
             bold: false,
+            italic: false
+        },
+        chart: {
+            marginTop: 0,
+            marginBottom: 0
+        },
+        lanes: {
+            gap: 28,
+            showTitles: true,
+            titles: {},
+            fontColor: "#6b6b6b",
+            fontFamily: FONT,
+            fontSize: 12,
+            bold: false,
+            italic: false
+        },
+        filieres: {
+            split: false,
+            showTitle: true,
+            gap: 40,
+            titleSpace: 8,
+            sameScale: true,
+            align: "gauche",
+            fontColor: "#000000",
+            fontFamily: FONT,
+            fontSize: 16,
+            bold: true,
             italic: false
         }
     };

@@ -2,11 +2,16 @@
 // panneau de propriétés, et bascule Édition / Aperçu Sankey.
 
 import { FlowModel, FlowNode, FlowLink, SankeyOptions, defaultOptions } from "./types";
-import { renderSankey } from "./engine";
+import { renderSankey, renderSankeyGroups, wrapText } from "./engine";
 import { openColorPopover, openModal, normalizeHex } from "./ui";
 
 const NODE_W = 132;
-const NODE_H = 38;
+const NODE_H = 38; // hauteur d'un nœud dont le nom tient sur une ligne
+// Étiquette d'un nœud : le nom passe à la ligne et la boîte grandit avec lui.
+const LABEL_MAX_CHARS = 18;
+const LABEL_LINE_H = 15;
+const LABEL_PAD_V = 8; // marge au-dessus et au-dessous du bloc de texte
+const LABEL_MAX_LINES = 4;
 const DOT_R = 6; // rayon des points de liaison
 const DOT_GAP = 15; // écart entre le bord du nœud et son point de liaison
 const PLUS_R = 11;
@@ -14,52 +19,172 @@ const SVGNS = "http://www.w3.org/2000/svg";
 
 // Grille d'édition : colonnes d'affichage (X) × ordre vertical (Y).
 const COL_W = 210; // écart horizontal entre colonnes
-const ROW_H = 60; // écart vertical entre rangées
+const ROW_H = 60; // pas vertical d'un nœud de hauteur standard
+const GAP_Y = ROW_H - NODE_H; // espace libre entre deux nœuds empilés
 const GRID_X = 40; // marge gauche
 const GRID_Y = 74; // marge haute (place pour les entêtes de colonnes)
+const LANE_GAP = 36; // espace vertical entre deux couloirs
+const LANE_LABEL_H = 16; // place prise par le nom d'un couloir, au-dessus de sa bande
 
 function gridX(column: number): number {
     return GRID_X + (column - 1) * COL_W;
 }
-function gridY(rank: number): number {
-    return GRID_Y + rank * ROW_H;
+/**
+ * Lignes du nom d'un nœud. Le nom passe à la ligne comme dans l'aperçu
+ * (même `wrapText`), et l'on borne à quelques lignes pour éviter les boîtes
+ * démesurées : la dernière est alors abrégée.
+ */
+const lignesCache = new Map<string, string[]>();
+function nodeLines(n: FlowNode): string[] {
+    const cle = n.id + "\u0000" + n.name;
+    const vu = lignesCache.get(cle);
+    if (vu) return vu;
+    let lignes = wrapText(n.name || "", LABEL_MAX_CHARS);
+    if (lignes.length > LABEL_MAX_LINES) {
+        lignes = lignes.slice(0, LABEL_MAX_LINES);
+        lignes[LABEL_MAX_LINES - 1] = truncate(lignes[LABEL_MAX_LINES - 1], LABEL_MAX_CHARS);
+    }
+    if (lignesCache.size > 500) lignesCache.clear();
+    lignesCache.set(cle, lignes);
+    return lignes;
+}
+
+/** Hauteur d'un nœud : elle suit le nombre de lignes de son nom. */
+function nodeH(n: FlowNode): number {
+    return Math.max(NODE_H, 2 * LABEL_PAD_V + nodeLines(n).length * LABEL_LINE_H);
+}
+
+/** Couloir d'un nœud, ramené à un entier >= 1 (1 par défaut). */
+function laneOf(n: FlowNode): number {
+    const v = Math.round(n.lane);
+    return isFinite(v) && v >= 1 ? v : 1;
+}
+
+/** Couloirs occupés par les nœuds visibles, du haut vers le bas. Jamais vide. */
+function couloirs(): number[] {
+    const set = new Set<number>();
+    viewNodes().forEach(n => set.add(laneOf(n)));
+    if (!set.size) set.add(1);
+    return Array.from(set).sort((a, b) => a - b);
+}
+
+/** Bande verticale occupée par chaque couloir, renseignée par layoutGrid(). */
+const laneBounds: Map<number, { haut: number; bas: number }> = new Map();
+
+/**
+ * Couloir visé par une ordonnée. Au-delà de la dernière bande, on renvoie le
+ * couloir suivant : déposer un nœud sous les bandes en crée un, comme déposer
+ * à droite de la dernière colonne en crée une.
+ *
+ * `bandes` permet de viser les bandes TELLES QU'ELLES ÉTAIENT au début d'un
+ * glisser : pendant le déplacement, retirer un nœud d'un couloir peut faire
+ * remonter les suivants, et la bande se déroberait sous le curseur.
+ */
+type Bandes = Map<number, { haut: number; bas: number }>;
+function laneAtY(y: number, bandes?: Bandes): number {
+    const src = bandes && bandes.size ? bandes : laneBounds;
+    const lanes = Array.from(src.keys()).sort((a, b) => a - b);
+    if (!lanes.length) return 1;
+    for (const l of lanes) {
+        const b = src.get(l)!;
+        if (y <= b.bas + LANE_GAP / 2) return l;
+    }
+    return lanes[lanes.length - 1] + 1;
+}
+
+/** Nœuds visibles d'une cellule (colonne × couloir), dans l'ordre d'empilement. */
+function colonneTriee(column: number, lane: number, sauf?: FlowNode): FlowNode[] {
+    return viewNodes()
+        .filter(n => n.column === column && laneOf(n) === lane && n !== sauf)
+        .sort((a, b) => a.order - b.order);
+}
+
+/**
+ * Rang d'insertion correspondant à une ordonnée, en tenant compte des hauteurs
+ * réelles : les rangées ne sont plus régulières dès qu'un nom passe à la ligne.
+ */
+function rankAtY(column: number, lane: number, y: number, sauf?: FlowNode): number {
+    let haut = laneBounds.get(lane)?.haut ?? GRID_Y;
+    let rang = 0;
+    for (const n of colonneTriee(column, lane, sauf)) {
+        if (y < haut + nodeH(n) / 2) return rang;
+        haut += nodeH(n) + GAP_Y;
+        rang++;
+    }
+    return rang;
 }
 function bandLeft(column: number): number {
     return gridX(column) - (COL_W - NODE_W) / 2;
 }
 
-/** Place chaque nœud sur la grille : x = colonne, y = rang (ordre) dans la colonne. */
+/**
+ * Place chaque nœud sur la grille : x = colonne, y = rang dans sa cellule.
+ *
+ * La grille a trois coordonnées : la colonne (x), le couloir (bande horizontale)
+ * et le rang dans la cellule. Chaque couloir occupe une bande dont la hauteur est
+ * celle de sa colonne la plus chargée, et les bandes s'empilent. Sans couloir
+ * déclaré, il n'y en a qu'un : la mise en page est celle d'avant.
+ */
 function layoutGrid(): void {
-    const byCol = new Map<number, FlowNode[]>();
-    viewNodes().forEach(n => {
-        if (!byCol.has(n.column)) byCol.set(n.column, []);
-        byCol.get(n.column)!.push(n);
-    });
-    byCol.forEach(list => {
-        list.sort((a, b) => a.order - b.order);
-        list.forEach((n, rank) => {
-            n.x = gridX(n.column);
-            n.y = gridY(rank);
+    laneBounds.clear();
+    const lanes = couloirs();
+    const avecCouloirs = lanes.length > 1;
+    let y = GRID_Y;
+    for (const lane of lanes) {
+        if (avecCouloirs) y += LANE_LABEL_H; // place pour le nom du couloir
+        const byCol = new Map<number, FlowNode[]>();
+        viewNodes().filter(n => laneOf(n) === lane).forEach(n => {
+            if (!byCol.has(n.column)) byCol.set(n.column, []);
+            byCol.get(n.column)!.push(n);
         });
-    });
+        let hauteur = NODE_H;
+        byCol.forEach(list => {
+            list.sort((a, b) => a.order - b.order);
+            // Empilement cumulatif : chaque nœud pousse le suivant de sa propre hauteur.
+            let yy = y;
+            list.forEach(n => {
+                n.x = gridX(n.column);
+                n.y = yy;
+                yy += nodeH(n) + GAP_Y;
+            });
+            hauteur = Math.max(hauteur, yy - GAP_Y - y);
+        });
+        laneBounds.set(lane, { haut: y, bas: y + hauteur });
+        y += hauteur + LANE_GAP;
+    }
 }
 
-/** Déplace un nœud vers la cellule (colonne, rang) et renumérote les ordres. */
-function moveNodeToCell(n: FlowNode, column: number, rank: number): void {
+/** Nom affiché d'un couloir. */
+function laneTitle(lane: number): string {
+    return (options.lanes.titles && options.lanes.titles[String(lane)]) || "";
+}
+function setLaneTitle(lane: number, titre: string): void {
+    if (!options.lanes.titles) options.lanes.titles = {};
+    if (titre) options.lanes.titles[String(lane)] = titre;
+    else delete options.lanes.titles[String(lane)];
+}
+
+/**
+ * Déplace un nœud vers la cellule (colonne, couloir, rang) et renumérote les
+ * ordres. L'ordre vertical est propre à une cellule : deux nœuds de couloirs
+ * différents peuvent porter le même ordre dans la même colonne.
+ */
+function moveNodeToCell(n: FlowNode, column: number, lane: number, rank: number): void {
     const oldCol = n.column;
-    // On ne réordonne que parmi les nœuds VISIBLES de la colonne cible.
-    const others = viewNodes()
-        .filter(x => x !== n && x.column === column)
-        .sort((a, b) => a.order - b.order);
+    const oldLane = laneOf(n);
+    lane = Math.max(1, Math.round(lane) || 1);
+    // L'intitulé caractérise la COLONNE : en changeant de colonne, le nœud adopte
+    // celui de sa nouvelle place, sinon l'entête ne correspond plus à ses nœuds.
+    if (oldCol !== column) n.title = columnTitle(column, n);
+    // On ne réordonne que parmi les nœuds VISIBLES de la cellule cible.
+    const others = colonneTriee(column, lane, n);
     const r = Math.max(0, Math.min(rank, others.length));
     others.splice(r, 0, n);
     n.column = column;
+    n.lane = lane;
     others.forEach((x, i) => (x.order = i));
-    if (oldCol !== column) {
-        viewNodes()
-            .filter(x => x.column === oldCol)
-            .sort((a, b) => a.order - b.order)
-            .forEach((x, i) => (x.order = i));
+    if (oldCol !== column || oldLane !== lane) {
+        colonneTriee(oldCol, oldLane).forEach((x, i) => (x.order = i));
     }
 }
 
@@ -83,7 +208,8 @@ let syncedNodeIds = new Set<string>();
 let syncedLinkIds = new Set<string>();
 let pendingExcelWrite = false;
 let dirtySinceSync = false; // modifications app non encore poussées vers Excel
-let excelLocked = false; // le classeur est ouvert dans Excel -> édition suspendue
+let excelLocked = false; // le classeur est ouvert dans Excel
+let excelLive = false;   // ...et l'app sait y écrire directement (excel-live.js)
 let lockDialogOpen = false; // évite d'empiler les avertissements
 let lastLockCheck = 0; // limite les relectures du verrou
 let lockMode = ""; // comment le verrou a été déterminé (« refuse » = détection dégradée)
@@ -96,14 +222,19 @@ let hiddenFilieres = new Set<string>(); // filières masquées du schéma
 
 interface ExcelNode {
     id: string | null; name: string; column: number; title: string;
-    order: number; filiere: string; color: string | null;
+    order: number; lane: number; filiere: string; color: string | null;
 }
 interface ExcelLink {
     sourceId: string | null; targetId: string | null;
     sourceName: string; targetName: string;
     value: number; unit: string;
 }
-interface ExcelData { nodes: ExcelNode[]; links: ExcelLink[]; }
+interface ExcelData {
+    nodes: ExcelNode[];
+    links: ExcelLink[];
+    /** Le classeur porte-t-il la colonne « Couloir » ? Sinon on garde les nôtres. */
+    hasLane?: boolean;
+}
 
 let canvas: SVGSVGElement;
 let sidebar: HTMLElement;
@@ -140,6 +271,8 @@ export function createApp(root: HTMLElement): void {
         setDirty: (v: boolean) => { dirtySinceSync = v; },
         wireWatchers: () => wireExcelWatchers(),
         setExcelLocked: (v: boolean) => { excelLocked = v; buildSidebar(); },
+        setExcelLive: (v: boolean) => { excelLive = v; buildSidebar(); },
+        excelLive: () => excelLive,
         setExcelPath: (v: string | null) => { excelPath = v; buildSidebar(); },
         nodeCount: () => model.nodes.length,
         prefs: () => prefs,
@@ -248,7 +381,7 @@ function currentFiliereForNew(): string {
     return "";
 }
 
-function addNode(column?: number, rank?: number): void {
+function addNode(column?: number, rank?: number, lane?: number): void {
     if (!beginEdit()) return;
     // Colonne : donnée (double-clic) sinon colonne du nœud de référence + 1
     if (column === undefined) {
@@ -258,19 +391,22 @@ function addNode(column?: number, rank?: number): void {
                 : model.nodes[model.nodes.length - 1];
         column = ref ? ref.column + 1 : 1;
     }
+    const refLane =
+        selection.type === "node" ? nodeById(selection.id)?.lane : undefined;
     const n: FlowNode = {
         id: newId("n"),
         name: "Nouveau nœud",
         column,
         title: "",
         order: 0,
+        lane: lane ?? refLane ?? 1,
         filiere: currentFiliereForNew(),
         color: null,
         x: 0,
         y: 0
     };
     model.nodes.push(n);
-    moveNodeToCell(n, column, rank ?? Number.MAX_SAFE_INTEGER);
+    moveNodeToCell(n, column, n.lane, rank ?? Number.MAX_SAFE_INTEGER);
     select("node", n.id);
     render();
     buildSidebar();
@@ -330,7 +466,7 @@ function render(): void {
     if (view === "preview") {
         wrap.style.overflow = "hidden";
         sizeCanvas(visW, visH);
-        renderSankey(canvas, viewModel(), options, visW, visH);
+        dessinerApercu(canvas, visW, visH);
         return;
     }
 
@@ -340,7 +476,7 @@ function render(): void {
     let maxX = visW, maxY = visH;
     viewNodes().forEach(n => {
         maxX = Math.max(maxX, n.x + NODE_W + 140); // marge pour le bouton +
-        maxY = Math.max(maxY, n.y + NODE_H + 80);
+        maxY = Math.max(maxY, n.y + nodeH(n) + 80);
     });
     sizeCanvas(maxX, maxY);
     renderEditor();
@@ -370,6 +506,41 @@ function viewLinks(): FlowLink[] {
 }
 function viewModel(): FlowModel {
     return { nodes: viewNodes(), links: viewLinks() };
+}
+
+/**
+ * Un sous-diagramme par filière visible, dans l'ordre d'apparition des nœuds.
+ * Les liens qui traversent deux filières n'appartiennent à aucun bloc : ils
+ * disparaissent de l'aperçu séparé, par construction.
+ */
+function groupesParFiliere(): { nom: string; model: FlowModel }[] {
+    const visibles = viewNodes();
+    const ordre: string[] = [];
+    visibles.forEach(n => {
+        const f = n.filiere || "";
+        if (!ordre.includes(f)) ordre.push(f);
+    });
+    return ordre.map(f => {
+        const ns = visibles.filter(n => (n.filiere || "") === f);
+        const ids = new Set(ns.map(n => n.id));
+        return {
+            nom: f,
+            model: {
+                nodes: ns,
+                links: model.links.filter(l => ids.has(l.source) && ids.has(l.target))
+            }
+        };
+    });
+}
+
+/** Aperçu : un seul Sankey, ou un par filière si l'option est active. */
+function dessinerApercu(svgEl: SVGSVGElement, w: number, h: number): void {
+    const groupes = groupesParFiliere();
+    if (options.filieres.split && groupes.length > 1) {
+        renderSankeyGroups(svgEl, groupes, options, w, h);
+    } else {
+        renderSankey(svgEl, viewModel(), options, w, h);
+    }
 }
 function distinctFilieres(): string[] {
     const set = new Set<string>();
@@ -422,6 +593,37 @@ function renderEditor(): void {
         gGrid.appendChild(label);
     }
 
+    // Couloirs : trait de séparation + nom, seulement s'il y en a plusieurs
+    // (sans quoi la vue est exactement celle d'avant).
+    const lanes = couloirs();
+    if (lanes.length > 1) {
+        const canvasW = parseFloat(canvas.getAttribute("width") || "0");
+        lanes.forEach(lane => {
+            const b = laneBounds.get(lane);
+            if (!b) return;
+            const ligne = document.createElementNS(SVGNS, "line");
+            ligne.setAttribute("class", "grid-lane-line");
+            ligne.setAttribute("x1", "0");
+            ligne.setAttribute("x2", String(canvasW));
+            ligne.setAttribute("y1", String(b.haut - LANE_LABEL_H + 2));
+            ligne.setAttribute("y2", String(b.haut - LANE_LABEL_H + 2));
+            gGrid.appendChild(ligne);
+
+            const titre = laneTitle(lane);
+            const nom = document.createElementNS(SVGNS, "text");
+            nom.setAttribute("class", "grid-lane-label" + (titre ? "" : " placeholder"));
+            nom.setAttribute("x", "8");
+            nom.setAttribute("y", String(b.haut - 4));
+            nom.textContent = titre || "Couloir " + lane;
+            nom.appendChild(svgTitle("Double-clic pour renommer le couloir"));
+            nom.addEventListener("dblclick", e => {
+                e.stopPropagation();
+                editLaneTitle(lane);
+            });
+            gGrid.appendChild(nom);
+        });
+    }
+
     // Liens
     const gl = document.createElementNS(SVGNS, "g");
     canvas.appendChild(gl);
@@ -429,7 +631,7 @@ function renderEditor(): void {
         const s = nodeById(l.source);
         const t = nodeById(l.target);
         if (!s || !t) return;
-        const d = linkPathD(s.x + NODE_W, s.y + NODE_H / 2, t.x, t.y + NODE_H / 2);
+        const d = linkPathD(s.x + NODE_W, s.y + nodeH(s) / 2, t.x, t.y + nodeH(t) / 2);
 
         const g = document.createElementNS(SVGNS, "g");
         g.setAttribute("class", "edit-link" + (selection.id === l.id ? " selected" : ""));
@@ -464,16 +666,9 @@ function renderEditor(): void {
         const rect = document.createElementNS(SVGNS, "rect");
         rect.setAttribute("class", "node-box");
         rect.setAttribute("width", String(NODE_W));
-        rect.setAttribute("height", String(NODE_H));
+        rect.setAttribute("height", String(nodeH(n)));
         rect.setAttribute("rx", "0");
         g.appendChild(rect);
-
-        const badge = document.createElementNS(SVGNS, "text");
-        badge.setAttribute("class", "node-badge");
-        badge.setAttribute("x", "8");
-        badge.setAttribute("y", "13");
-        badge.textContent = `col ${n.column}`;
-        g.appendChild(badge);
 
         // Pastille : couleur effective du nœud (celle utilisée dans l'aperçu)
         const dot = document.createElementNS(SVGNS, "circle");
@@ -487,9 +682,17 @@ function renderEditor(): void {
         const label = document.createElementNS(SVGNS, "text");
         label.setAttribute("class", "node-label");
         label.setAttribute("x", String(NODE_W / 2));
-        label.setAttribute("y", "27");
         label.setAttribute("text-anchor", "middle");
-        label.textContent = truncate(n.name, 18);
+        // Une ligne par tspan, bloc centré verticalement dans la boîte.
+        const lignes = nodeLines(n);
+        const hautTexte = (nodeH(n) - lignes.length * LABEL_LINE_H) / 2;
+        lignes.forEach((ligne, i) => {
+            const ts = document.createElementNS(SVGNS, "tspan");
+            ts.setAttribute("x", String(NODE_W / 2));
+            ts.setAttribute("y", String(hautTexte + i * LABEL_LINE_H + 11));
+            ts.textContent = ligne;
+            label.appendChild(ts);
+        });
         g.appendChild(label);
 
         g.addEventListener("mousedown", e => onNodeMouseDown(e, n));
@@ -520,7 +723,7 @@ function renderEditor(): void {
  */
 function linkDot(n: FlowNode, dir: LinkDir): SVGGElement {
     const cx = dir === "out" ? n.x + NODE_W + DOT_GAP : n.x - DOT_GAP;
-    const cy = n.y + NODE_H / 2;
+    const cy = n.y + nodeH(n) / 2;
     const g = document.createElementNS(SVGNS, "g");
     g.setAttribute("class", "link-dot");
 
@@ -556,7 +759,7 @@ function linkDot(n: FlowNode, dir: LinkDir): SVGGElement {
 
 function plusHandle(src: FlowNode): SVGGElement {
     const cx = src.x + NODE_W + 42; // au-delà du point de liaison droit
-    const cy = src.y + NODE_H / 2;
+    const cy = src.y + nodeH(src) / 2;
     const g = document.createElementNS(SVGNS, "g");
     g.setAttribute("class", "plus-handle");
 
@@ -608,7 +811,9 @@ interface DragState {
     freeX: number; // position libre (suit la souris, sans aimantation)
     freeY: number;
     lastCol: number;
+    lastLane: number;
     lastRank: number;
+    bandes: Bandes; // couloirs figés à l'instant du « mousedown »
     disp: Map<string, { x: number; y: number }>; // positions affichées (animées)
     raf: number;
 }
@@ -649,7 +854,7 @@ function startLinkDrag(from: FlowNode, dir: LinkDir, originX: number, originY: n
 function nodeAtPoint(x: number, y: number): FlowNode | null {
     return (
         viewNodes().find(
-            n => x >= n.x && x <= n.x + NODE_W && y >= n.y && y <= n.y + NODE_H
+            n => x >= n.x && x <= n.x + NODE_W && y >= n.y && y <= n.y + nodeH(n)
         ) || null
     );
 }
@@ -677,7 +882,7 @@ function onLinkDragMove(e: MouseEvent): void {
     if (over) {
         updateLinkPreview(
             linkDrag.dir === "out" ? over.x : over.x + NODE_W,
-            over.y + NODE_H / 2
+            over.y + nodeH(over) / 2
         );
     } else {
         updateLinkPreview(pt.x, pt.y);
@@ -722,6 +927,10 @@ function endLinkDrag(): void {
 function onNodeMouseDown(e: MouseEvent, n: FlowNode): void {
     if (view !== "edit") return;
     e.preventDefault();
+    // Sélection dès l'enfoncement : si un champ du panneau a le focus, sa
+    // validation reconstruit le canevas entre le mousedown et le mouseup, et le
+    // clic n'atteindrait jamais le nœud (il fallait cliquer deux fois).
+    if (!(selection.type === "node" && selection.id === n.id)) select("node", n.id);
     const pt = toCanvas(e);
     dragState = {
         id: n.id,
@@ -731,7 +940,9 @@ function onNodeMouseDown(e: MouseEvent, n: FlowNode): void {
         freeX: n.x,
         freeY: n.y,
         lastCol: n.column,
+        lastLane: laneOf(n),
         lastRank: currentRank(n),
+        bandes: new Map(),
         disp: new Map(),
         raf: 0
     };
@@ -740,10 +951,7 @@ function onNodeMouseDown(e: MouseEvent, n: FlowNode): void {
 }
 
 function currentRank(n: FlowNode): number {
-    return viewNodes()
-        .filter(x => x.column === n.column)
-        .sort((a, b) => a.order - b.order)
-        .indexOf(n);
+    return colonneTriee(n.column, laneOf(n)).indexOf(n);
 }
 
 function onDragMove(e: MouseEvent): void {
@@ -756,6 +964,7 @@ function onDragMove(e: MouseEvent): void {
         ds.moved = true;
         // Positions affichées initiales = grille actuelle
         layoutGrid();
+        ds.bandes = new Map(laneBounds);
         viewNodes().forEach(v => ds.disp.set(v.id, { x: v.x, y: v.y }));
         // Le nœud saisi passe au premier plan + style « en cours de déplacement »
         const g = nodeEls.get(n.id);
@@ -772,11 +981,13 @@ function onDragMove(e: MouseEvent): void {
     ds.freeY = pt.y - ds.dy;
     // …et sa cellule cible (colonne + rang) est déduite de la position.
     const column = Math.max(1, Math.round((ds.freeX - GRID_X) / COL_W) + 1);
-    const rank = Math.max(0, Math.round((ds.freeY - GRID_Y) / ROW_H));
-    if (column !== ds.lastCol || rank !== ds.lastRank) {
-        moveNodeToCell(n, column, rank);
+    const lane = laneAtY(ds.freeY + nodeH(n) / 2, ds.bandes);
+    const rank = rankAtY(column, lane, ds.freeY, n);
+    if (column !== ds.lastCol || lane !== ds.lastLane || rank !== ds.lastRank) {
+        moveNodeToCell(n, column, lane, rank);
         layoutGrid(); // met à jour les cibles ; l'animation fait glisser les autres nœuds
         ds.lastCol = column;
+        ds.lastLane = lane;
         ds.lastRank = rank;
     }
     applyDragFrame(); // réponse immédiate à la souris (le RAF lisse entre deux événements)
@@ -805,8 +1016,11 @@ function applyDragFrame(): void {
     linkEls.forEach(({ link, line, hit }) => {
         const s = ds.disp.get(link.source);
         const t = ds.disp.get(link.target);
-        if (!s || !t) return;
-        const d = linkPathD(s.x + NODE_W, s.y + NODE_H / 2, t.x, t.y + NODE_H / 2);
+        // disp ne porte que des positions animées : les hauteurs viennent du modèle.
+        const ns = nodeById(link.source);
+        const nt = nodeById(link.target);
+        if (!s || !t || !ns || !nt) return;
+        const d = linkPathD(s.x + NODE_W, s.y + nodeH(ns) / 2, t.x, t.y + nodeH(nt) / 2);
         line.setAttribute("d", d);
         hit.setAttribute("d", d);
     });
@@ -843,8 +1057,9 @@ function onCanvasDblClick(e: MouseEvent): void {
     if ((e.target as Element).tagName !== "svg") return;
     const pt = toCanvas(e);
     const column = Math.max(1, Math.round((pt.x - GRID_X) / COL_W) + 1);
-    const rank = Math.max(0, Math.round((pt.y - GRID_Y) / ROW_H));
-    addNode(column, rank);
+    const lane = laneAtY(pt.y);
+    const rank = rankAtY(column, lane, pt.y);
+    addNode(column, rank, lane);
 }
 
 function onGlobalKey(e: KeyboardEvent): void {
@@ -900,11 +1115,14 @@ function isEditingText(): boolean {
 
 /**
  * Point de passage OBLIGATOIRE avant toute modification de la structure
- * (nœuds et liens) : renvoie false si le classeur est ouvert dans Excel.
+ * (nœuds et liens).
  *
- * Pourquoi bloquer : Excel garde sa copie du classeur en mémoire. Si l'app
- * écrit pendant ce temps, la sauvegarde suivante d'Excel écrase tout ce que
- * l'app a produit. On exige donc un classeur fermé avant d'éditer.
+ * Excel garde sa copie du classeur en mémoire : écrire le fichier pendant ce
+ * temps ne sert à rien, sa prochaine sauvegarde écraserait tout. Deux issues
+ * quand le classeur est ouvert :
+ *   - on sait piloter Excel (`excelLive`) : on édite, et l'écriture se fera
+ *     DANS le classeur ouvert ;
+ *   - sinon : on refuse et on demande de fermer le classeur.
  */
 function beginEdit(): boolean {
     if (!excelLocked) {
@@ -914,6 +1132,10 @@ function beginEdit(): boolean {
             lastLockCheck = Date.now();
             refreshExcelLock();
         }
+        snapshot();
+        return true;
+    }
+    if (excelLive) {
         snapshot();
         return true;
     }
@@ -928,7 +1150,7 @@ async function refreshExcelLock(): Promise<boolean> {
         excelLocked = false;
         return false;
     }
-    let r: { locked?: boolean; mode?: string } | null = null;
+    let r: { locked?: boolean; mode?: string; live?: boolean } | null = null;
     try {
         r = await d.isExcelLocked(excelPath);
     } catch {
@@ -936,10 +1158,11 @@ async function refreshExcelLock(): Promise<boolean> {
     }
     const was = excelLocked;
     const wasMode = lockMode;
+    const wasLive = excelLive;
     excelLocked = !!(r && r.locked);
+    excelLive = !!(r && r.live);
     lockMode = (r && r.mode) || "";
-    if (wasMode !== lockMode) buildSidebar();
-    if (was !== excelLocked) buildSidebar();
+    if (wasMode !== lockMode || was !== excelLocked || wasLive !== excelLive) buildSidebar();
     return excelLocked;
 }
 
@@ -957,8 +1180,14 @@ async function closeWorkbookInExcel(): Promise<boolean> {
                 ? "Excel a enregistré et fermé le classeur — l'édition est de nouveau possible."
                 : "Le classeur n'est plus ouvert dans Excel — l'édition est de nouveau possible."
         );
-        // Le classeur est libre : on pousse les modifications en attente.
-        if (pendingExcelWrite) { pendingExcelWrite = false; pushToExcel(); }
+        // Le classeur est libre. Si l'app est en avance, on pousse ; sinon on
+        // récupère ce qu'Excel vient d'enregistrer.
+        if (pendingExcelWrite || dirtySinceSync) {
+            pendingExcelWrite = false;
+            pushToExcel();
+        } else {
+            pullExcel(false);
+        }
         return true;
     }
     await openModal({
@@ -1100,13 +1329,14 @@ function addLinkedNode(src: FlowNode): void {
         column,
         title: "",
         order: 0,
+        lane: src.lane,
         filiere: src.filiere || "",
         color: null,
         x: 0,
         y: 0
     };
     model.nodes.push(n);
-    moveNodeToCell(n, column, Number.MAX_SAFE_INTEGER);
+    moveNodeToCell(n, column, n.lane, Number.MAX_SAFE_INTEGER);
     model.links.push({
         id: newId("l"),
         source: src.id,
@@ -1135,7 +1365,7 @@ function editNodeName(n: FlowNode): void {
     input.style.left = n.x + "px";
     input.style.top = n.y + "px";
     input.style.width = NODE_W + "px";
-    input.style.height = NODE_H + "px";
+    input.style.height = nodeH(n) + "px";
     wrap.appendChild(input);
     input.focus();
     input.select();
@@ -1168,6 +1398,50 @@ function editNodeName(n: FlowNode): void {
     input.addEventListener("blur", () => commit(true));
 }
 
+/**
+ * Renomme un couloir depuis le canevas (double-clic sur son nom). Le nom d'un
+ * couloir est une donnée d'apparence : il vit dans le projet, pas dans Excel.
+ */
+function editLaneTitle(lane: number): void {
+    const wrap = canvas.parentElement as HTMLElement;
+    const b = laneBounds.get(lane);
+    const current = laneTitle(lane);
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = current;
+    input.placeholder = "Nom du couloir";
+    input.className = "inline-edit";
+    input.style.left = "6px";
+    input.style.top = ((b ? b.haut - LANE_LABEL_H - 4 : GRID_Y) ) + "px";
+    input.style.width = "200px";
+    input.style.height = "22px";
+    wrap.appendChild(input);
+    input.focus();
+    input.select();
+
+    let done = false;
+    const commit = (save: boolean) => {
+        if (done) return;
+        done = true;
+        const v = input.value.trim();
+        if (save && v !== current) {
+            snapshot(); // apparence : pas de garde-fou Excel
+            setLaneTitle(lane, v);
+            render();
+            buildSidebar();
+            persist();
+        }
+        input.remove();
+        canvas.focus();
+    };
+    input.addEventListener("keydown", e => {
+        e.stopPropagation();
+        if (e.key === "Enter") { e.preventDefault(); commit(true); }
+        else if (e.key === "Escape") { e.preventDefault(); commit(false); }
+    });
+    input.addEventListener("blur", () => commit(true));
+}
+
 function svgTitle(text: string): SVGTitleElement {
     const t = document.createElementNS(SVGNS, "title") as SVGTitleElement;
     t.textContent = text;
@@ -1175,9 +1449,16 @@ function svgTitle(text: string): SVGTitleElement {
 }
 
 /** Intitulé affiché d'une colonne : le 1er titre non vide de ses nœuds. */
-function columnTitle(column: number): string {
-    const n = model.nodes.find(x => x.column === column && !!x.title);
+function columnTitle(column: number, sauf?: FlowNode): string {
+    const n = model.nodes.find(x => x.column === column && x !== sauf && !!x.title);
     return n ? n.title : "";
+}
+
+/** Applique un intitulé à TOUS les nœuds d'une colonne. */
+function setColumnTitle(column: number, titre: string): void {
+    model.nodes.forEach(n => {
+        if (n.column === column) n.title = titre;
+    });
 }
 
 /**
@@ -1209,7 +1490,7 @@ function editColumnTitle(column: number): void {
         const v = input.value.trim();
         if (save && v !== current) {
             if (!beginEdit()) { input.remove(); canvas.focus(); return; }
-            model.nodes.forEach(n => { if (n.column === column) n.title = v; });
+            setColumnTitle(column, v);
             render();
             buildSidebar();
             persist();
@@ -1248,7 +1529,20 @@ function buildSidebar(): void {
             s.appendChild(textField("Nom", n.name, v => { n.name = v; render(); persist(); }));
             s.appendChild(numberField("Colonne", n.column, v => { n.column = Math.max(1, Math.round(v)); render(); persist(); }));
             s.appendChild(numberField("Ordre vertical", n.order, v => { n.order = v; render(); persist(); }));
-            s.appendChild(textField("Intitulé de colonne", n.title, v => { n.title = v; render(); persist(); }));
+            // Pas de buildSidebar() ici : reconstruire le panneau à chaque frappe
+            // ferait perdre le focus du champ (cf. tests de saisie).
+            s.appendChild(numberField("Couloir", laneOf(n), v => {
+                moveNodeToCell(n, n.column, Math.max(1, Math.round(v) || 1), Number.MAX_SAFE_INTEGER);
+                render();
+                persist();
+            }));
+            // L'intitulé vaut pour toute la colonne : l'appliquer au seul nœud
+            // sélectionné créerait un désaccord avec l'entête affiché.
+            s.appendChild(textField("Intitulé de colonne", n.title, v => {
+                setColumnTitle(n.column, v);
+                render();
+                persist();
+            }));
             // Le panneau « Filières affichées » n'est reconstruit qu'à la validation :
             // le faire à chaque frappe ferait perdre le focus (cf. tests).
             s.appendChild(textField(
@@ -1368,7 +1662,8 @@ function buildExcelPanel(): HTMLElement {
     }
 
     const fileBox = document.createElement("div");
-    fileBox.className = "excel-file" + (excelPath ? (excelLocked ? " locked" : "") : " none");
+    fileBox.className = "excel-file"
+        + (excelPath ? (excelLocked && !excelLive ? " locked" : "") : " none");
     if (excelPath) {
         const name = document.createElement("div");
         name.className = "excel-name";
@@ -1376,7 +1671,9 @@ function buildExcelPanel(): HTMLElement {
         name.title = excelPath;
         const sub = document.createElement("div");
         sub.className = "excel-sub";
-        sub.textContent = excelLocked ? "Ouvert dans Excel" : "Classeur connecté";
+        sub.textContent = excelLocked
+            ? (excelLive ? "Ouvert dans Excel — écriture directe" : "Ouvert dans Excel")
+            : "Classeur connecté";
         fileBox.appendChild(name);
         fileBox.appendChild(sub);
     } else {
@@ -1408,10 +1705,12 @@ function buildExcelPanel(): HTMLElement {
         ));
         if (excelLocked) {
             const warn = document.createElement("p");
-            warn.className = "hint warn";
-            warn.textContent =
-                "Classeur ouvert dans Excel : l'édition des nœuds et des liens est suspendue. " +
-                "Enregistre-le et ferme-le pour reprendre.";
+            warn.className = excelLive ? "hint" : "hint warn";
+            warn.textContent = excelLive
+                ? "Classeur ouvert dans Excel : l'app écrit directement dedans, l'édition reste "
+                  + "possible. Excel le montrera comme modifié tant que tu ne l'auras pas enregistré."
+                : "Classeur ouvert dans Excel : l'édition des nœuds et des liens est suspendue. "
+                  + "Enregistre-le et ferme-le pour reprendre.";
             s.appendChild(warn);
             if (d.canControlExcel) {
                 s.appendChild(wideBtn(
@@ -1444,9 +1743,11 @@ function buildExcelPanel(): HTMLElement {
             ));
             const note = document.createElement("p");
             note.className = "hint";
-            note.textContent =
-                "L'app enregistre et ferme le classeur elle-même dès qu'une modification " +
-                "l'exige, au lieu de te le demander.";
+            note.textContent = excelLive
+                ? "Sert de secours : l'app écrit déjà directement dans le classeur ouvert. "
+                  + "Si elle n'y parvient pas, elle l'enregistre et le ferme d'elle-même."
+                : "L'app enregistre et ferme le classeur elle-même dès qu'une modification "
+                  + "l'exige, au lieu de te le demander.";
             s.appendChild(note);
         }
         if (dirtySinceSync) {
@@ -1536,6 +1837,102 @@ function buildAppearance(): DocumentFragment {
     const frag = document.createDocumentFragment();
     const rr = () => { render(); persist(); };
 
+    // ---- Marges du graphique ----
+    {
+        const b = card("Marges du graphique", false);
+        const f = options.filieres;
+        const c = options.chart;
+
+        b.appendChild(numberField("Marge en haut", c.marginTop, v => { c.marginTop = v; rr(); }));
+        b.appendChild(numberField("Marge en bas", c.marginBottom, v => { c.marginBottom = v; rr(); }));
+
+        const sep = document.createElement("div");
+        sep.className = "divider";
+        b.appendChild(sep);
+
+        b.appendChild(checkField("Un Sankey par filière", f.split, v => {
+            f.split = v;
+            rr();
+            buildSidebar();
+        }));
+        const note = document.createElement("p");
+        note.className = "hint";
+        note.textContent =
+            "Empile un diagramme par filière, chacun sous son nom. Les liens qui traversent "
+            + "deux filières n'apparaissent pas dans ce mode.";
+        b.appendChild(note);
+
+        b.appendChild(numberField("Marge entre les graphiques", f.gap, v => { f.gap = v; rr(); }));
+        b.appendChild(numberField("Espace sous le titre", f.titleSpace, v => {
+            f.titleSpace = v; rr();
+        }));
+        b.appendChild(checkField("Même échelle pour tous", f.sameScale, v => {
+            f.sameScale = v; rr();
+        }));
+        const note2 = document.createElement("p");
+        note2.className = "hint";
+        note2.textContent = f.sameScale
+            ? "Une même unité de flux occupe la même épaisseur dans tous les diagrammes : "
+              + "leurs hauteurs sont proportionnelles aux volumes."
+            : "Chaque diagramme remplit sa case : les épaisseurs ne sont pas comparables "
+              + "d'une filière à l'autre.";
+        b.appendChild(note2);
+
+        const sep2 = document.createElement("div");
+        sep2.className = "divider";
+        b.appendChild(sep2);
+
+        b.appendChild(checkField("Afficher le nom de la filière", f.showTitle, v => {
+            f.showTitle = v; rr(); buildSidebar();
+        }));
+        if (f.showTitle) {
+            b.appendChild(selectField("Alignement du nom", f.align,
+                [["gauche", "À gauche"], ["centre", "Centré"], ["droite", "À droite"]],
+                v => { f.align = v as "gauche" | "centre" | "droite"; rr(); }));
+            fontControls(b, f, rr);
+        }
+        frag.appendChild(b.parentElement as HTMLElement);
+    }
+
+    // ---- Couloirs ----
+    {
+        const b = card("Couloirs", true);
+        const C = options.lanes;
+        const lanes = couloirs();
+        const intro = document.createElement("p");
+        intro.className = "hint";
+        intro.textContent =
+            "Les couloirs sont des bandes horizontales : chaque nœud se range dans celui "
+            + "que porte son champ « Couloir ». De quoi isoler les flux entrants ou sortants "
+            + "du périmètre, par exemple.";
+        b.appendChild(intro);
+
+        if (lanes.length < 2) {
+            const p2 = document.createElement("p");
+            p2.className = "hint";
+            p2.textContent =
+                "Tous les nœuds sont dans le couloir 1 : la mise en page ne change pas. "
+                + "Donne le couloir 2 à un nœud pour créer une deuxième bande.";
+            b.appendChild(p2);
+        } else {
+            b.appendChild(numberField("Espace entre couloirs", C.gap, v => { C.gap = v; rr(); }));
+            b.appendChild(checkField("Afficher les noms", C.showTitles, v => {
+                C.showTitles = v; rr(); buildSidebar();
+            }));
+            if (C.showTitles) {
+                lanes.forEach(lane => {
+                    b.appendChild(textField(
+                        "Couloir " + lane,
+                        laneTitle(lane),
+                        v => { setLaneTitle(lane, v); rr(); }
+                    ));
+                });
+                fontControls(b, C, rr);
+            }
+        }
+        frag.appendChild(b.parentElement as HTMLElement);
+    }
+
     // ---- Liens ----
     {
         const b = card("Liens", true);
@@ -1620,10 +2017,16 @@ function buildAppearance(): DocumentFragment {
 }
 
 /** Crée une carte repliable ; renvoie le corps où empiler les contrôles. */
+// Le panneau est reconstruit à chaque changement d'option : sans mémoire, toutes
+// les sections se replieraient sous les doigts de l'utilisatrice.
+const cartesOuvertes = new Map<string, boolean>();
+
 function card(title: string, open: boolean): HTMLElement {
+    if (!cartesOuvertes.has(title)) cartesOuvertes.set(title, open);
     const details = document.createElement("details");
     details.className = "panel card-collapsible";
-    if (open) details.open = true;
+    details.open = cartesOuvertes.get(title) as boolean;
+    details.addEventListener("toggle", () => cartesOuvertes.set(title, details.open));
     const summary = document.createElement("summary");
     summary.textContent = title;
     details.appendChild(summary);
@@ -1659,9 +2062,9 @@ function divider(): HTMLElement {
     d.className = "divider";
     return d;
 }
-function field(label: string, control: HTMLElement): HTMLElement {
+function field(label: string, control: HTMLElement, modifier?: string): HTMLElement {
     const w = document.createElement("label");
-    w.className = "field";
+    w.className = "field" + (modifier ? " " + modifier : "");
     const span = document.createElement("span");
     span.textContent = label;
     w.appendChild(span);
@@ -1691,8 +2094,32 @@ function numberField(label: string, value: number, onChange: (v: number) => void
     i.type = "number";
     i.value = String(value);
     i.addEventListener("input", () => { const n = parseFloat(i.value); if (!isNaN(n)) onChange(n); });
-    return field(label, i);
+    return field(label, i, "half");
 }
+/**
+ * Couleurs déjà présentes dans le diagramme : couleurs propres des nœuds,
+ * surcharges de liens et couleurs choisies dans les options d'apparence.
+ * Classées par fréquence d'emploi, les plus utilisées d'abord.
+ */
+function couleursDuDocument(): string[] {
+    const compte = new Map<string, number>();
+    const ajoute = (c?: string | null) => {
+        const h = normalizeHex(c || "");
+        if (h) compte.set(h, (compte.get(h) || 0) + 1);
+    };
+    model.nodes.forEach(n => ajoute(n.color));
+    model.links.forEach(l => ajoute(l.colorOverride));
+    ajoute(options.nodes.nodeColor);
+    ajoute(options.links.defaultColor);
+    ajoute(options.links.borderColor);
+    ajoute(options.nodeLabels.fontColor);
+    ajoute(options.nodeLabels.backgroundColor);
+    ajoute(options.columnHeaders.fontColor);
+    ajoute(options.columnHeaders.backgroundColor);
+    ajoute(options.linkValueLabels.fontColor);
+    return [...compte.entries()].sort((a, b) => b[1] - a[1]).map(([hex]) => hex);
+}
+
 /**
  * Champ « couleur » : un bouton pastille qui ouvre la palette en surcouche
  * (une teinte par colonne, les nuances en lignes — comme dans Word/Excel).
@@ -1724,17 +2151,18 @@ function colorField(
     trigger.appendChild(hex);
 
     trigger.addEventListener("click", () => {
-        if (gated && excelLocked) { resolveExcelLock(); return; }
+        if (gated && excelLocked && !excelLive) { resolveExcelLock(); return; }
         openColorPopover({
             anchor: trigger,
             label,
             value: normalizeHex(value) || toHex(value),
+            usedColors: couleursDuDocument(),
             onBeforeChange: () => { if (gated) beginEdit(); else snapshot(); },
             onPick: v => { paint(v); onChange(v); }
         });
     });
 
-    return field(label, trigger);
+    return field(label, trigger, "half");
 }
 function checkField(label: string, value: boolean, onChange: (v: boolean) => void): HTMLElement {
     const i = document.createElement("input");
@@ -1854,7 +2282,11 @@ function serialize(): string {
 function applyProject(p: ProjectFile): void {
     model = p.model;
     // Compat : garantit le champ filiere sur les anciens projets
-    model.nodes.forEach(n => { if (n.filiere === undefined) n.filiere = ""; });
+    model.nodes.forEach(n => {
+        if (n.filiere === undefined) n.filiere = "";
+        // Compat : les projets antérieurs aux couloirs n'en ont qu'un.
+        if (!(typeof n.lane === "number" && n.lane >= 1)) n.lane = 1;
+    });
     options = Object.assign(defaultOptions(), p.options);
     // Le compteur du fichier n'est jamais cru sur parole : on prend le plus grand
     // entre lui et le maximum réellement utilisé.
@@ -1913,6 +2345,41 @@ function persist(): void {
         localStorage.setItem("sankey-project", serialize());
         if (projectPath) localStorage.setItem("sankey-project-path", projectPath);
     } catch { /* ignore */ }
+    planifierEnregistrementAuto();
+    planifierEnvoiExcel();
+}
+
+/* ------------------- enregistrement & synchro automatiques ------------------ */
+
+let minuteurProjet = 0;
+let minuteurExcel = 0;
+
+/** Réécrit le fichier .sankey ouvert, peu après la dernière modification. */
+function planifierEnregistrementAuto(): void {
+    const d = desktop();
+    if (!d || !d.isElectron || !projectPath) return; // rien à écraser sans fichier
+    clearTimeout(minuteurProjet);
+    minuteurProjet = setTimeout(() => {
+        const chemin = projectPath;
+        if (!chemin) return;
+        d.saveProject(serialize(), chemin).catch(() => { /* réessayé au prochain changement */ });
+    }, 800) as unknown as number;
+}
+
+/**
+ * Envoie la structure vers Excel après chaque modification.
+ * Silencieux par construction : si le classeur est ouvert, l'écriture est
+ * différée sans interrompre la saisie — c'est le bouton « App → Excel » qui
+ * avertit explicitement, pas la synchro de fond.
+ */
+function planifierEnvoiExcel(): void {
+    const d = desktop();
+    if (!d || !d.isElectron || !excelPath) return;
+    clearTimeout(minuteurExcel);
+    minuteurExcel = setTimeout(() => {
+        if (view !== "edit") return;
+        pushToExcel({ silencieux: true }).catch(() => { /* réessayé au prochain changement */ });
+    }, 1200) as unknown as number;
 }
 function loadFromStorage(): void {
     try {
@@ -1987,7 +2454,7 @@ async function exportImage(format: "png" | "svg"): Promise<void> {
     // Rend le Sankey (vue filtrée) dans un SVG hors écran.
     const tmp = document.createElementNS(SVGNS, "svg") as SVGSVGElement;
     tmp.setAttribute("xmlns", SVGNS);
-    renderSankey(tmp, viewModel(), options, w, h);
+    dessinerApercu(tmp, w, h);
     const svgString =
         '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n' +
         new XMLSerializer().serializeToString(tmp);
@@ -2052,8 +2519,10 @@ function wireExcelWatchers(): void {
     if (!d || !d.isElectron) return;
     if (excelPath) startWatch(excelPath);
     d.onExcelChanged(() => onExcelFileChanged());
-    d.onExcelLock((p: { locked: boolean; mode?: string }) => {
+    d.onExcelLock((p: { locked: boolean; mode?: string; live?: boolean }) => {
+        const etaitOuvert = excelLocked;
         excelLocked = p.locked;
+        excelLive = !!p.live;
         if (p.mode) lockMode = p.mode;
         buildSidebar();
         if (!p.locked && pendingExcelWrite) {
@@ -2061,7 +2530,9 @@ function wireExcelWatchers(): void {
             setStatus("Excel fermé — écriture des modifications en attente…");
             pushToExcel();
         } else if (!p.locked) {
-            setStatus("Classeur fermé — l'édition des nœuds et des liens est de nouveau possible.");
+            if (etaitOuvert) setStatus("Classeur fermé dans Excel.");
+        } else if (excelLive) {
+            setStatus("Classeur ouvert dans Excel — les modifications y sont écrites directement.");
         } else {
             setStatus("Classeur ouvert dans Excel — édition des nœuds et des liens suspendue.");
         }
@@ -2079,6 +2550,18 @@ async function startWatch(filePath: string): Promise<void> {
 
 function basename(p: string): string {
     return p.split(/[\\/]/).pop() || p;
+}
+
+/**
+ * Le classeur vit-il dans un dossier synchronisé (OneDrive, Dropbox, Drive) ?
+ *
+ * Cela change tout : Excel pour Mac n'ouvre pas la copie locale d'un fichier
+ * OneDrive mais son adresse SharePoint. Tant que la synchronisation n'a pas
+ * téléversé ce que l'app vient d'écrire, Excel affiche la version du serveur —
+ * et l'enregistrer redescend cette version, effaçant nos modifications.
+ */
+function cheminSynchronise(p: string | null): boolean {
+    return !!p && /\/Library\/CloudStorage\/|OneDrive|Dropbox|Google Drive/i.test(p);
 }
 
 /** Crée / connecte un NOUVEAU classeur (l'app y écrit sa structure). */
@@ -2147,21 +2630,36 @@ function disconnectExcel(): void {
 }
 
 /** Sens App → Excel : écrit la structure de l'app (valeurs Excel conservées). */
-async function pushToExcel(): Promise<void> {
+async function pushToExcel(opts?: { silencieux?: boolean }): Promise<void> {
+    const silencieux = !!(opts && opts.silencieux);
     const d = desktop();
     if (!d || !d.isElectron) return;
-    if (!excelPath && !(await connectExcel())) return;
+    if (!excelPath && (silencieux || !(await connectExcel()))) return;
     // closeWorkbookInExcel() relance l'écriture en attente : sans ce garde-fou,
     // « App → Excel » se rappellerait lui-même.
-    if (pushEnCours) return;
+    //
+    // Une écriture à chaud dure ~1 s : pendant ce temps l'utilisatrice continue
+    // d'éditer. On ne jette PAS la modification suivante, on la reprogramme —
+    // sinon le dernier changement d'une salve n'arriverait jamais dans Excel.
+    if (pushEnCours) {
+        planifierEnvoiExcel();
+        if (!silencieux) setStatus("Écriture vers Excel déjà en cours — celle-ci suivra.");
+        return;
+    }
     pushEnCours = true;
     try {
         // Deux tentatives : la seconde sert au cas où le classeur aurait été
         // rouvert entre la vérification et l'écriture.
         for (let essai = 0; essai < 2; essai++) {
-            if (await refreshExcelLock()) {
-                // Le classeur est ouvert : on le dit (ou on le ferme), au lieu
-                // de différer silencieusement l'écriture.
+            // Classeur ouvert dans Excel : ou bien on sait y écrire directement
+            // (`excelLive`) et on continue, ou bien on avertit / on le ferme.
+            // La synchro de fond, elle, diffère sans interrompre la saisie.
+            if ((await refreshExcelLock()) && !excelLive) {
+                if (silencieux) {
+                    pendingExcelWrite = true;
+                    buildSidebar();
+                    return;
+                }
                 if (!(await resolveExcelLock("ecriture"))) {
                     pendingExcelWrite = true;
                     buildSidebar();
@@ -2174,7 +2672,12 @@ async function pushToExcel(): Promise<void> {
             const rd = await d.readExcel(excelPath);
             if (rd.ok && rd.data) mergeValuesFromExcel(rd.data);
 
-            const res = await d.writeExcel({ nodes: model.nodes, links: model.links }, excelPath);
+            // Une écriture à chaud n'enregistre que sur demande explicite : la
+            // synchro de fond laisserait sinon OneDrive téléverser à chaque frappe.
+            const res = await d.writeExcel(
+                { nodes: model.nodes, links: model.links }, excelPath, undefined,
+                { save: !silencieux }
+            );
             if (res.ok) {
                 pendingExcelWrite = false;
                 markAllSynced();
@@ -2183,13 +2686,15 @@ async function pushToExcel(): Promise<void> {
                 buildSidebar();
                 persist();
                 dirtySinceSync = false;
-                setStatus("Écrit vers Excel : " + basename(res.path));
+                if (!silencieux) setStatus(messageEcriture(res));
                 return;
             }
             if (!res.locked) {
                 setStatus("Échec de l'écriture Excel : " + res.error);
                 return;
             }
+            // L'écriture à chaud a échoué : on retombe sur l'avertissement.
+            if (res.liveState) excelLive = false;
             excelLocked = true; // rouvert entre-temps : on repasse par l'avertissement
         }
         pendingExcelWrite = true;
@@ -2198,6 +2703,21 @@ async function pushToExcel(): Promise<void> {
     } finally {
         pushEnCours = false;
     }
+}
+
+/** Ce qu'on annonce après une écriture réussie, selon le chemin emprunté. */
+function messageEcriture(res: {
+    live?: boolean; enregistre?: boolean | null; path?: string; formules?: number;
+}): string {
+    if (res.live) {
+        return "Écrit dans le classeur ouvert dans Excel"
+            + (res.enregistre ? " — Excel l'a enregistré." : " — enregistre-le dans Excel quand tu veux.");
+    }
+    return "Écrit vers Excel : " + basename(res.path || excelPath || "")
+        + (cheminSynchronise(excelPath)
+            ? " — laisse OneDrive terminer la synchronisation avant d'ouvrir "
+              + "le classeur, Excel l'ouvre depuis SharePoint."
+            : "");
 }
 
 /** Sens Excel → App : remplace le diagramme par le contenu du classeur. */
@@ -2295,12 +2815,14 @@ function reconcileFromExcel(data: ExcelData): boolean {
             const n = nodesById.get(id)!;
             n.name = E.name; n.column = E.column; n.title = E.title;
             n.order = E.order; n.filiere = E.filiere; n.color = E.color;
+            if (data.hasLane) n.lane = E.lane;
             excelNodeIds.add(id); newSyncedNodes.add(id);
         } else {
             if (!id) { id = newId("n"); assigned = true; }
             else { excelNodeIds.add(id); }
             const n: FlowNode = {
                 id, name: E.name, column: E.column, title: E.title,
+                lane: data.hasLane ? E.lane : 1,
                 order: E.order, filiere: E.filiere, color: E.color, x: 0, y: 0
             };
             layoutNew(n);
@@ -2377,7 +2899,7 @@ function loadExample(): void {
     const mk = (
         name: string, column: number, title: string, order: number,
         filiere: string, color: string, x: number, y: number
-    ): FlowNode => ({ id: newId("n"), name, column, title, order, filiere, color, x, y });
+    ): FlowNode => ({ id: newId("n"), name, column, title, order, lane: 1, filiere, color, x, y });
 
     const nProd = mk("Production", 1, "Production", 0, "", "#e0503f", 40, 260);
     const nLait = mk("Lait", 2, "", 0, "", "#e79a3c", 230, 260);

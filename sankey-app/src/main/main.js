@@ -5,6 +5,22 @@ const path = require("path");
 const fs = require("fs");
 const { writeDiagram, readDiagram, isWorkbookLocked } = require("./excel");
 const { saveAndCloseInExcel, workbookState, forgetOpenState } = require("./excel-control");
+const { writeDiagramLive, readDiagramLive } = require("./excel-live");
+
+// Écrire dans le classeur ouvert suppose de piloter Excel : macOS et Windows.
+const PILOTAGE = ["darwin", "win32"].includes(process.platform);
+
+/**
+ * Ajoute à l'état du classeur le drapeau « live » : l'app peut-elle écrire
+ * dans le classeur pendant qu'Excel le tient ouvert ?
+ *
+ * Optimiste à dessein. On ne le vérifie pas par un aller-retour supplémentaire
+ * vers Excel : si l'autorisation d'automatisation manque, l'écriture à chaud
+ * rendra « denied » et l'app repassera par l'avertissement habituel.
+ */
+function avecPilotage(etat) {
+  return Object.assign({}, etat, { live: PILOTAGE && !!etat.locked });
+}
 
 let excelWatcher = null;
 let excelPoll = null;
@@ -17,7 +33,9 @@ async function pollExcelState(win, filePath) {
   const etat = await workbookState(filePath);
   if (etat.locked !== lockPresent) {
     lockPresent = etat.locked;
-    if (!win.isDestroyed()) win.webContents.send("excel:lock", { locked: etat.locked, mode: etat.mode });
+    if (!win.isDestroyed()) {
+      win.webContents.send("excel:lock", avecPilotage(etat));
+    }
   }
 }
 
@@ -143,22 +161,51 @@ ipcMain.handle("excel:openExisting", async () => {
 });
 
 // Écriture (création ou mise à jour de l'onglet géré) du diagramme.
-// IMPORTANT : si Excel tient le classeur ouvert (verrou « ~$… »), on n'écrit
-// PAS : sur macOS l'écriture réussirait sur le disque, mais Excel garde sa
-// copie en mémoire et écraserait tout à sa prochaine sauvegarde (perte des
-// couleurs & co). On renvoie « locked » -> l'app diffère l'écriture jusqu'à
-// la fermeture du classeur.
-ipcMain.handle("excel:write", async (_e, model, filePath, sheetName) => {
+//
+// Deux chemins, selon qu'Excel tient le classeur ou non :
+//
+//  - classeur OUVERT dans Excel -> on demande à Excel d'écrire (excel-live.js).
+//    Écrire le .xlsx sur le disque serait ici sans effet : Excel garde sa copie
+//    en mémoire et l'écraserait à sa prochaine sauvegarde (c'était la cause de
+//    la « perte des couleurs »), et pour un fichier SharePoint il n'ouvre même
+//    pas la copie locale.
+//  - classeur FERMÉ -> écriture directe du fichier (excel.js).
+//
+// Si l'écriture à chaud échoue (automatisation refusée, boîte de dialogue
+// ouverte…), on renvoie « locked » comme avant : l'app avertit et diffère.
+ipcMain.handle("excel:write", async (_e, model, filePath, sheetName, options) => {
   try {
     // Dernière ligne de défense : l'état vu par le renderer peut dater.
     const etat = await workbookState(filePath);
     if (etat.locked) {
-      return { ok: false, error: "Classeur ouvert dans Excel", locked: true, mode: etat.mode };
+      if (!PILOTAGE) {
+        return { ok: false, error: "Classeur ouvert dans Excel", locked: true, mode: etat.mode };
+      }
+      const live = await writeDiagramLive(filePath, model, sheetName || "Diagramme", {
+        save: !!(options && options.save)
+      });
+      if (live.ok) {
+        // Si Excel a enregistré, le fichier vient de changer sous nos pieds :
+        // on marque l'horodatage pour ne pas se notifier soi-même.
+        if (live.save) lastWriteTs = Date.now();
+        return {
+          ok: true, live: true, path: filePath, sheetName: sheetName || "Diagramme",
+          enregistre: live.save, formules: live.formules, ms: live.ms
+        };
+      }
+      // « not-open » : Excel a fermé le classeur entre-temps -> on écrit le fichier.
+      if (live.state !== "not-open" && live.state !== "not-running") {
+        return {
+          ok: false, error: "Classeur ouvert dans Excel", locked: true,
+          mode: etat.mode, liveState: live.state, liveError: live.error
+        };
+      }
+      forgetOpenState();
     }
     lastWriteTs = Date.now();
     const res = await writeDiagram(filePath, model, sheetName || "Diagramme");
     lastWriteTs = Date.now();
-    return { ok: true, path: res.path, sheetName: res.sheetName };
+    return { ok: true, live: false, path: res.path, sheetName: res.sheetName };
   } catch (err) {
     const msg = String((err && err.message) || err);
     const locked = /EBUSY|EACCES|EPERM|resource busy|locked/i.test(msg);
@@ -166,11 +213,21 @@ ipcMain.handle("excel:write", async (_e, model, filePath, sheetName) => {
   }
 });
 
-// Lecture du diagramme depuis le classeur
+// Lecture du diagramme depuis le classeur.
+// Quand Excel tient le classeur, le .xlsx sur le disque est en retard sur ce
+// que l'utilisatrice voit à l'écran (et, pour un fichier SharePoint, Excel ne
+// l'a même pas ouvert) : on lit alors directement dans Excel.
 ipcMain.handle("excel:read", async (_e, filePath, sheetName) => {
   try {
+    if (PILOTAGE) {
+      const etat = await workbookState(filePath);
+      if (etat.locked) {
+        const live = await readDiagramLive(filePath, sheetName || "Diagramme");
+        if (live.ok) return { ok: true, live: true, data: live.data };
+      }
+    }
     const data = await readDiagram(filePath, sheetName || "Diagramme");
-    return { ok: true, data };
+    return { ok: true, live: false, data };
   } catch (err) {
     return { ok: false, error: String((err && err.message) || err) };
   }
@@ -201,7 +258,7 @@ ipcMain.handle("excel:watch", (e, filePath) => {
   return { ok: true, locked: filePath ? isWorkbookLocked(filePath) : false };
 });
 
-ipcMain.handle("excel:isLocked", (_e, filePath) => workbookState(filePath));
+ipcMain.handle("excel:isLocked", async (_e, filePath) => avecPilotage(await workbookState(filePath)));
 
 // Demande à Excel d'enregistrer puis de fermer le classeur (option explicite
 // de l'utilisateur). On revérifie le verrou ensuite : Excel met un instant à
@@ -210,12 +267,12 @@ ipcMain.handle("excel:closeInExcel", async (_e, filePath) => {
   if (!filePath) return { ok: false, state: "error", error: "Aucun classeur." };
   const res = await saveAndCloseInExcel(filePath);
   forgetOpenState();
-  if (!res.ok) return Object.assign(await workbookState(filePath), res);
+  if (!res.ok) return Object.assign(avecPilotage(await workbookState(filePath)), res);
   for (let i = 0; i < 12; i++) {
     forgetOpenState();
     const etat = await workbookState(filePath);
-    if (!etat.locked) return Object.assign(etat, res);
+    if (!etat.locked) return Object.assign(avecPilotage(etat), res);
     await new Promise(r => setTimeout(r, 250));
   }
-  return Object.assign(await workbookState(filePath), res);
+  return Object.assign(avecPilotage(await workbookState(filePath)), res);
 });
