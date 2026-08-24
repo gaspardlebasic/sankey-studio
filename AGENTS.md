@@ -78,6 +78,36 @@ ce fichier soit chargé — Vibe le demande au premier lancement dans le dossier
 Le MCP n'est **pas nécessaire** pour valider une modification : `npm run smoke` couvre le
 parcours d'édition sans navigateur. Le MCP sert à regarder le rendu et à explorer.
 
+## Skills partagées (`.claude/skills/`)
+
+Versionnées avec le dépôt : tout agent qui ouvre le projet les voit. Elles s'invoquent par
+leur nom (`/thermos`, `/tdd`, …) ; celles marquées **sur demande** ne se déclenchent jamais
+toutes seules.
+
+| Skill | Quand | Déclenchement |
+|---|---|---|
+| `thermos` | Lance les deux revues thermo en parallèle puis synthétise | sur demande |
+| `thermo-nuclear-review` | Audit bugs / sécurité / régressions du diff de la branche | sur demande |
+| `thermo-nuclear-code-quality-review` | Revue de maintenabilité très stricte (abstractions, fichiers > 1 000 lignes, spaghetti) | sur demande |
+| `improve-codebase-architecture` | Repère les modules trop plats, rend un rapport HTML de pistes d'approfondissement | sur demande |
+| `codebase-design` | Vocabulaire des modules profonds (*module, interface, depth, seam, leverage*) | automatique |
+| `domain-modeling` | Tenir `CONTEXT.md` et les ADR à jour | automatique |
+| `grilling` | Passer un plan au gril avant de coder | automatique |
+| `diagnosing-bugs` | Boucle de diagnostic pour un bug tenace ou une lenteur | automatique |
+| `tdd` | Boucle rouge → vert et critères d'un bon test | automatique |
+
+`thermos` s'appuie sur deux sous-agents déclarés dans `.claude/agents/`.
+
+Origine : [cursor/plugins](https://github.com/cursor/plugins) (dossier `thermos/`, commit
+`4612556`) et [mattpocock/skills](https://github.com/mattpocock/skills) (branche `main`).
+Ce sont des copies figées — pour les mettre à jour, retélécharger les `SKILL.md` depuis ces
+dépôts.
+
+**Attention à l'ordre :** `improve-codebase-architecture` et `domain-modeling` écrivent dans
+`CONTEXT.md` et `docs/adr/`, qui n'existent pas encore ici ; elles les créeront à la volée.
+Les conventions de test du projet (§ « Vérifier une fonctionnalité ») priment sur les
+recommandations génériques de `tdd`.
+
 ---
 
 Ce dépôt contient **deux livrables** autour du même moteur de rendu Sankey.
