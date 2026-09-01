@@ -24,6 +24,8 @@
         }
         #courtier button:hover { background: var(--dark); color: var(--bright); }
         #courtier-etat { margin: 0; font-size: 13px; }
+        #courtier-amorce { display: flex; flex-direction: column; gap: 12px; }
+        #courtier-amorce p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
         #courtier-etat.erreur { color: var(--alert); }
         #courtier .note, #courtier-synchro {
             margin: 0; font-size: 12px; color: var(--muted); line-height: 1.45;
@@ -41,6 +43,18 @@
         <h1>Sankey Studio</h1>
         <p id="courtier-classeur"></p>
         <button id="courtier-ouvrir" type="button">Ouvrir la fenêtre d'édition</button>
+        <!--
+          Le classeur n'a pas encore de quoi porter un diagramme. On ne montre
+          pas l'éditeur d'un classeur qu'il ne peut pas lire : ce bloc prend la
+          place du bouton d'ouverture, et le laisse revenir une fois la feuille
+          en place.
+        -->
+        <div id="courtier-amorce" hidden>
+            <p id="courtier-amorce-texte">Ce classeur n'a pas encore d'onglet
+                « Diagramme ». Sankey Studio peut le préparer : un onglet et deux
+                tableaux vides, <strong>Noeuds</strong> et <strong>Liens</strong>.</p>
+            <button id="courtier-initialiser" type="button">Préparer le classeur</button>
+        </div>
         <p id="courtier-etat"></p>
         <p class="note">Garde ce volet ouvert : la fenêtre d'édition se ferme avec lui.
             Le diagramme, lui, vit dans le classeur — rien n'est perdu si tu la refermes.</p>

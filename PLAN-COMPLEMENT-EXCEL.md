@@ -254,7 +254,11 @@ C'est le cœur, et c'est la transposition de la logique métier de `excel-live.j
   lues par `caps()` (`editor.ts`). Plus aucun `d.isElectron` dans le renderer, sauf comme repli
   de `caps()` pour un pont qui ne déclarerait rien.
 - **Amorce** : dans le volet, le modèle vient du classeur et de lui seul — ni exemple, ni cache
-  `localStorage`. Les envoyer dans le classeur de l'utilisatrice détruirait ses tableaux. Rien ne
+  `localStorage`. **Complété le 2026-09-01** : sur un classeur qui ne porte pas les deux tableaux,
+  le volet ne montre plus un éditeur vide mais un bouton **« Préparer le classeur »**
+  (`initialiserClasseur()`), et la fenêtre n'ouvre qu'ensuite. C'est la seule écriture du
+  complément dans un classeur dont il ne sait rien : elle refuse dès qu'elle risquerait
+  d'écraser quelque chose. Les envoyer dans le classeur de l'utilisatrice détruirait ses tableaux. Rien ne
   part vers Excel tant que la première lecture n'a pas réussi (`amorceFaite`).
 - Manifeste `src/addin/manifest.xml` : `SourceLocation` HTTPS, bouton de ruban (`VersionOverrides`),
   `Requirements` minimal (`ExcelApi 1.1`), icônes 16/32/80 dans `build/addin/`.

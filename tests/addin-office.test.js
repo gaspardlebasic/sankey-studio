@@ -183,6 +183,104 @@ await test("lecture : classeur sans nos tableaux -> null", async () => {
   egal(d, null, "aucun tableau reconnu");
 });
 
+/* -------------------------- INITIALISATION -------------------------- */
+/*
+ * `initialiserClasseur()` est la seule fonction de l'adaptateur qui écrive dans
+ * un classeur dont on ne sait RIEN — un classeur que l'utilisatrice n'a pas
+ * préparé. Ses refus comptent donc autant que sa réussite.
+ */
+
+await test("initialisation : un classeur nu reçoit la feuille et les deux tableaux", async () => {
+  const c = monterClasseur([
+    { nom: "Autre", feuille: "Ventes", entetes: ["Mois", "Chiffre"], lignes: [["janvier", 3]] }
+  ]);
+  const r = await office.initialiserClasseur();
+  attendu(r.ok, "initialisation faite : " + (r.error || ""));
+  egal(r.feuille, "Diagramme", "feuille créée");
+  egal(c.tablesDe("Diagramme").length, 2, "deux tableaux sur la feuille");
+  const [n, l] = c.tablesDe("Diagramme");
+  egal(c.entetesDe(n), NODE_COLS.slice(), "en-têtes des nœuds");
+  egal(c.entetesDe(l), LINK_COLS.slice(), "en-têtes des liens");
+  egal(c.tablesDe("Ventes"), ["Autre"], "la feuille voisine est intacte");
+});
+
+await test("initialisation : le classeur préparé est aussitôt lisible", async () => {
+  // C'est la vraie assertion : ce qu'on a créé doit passer le repérage, sinon
+  // le bouton produirait un classeur que le complément ne saurait pas relire.
+  monterClasseur([{ nom: "Autre", feuille: "Ventes", entetes: ["Mois"], lignes: [["janvier"]] }]);
+  attendu(!(await office.diagrammePresent()), "rien à lire avant");
+  await office.initialiserClasseur();
+  attendu(await office.diagrammePresent(), "diagramme présent après");
+  const d = await office.lireDiagramme();
+  attendu(d !== null, "le classeur se lit");
+  egal(d.nodes.length, 0, "aucun nœud");
+  egal(d.links.length, 0, "aucun lien");
+  egal(d.hasLane, true, "la colonne Couloir est là");
+  egal(d.hasKind, true, "la colonne Type est là");
+});
+
+await test("initialisation : on peut écrire dans le classeur qu'on vient de préparer", async () => {
+  const c = monterClasseur([{ nom: "Autre", feuille: "Ventes", entetes: ["Mois"], lignes: [["j"]] }]);
+  await office.initialiserClasseur();
+  const r = await office.ecrireDiagramme(MODELE);
+  attendu(r.ok, "écriture faite : " + (r.error || ""));
+  const [n, l] = c.tablesDe("Diagramme");
+  egal(c.hauteurDe(n), 3, "trois nœuds écrits");
+  egal(c.hauteurDe(l), 2, "deux liens écrits");
+});
+
+await test("initialisation : un classeur déjà préparé n'est pas touché", async () => {
+  const c = classeurType();
+  const avant = JSON.stringify(c.lignesDe("Noeuds")) + JSON.stringify(c.lignesDe("Liens"));
+  const r = await office.initialiserClasseur();
+  egal(r.ok, false, "refus");
+  egal(r.deja, true, "et il dit pourquoi : c'était déjà fait");
+  egal(JSON.stringify(c.lignesDe("Noeuds")) + JSON.stringify(c.lignesDe("Liens")), avant,
+       "rien n'a bougé");
+  egal(c.tablesDe("Diagramme").length, 2, "aucun tableau ajouté");
+});
+
+await test("initialisation : une feuille « Diagramme » NON VIDE est refusée, pas écrasée", async () => {
+  // Le cas dangereux : quelqu'un a une feuille de ce nom qui sert à autre chose.
+  const c = monterClasseur([
+    { nom: "Budget", feuille: "Diagramme", entetes: ["Poste", "Montant"],
+      lignes: [["Loyer", 900]] }
+  ]);
+  const r = await office.initialiserClasseur();
+  egal(r.ok, false, "refus");
+  attendu(/n'est pas vide/.test(r.error || ""), "message explicite : " + r.error);
+  egal(c.tablesDe("Diagramme"), ["Budget"], "le tableau de l'utilisatrice est seul et intact");
+  egal(c.lignesDe("Budget"), [["Loyer", 900]], "son contenu est intact");
+});
+
+await test("initialisation : un demi-diagramme est refusé plutôt que complété au jugé", async () => {
+  const c = monterClasseur([
+    { nom: "Noeuds", entetes: NODE_COLS.slice(), c0: 0,
+      lignes: [["Lait", "Lait cru", 1, "", 0, "", "n1", 1, "Produit"]] }
+  ]);
+  const r = await office.initialiserClasseur();
+  egal(r.ok, false, "refus");
+  egal(c.tablesDe("Diagramme"), ["Noeuds"], "aucun tableau ajouté");
+});
+
+await test("initialisation : les noms de tableaux déjà pris sont contournés", async () => {
+  // Excel refuse deux tableaux de même nom dans tout le classeur : sans
+  // `nomLibre`, l'initialisation lèverait ici. Le nom n'a aucune importance
+  // pour la suite — tout se retrouve par les en-têtes — mais il doit exister.
+  // Les NOMS sont pris, mais par des tableaux sans rapport : rien à repérer.
+  const c = monterClasseur([
+    { nom: "Noeuds", feuille: "Ventes", entetes: ["Mois", "Chiffre"], c0: 0, lignes: [["j", 1]] },
+    { nom: "Liens", feuille: "Ventes", entetes: ["Poste", "Montant"], c0: 20, lignes: [["x", 2]] }
+  ]);
+  const r = await office.initialiserClasseur();
+  attendu(r.ok, "initialisation faite malgré les noms pris : " + (r.error || ""));
+  const noms = c.tablesDe("Diagramme");
+  egal(noms.length, 2, "deux tableaux créés");
+  attendu(noms.indexOf("Noeuds") < 0 && noms.indexOf("Liens") < 0,
+          "des noms libres ont été choisis : " + noms.join(", "));
+  attendu(await office.diagrammePresent(), "et le diagramme se repère quand même");
+});
+
 /* ---------------------------- REPÉRAGE ---------------------------- */
 /*
  * Le premier essai dans Excel (2026-09-01) a lu 32 liens là où le classeur en

@@ -21,6 +21,7 @@
 
 import { installerPont, elargirVolet, supporte } from "./pont";
 import type { Pont } from "./pont";
+import { diagrammePresent, initialiserClasseur } from "./excel-office";
 import { CourtierVolet, JEU_FENETRE, type Etat } from "./courtier-volet";
 import { createApp } from "../renderer/editor";
 
@@ -82,6 +83,52 @@ function montrerCourtier(pont: Pont, nomClasseur: string, evenements: boolean): 
   return courtier;
 }
 
+/**
+ * Le classeur n'a pas de quoi porter un diagramme : on propose de le préparer
+ * au lieu d'ouvrir un éditeur qui n'aurait rien à montrer.
+ *
+ * Ce bouton vit dans le VOLET, pas dans la fenêtre d'édition, et c'est
+ * délibéré. Il touche au classeur, donc à Office.js, que seul le volet tient ;
+ * le faire depuis la fenêtre voudrait dire élargir le contrat
+ * `window.desktop` — qui décrit ce dont le RENDERER a besoin — et faire
+ * traverser le tunnel à une opération que le renderer n'utilisera jamais. Le
+ * volet est aussi le seul des deux à être visible à ce moment-là : la fenêtre
+ * n'est pas encore ouverte.
+ *
+ * `apres` reprend le démarrage normal une fois le classeur prêt.
+ */
+function proposerAmorce(apres: () => void): void {
+  const bloc = element("courtier-amorce");
+  const bouton = element<HTMLButtonElement>("courtier-initialiser");
+  const ouvrir = element<HTMLButtonElement>("courtier-ouvrir");
+  const etat = element("courtier-etat");
+  if (!bloc || !bouton) { apres(); return; }   // page incomplète : ne pas bloquer
+
+  bloc.hidden = false;
+  if (ouvrir) ouvrir.hidden = true;
+
+  bouton.addEventListener("click", async () => {
+    bouton.disabled = true;
+    bouton.textContent = "Préparation…";
+    const r = await initialiserClasseur();
+    if (!r.ok && !r.deja) {
+      // Un refus est une information, pas une panne : on la montre et on
+      // laisse réessayer — l'utilisatrice peut aller corriger dans Excel.
+      bouton.disabled = false;
+      bouton.textContent = "Réessayer";
+      if (etat) {
+        etat.textContent = r.error || "Préparation impossible.";
+        etat.classList.add("erreur");
+      }
+      return;
+    }
+    if (etat) { etat.textContent = ""; etat.classList.remove("erreur"); }
+    bloc.hidden = true;
+    if (ouvrir) ouvrir.hidden = false;
+    apres();
+  });
+}
+
 /* ------------------------------ démarrage ------------------------------ */
 
 function demarrer(): void {
@@ -107,14 +154,34 @@ function demarrer(): void {
       // est à l'étroit (phase 0 §G) mais tout fonctionne.
       console.warn("Sankey Studio : DialogApi 1.2 absent — l'éditeur reste dans le volet.");
       const racine = element("app")!;
-      racine.hidden = false;
-      createApp(racine);
-      elargirVolet();
+      const dansLeVolet = () => { racine.hidden = false; createApp(racine); elargirVolet(); };
+      // L'amorce vaut ici aussi : c'est le même classeur nu, et le même remède.
+      if (!(await diagrammePresent())) {
+        const panneau = element("courtier");
+        const ouvrir = element("courtier-ouvrir");
+        const ligneClasseur = element("courtier-classeur");
+        if (panneau) panneau.hidden = false;
+        if (ouvrir) ouvrir.hidden = true;
+        if (ligneClasseur) ligneClasseur.textContent = nomClasseur;
+        proposerAmorce(() => { if (panneau) panneau.hidden = true; dansLeVolet(); });
+        return;
+      }
+      dansLeVolet();
       return;
     }
 
     const courtier = montrerCourtier(pont, nomClasseur, evenements);
     if (!courtier) { annoncer("Page du volet incomplète."); return; }
+
+    // Un classeur nu n'a rien à éditer : on propose de le préparer, et la
+    // fenêtre n'ouvre qu'après. Ouvrir d'abord donnerait un éditeur vide
+    // annonçant « classeur illisible » par-dessus tout l'écran, avec le seul
+    // remède — le volet — caché dessous.
+    if (!(await diagrammePresent())) {
+      proposerAmorce(() => courtier.ouvrir());
+      return;
+    }
+
     // Confort du bureau : la fenêtre s'ouvre seule. Sur Excel pour le web, une
     // ouverture sans clic est refusée — le bouton prend alors le relais.
     courtier.ouvrir();

@@ -165,6 +165,91 @@ class FauxTableau {
   }
 }
 
+/* ------------------------------ feuille ------------------------------ */
+
+/** A, B, … Z, AA — pour rendre une adresse lisible dans les messages. */
+function lettre(c) {
+  let n = c + 1, out = "";
+  while (n > 0) { const r = (n - 1) % 26; out = String.fromCharCode(65 + r) + out; n = (n - r - 1) / 26; }
+  return out;
+}
+
+/** getUsedRangeOrNullObject : nul sur une feuille vierge, sinon son étendue. */
+class FaussePlageUtilisee {
+  constructor(ctx, grille) {
+    this.ctx = ctx; this.grille = grille;
+    this._resolu = false; this._nul = undefined; this._adresse = undefined;
+  }
+  load(props) { void props; this.ctx._aCharger.push(this); return this; }
+  get isNullObject() {
+    if (!this._resolu) throw new Error("isNullObject lu avant sync()");
+    return this._nul;
+  }
+  get address() {
+    if (!this._resolu) throw new Error("address lu avant sync()");
+    return this._adresse;
+  }
+  _resoudre() {
+    let r1 = null, r2 = 0, c1 = null, c2 = 0;
+    for (const [k, cel] of this.grille.cellules) {
+      if ((cel.v === "" || cel.v === null || cel.v === undefined) && !cel.f) continue;
+      const [r, c] = k.split(",").map(Number);
+      if (r1 === null || r < r1) r1 = r;
+      if (c1 === null || c < c1) c1 = c;
+      if (r > r2) r2 = r;
+      if (c > c2) c2 = c;
+    }
+    this._resolu = true;
+    this._nul = r1 === null;
+    this._adresse = this._nul ? null : lettre(c1) + (r1 + 1) + ":" + lettre(c2) + (r2 + 1);
+  }
+}
+
+class FausseFeuille {
+  constructor(ctx, nom) {
+    this.ctx = ctx;
+    this.name = nom;
+    this.grille = ctx._classeur.grillePour(nom);
+    this.activee = false;
+    const feuille = this;
+    this.tables = {
+      /**
+       * Les en-têtes sont lues DANS LA GRILLE, tout de suite. Un appelant qui
+       * pose ses en-têtes puis crée le tableau sans synchroniser entre les deux
+       * obtient donc un tableau sans en-tête — exactement ce que fait Excel, et
+       * c'est le genre d'ordre qu'un faux doit faire respecter.
+       */
+      add(plage, avecEntetes) {
+        const entetes = [];
+        for (let c = 0; c < plage.colonnes; c++) {
+          entetes.push(feuille.grille.lire(plage.r0, plage.c0 + c).v);
+        }
+        const def = {
+          nom: "Tableau" + (ctx._classeur.tables.length + 1), feuille: nom, entetes,
+          lignes: avecEntetes ? plage.lignes - 1 : plage.lignes,
+          r0: plage.r0, c0: plage.c0, grille: feuille.grille, gestionnaires: []
+        };
+        ctx._classeur.tables.push(def);
+        return {
+          get name() { return def.nom; },
+          set name(v) {
+            // Excel refuse deux tableaux de même nom, dans TOUT le classeur.
+            if (ctx._classeur.tables.some(d => d !== def && d.nom === v)) {
+              throw new Error("nom de tableau déjà pris : " + v);
+            }
+            def.nom = v;
+          }
+        };
+      }
+    };
+  }
+  getRangeByIndexes(r0, c0, lignes, colonnes) {
+    return new FausseP1age(this.ctx, this.grille, r0, c0, lignes, colonnes);
+  }
+  getUsedRangeOrNullObject() { return new FaussePlageUtilisee(this.ctx, this.grille); }
+  activate() { this.activee = true; }
+}
+
 /* ------------------------------ contexte ------------------------------ */
 
 class FauxContexte {
@@ -175,14 +260,42 @@ class FauxContexte {
     this.enregistrements = 0;
     const ctx = this;
     const tables = classeur.tables.map(def => new FauxTableau(this, def));
+    this._feuilles = new Map();
     this.workbook = {
       tables: {
         items: tables,
         load() { ctx._aCharger.push(this); return this; },
         _resoudre() { /* items sont déjà là */ }
       },
+      worksheets: {
+        items: [],
+        load() { ctx._aCharger.push(this); return this; },
+        _resoudre() { this.items = ctx._nomsFeuilles().map(n => ctx._feuille(n)); },
+        getItem(nom) { return ctx._feuille(nom); },
+        add(nom) {
+          if (ctx._nomsFeuilles().indexOf(nom) >= 0) {
+            throw new Error("feuille déjà présente : " + nom);
+          }
+          ctx._classeur.feuillesNues.push(nom);
+          return ctx._feuille(nom);
+        }
+      },
       save() { ctx._file.push({ type: "save" }); }
     };
+  }
+
+  /** Les feuilles du classeur : celles qui portent un tableau, et les nues. */
+  _nomsFeuilles() {
+    const out = [];
+    for (const d of this._classeur.tables) if (out.indexOf(d.feuille) < 0) out.push(d.feuille);
+    for (const f of this._classeur.feuillesNues) if (out.indexOf(f) < 0) out.push(f);
+    return out;
+  }
+
+  /** Une seule instance par nom : `getItem` deux fois rend le même objet. */
+  _feuille(nom) {
+    if (!this._feuilles.has(nom)) this._feuilles.set(nom, new FausseFeuille(this, nom));
+    return this._feuilles.get(nom);
   }
 
   async sync() {
@@ -257,9 +370,18 @@ class FauxContexte {
  * Une cellule peut être une valeur, ou { f: "=..." , v: 12 } pour une formule.
  */
 function monterClasseur(tables) {
-  const grille = new Grille();
+  // UNE GRILLE PAR FEUILLE. Deux tableaux d'une même feuille partagent la
+  // leur — c'est ce qui fait que l'un peut décaler l'autre, l'invariant que
+  // cette classe existe pour éprouver. Deux feuilles, elles, s'ignorent.
+  const grilles = new Map();
+  const grillePour = nom => {
+    if (!grilles.has(nom)) grilles.set(nom, new Grille());
+    return grilles.get(nom);
+  };
   const defs = tables.map(t => {
     const r0 = t.r0 || 0, c0 = t.c0 || 0;
+    const feuille = t.feuille || "Diagramme";
+    const grille = grillePour(feuille);
     t.entetes.forEach((h, c) => grille.ecrire(r0, c0 + c, { v: h, f: "" }));
     (t.lignes || []).forEach((ligne, r) => {
       ligne.forEach((cel, c) => {
@@ -268,12 +390,14 @@ function monterClasseur(tables) {
       });
     });
     return {
-      nom: t.nom, feuille: t.feuille || "Diagramme", entetes: t.entetes,
+      nom: t.nom, feuille, entetes: t.entetes,
       lignes: (t.lignes || []).length, r0, c0, grille, gestionnaires: []
     };
   });
 
-  const classeur = { tables: defs, grille };
+  // Une feuille peut exister sans porter de tableau : `feuillesNues` les
+  // déclare, pour éprouver le refus d'écrire sur une feuille déjà occupée.
+  const classeur = { tables: defs, grilles, grillePour, feuillesNues: [] };
   let dernier = null;
 
   global.Excel = {
@@ -296,7 +420,7 @@ function monterClasseur(tables) {
       const out = [];
       for (let r = 0; r < d.lignes; r++) {
         const ligne = [];
-        for (let c = 0; c < d.entetes.length; c++) ligne.push(grille.lire(d.r0 + 1 + r, d.c0 + c).v);
+        for (let c = 0; c < d.entetes.length; c++) ligne.push(d.grille.lire(d.r0 + 1 + r, d.c0 + c).v);
         out.push(ligne);
       }
       return out;
@@ -307,14 +431,30 @@ function monterClasseur(tables) {
       const out = [];
       for (let r = 0; r < d.lignes; r++) {
         const ligne = [];
-        for (let c = 0; c < d.entetes.length; c++) ligne.push(grille.lire(d.r0 + 1 + r, d.c0 + c).f);
+        for (let c = 0; c < d.entetes.length; c++) ligne.push(d.grille.lire(d.r0 + 1 + r, d.c0 + c).f);
         out.push(ligne);
       }
       return out;
     },
     hauteurDe(nom) { return defs.find(x => x.nom === nom).lignes; },
     /** Cellule brute, pour vérifier qu'une colonne étrangère n'a pas bougé. */
-    cellule(r, c) { return grille.lire(r, c); },
+    cellule(r, c, feuille) { return classeur.grillePour(feuille || "Diagramme").lire(r, c); },
+    /** Les tableaux d'une feuille, dans l'ordre où le classeur les porte. */
+    tablesDe(feuille) {
+      return classeur.tables.filter(d => d.feuille === feuille).map(d => d.nom);
+    },
+    /** Les en-têtes d'un tableau, telles qu'Excel les a prises. */
+    entetesDe(nom) {
+      const d = classeur.tables.find(x => x.nom === nom);
+      return d ? d.entetes.slice() : null;
+    },
+    /** Les feuilles du classeur, tableaux et feuilles nues confondus. */
+    feuilles() {
+      const vues = [];
+      for (const d of classeur.tables) if (vues.indexOf(d.feuille) < 0) vues.push(d.feuille);
+      for (const f of classeur.feuillesNues) if (vues.indexOf(f) < 0) vues.push(f);
+      return vues;
+    },
     enregistrements() { return dernier ? dernier.enregistrements : 0; },
     /** Noms des tableaux sur lesquels un gestionnaire onChanged est posé. */
     tablesEcoutees() {

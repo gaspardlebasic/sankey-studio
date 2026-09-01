@@ -203,7 +203,10 @@ L'app Electron n'est **pas** touchée par ce chantier (PLAN §5.1).
     colonnes (`NODE_COLS`/`LINK_COLS`), ordre de tri des lignes, types, `buildModelRows`.
     Partagé par l'écriture du `.xlsx` **et** par le complément Office. Ne jamais dupliquer
     ces règles ailleurs : les deux chemins produiraient des classeurs différents.
-  - `src/addin/excel-office.ts` — **adaptateur Office.js** : lit et écrit dans le classeur
+  - `src/addin/excel-office.ts` — **adaptateur Office.js** : `initialiserClasseur()` prépare un
+    classeur nu (feuille + deux tableaux vides) et **refuse** plutôt que d'écraser — diagramme
+    déjà là, feuille du même nom non vide, demi-diagramme. C'est la seule fonction qui écrive
+    dans un classeur dont on ne sait rien. Elle lit et écrit dans le classeur
     *ouvert*, depuis l'intérieur d'Excel. Écrit **colonne par colonne, par nom d'en-tête**,
     donc tolère un autre ordre de colonnes et n'écrase pas une colonne ajoutée par
     l'utilisatrice. Les deux tableaux sont retrouvés par leurs en-têtes **sur une seule et même
@@ -227,7 +230,12 @@ L'app Electron n'est **pas** touchée par ce chantier (PLAN §5.1).
     volet → poignée de main → `createApp`.
   - `src/addin/synchro.ts` — rythme de la synchro descendante : filtre d'auto-écho et anti-rebond.
     Volontairement séparé d'Office.js pour être éprouvable sans Excel.
-  - `src/addin/index.ts` / `index.html` — la coquille du volet : `Office.onReady` → pont → volet
+  - `src/addin/index.ts` / `index.html` — la coquille du volet. Avant d'ouvrir la fenêtre, il
+    demande `diagrammePresent()` : sur un classeur qui n'a pas les deux tableaux, il propose
+    **« Préparer le classeur »** (`initialiserClasseur()`) au lieu d'ouvrir un éditeur qui n'aurait
+    rien à lire. Ce bouton est dans le VOLET et pas dans la fenêtre — il touche au classeur, donc
+    à Office.js, et le contrat `window.desktop` décrit ce dont le *renderer* a besoin, pas ce dont
+    le volet a besoin. `Office.onReady` → pont → volet
     courtier (ou, si `DialogApi 1.2` manque, repli avec l'éditeur dans le volet). Sortie
     `dist/addin/` — **deux pages, deux bundles hachés**, construits ensemble.
   - `src/addin/manifest.xml` — manifeste du complément (bouton de ruban, `ExcelApi 1.1`), qui

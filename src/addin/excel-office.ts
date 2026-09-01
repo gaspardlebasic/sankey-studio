@@ -22,7 +22,8 @@
  */
 
 import {
-  NODE_COLS, LINK_COLS, buildModelRows, toInt, toNum, typeDepuisTexte
+  NODE_COLS, LINK_COLS, NODE_START, LINK_START,
+  buildModelRows, toInt, toNum, typeDepuisTexte
 } from "../shared/modele-excel.js";
 import type { Cellule, Modele, NodeKind } from "../shared/modele-excel.js";
 
@@ -167,6 +168,125 @@ function ligneVide(ligne: unknown[]): boolean {
 
 function texte(v: unknown): string {
   return String(v === null || v === undefined ? "" : v);
+}
+
+/* --------------------------- INITIALISATION --------------------------- */
+
+export interface Initialisation {
+  ok: boolean;
+  /** La feuille qui porte (désormais) le diagramme. */
+  feuille?: string;
+  /** Vrai quand il n'y avait rien à faire : le classeur était déjà prêt. */
+  deja?: boolean;
+  error?: string;
+}
+
+/**
+ * Le classeur peut-il accueillir l'éditeur ? C'est la question du volet avant
+ * d'ouvrir la fenêtre : sur un classeur nu, il n'y a rien à éditer et il vaut
+ * mieux proposer de le préparer.
+ */
+export async function diagrammePresent(nomFeuille?: string): Promise<boolean> {
+  try {
+    return await Excel.run(async context => {
+      const t = await trouverTableaux(context, nomFeuille);
+      return !!(t.noeuds && t.liens);
+    });
+  } catch {
+    return false;                 // illisible = pas exploitable : même conclusion
+  }
+}
+
+/** Un nom de tableau libre dans le classeur — Excel les veut uniques. */
+function nomLibre(base: string, pris: string[]): string {
+  if (pris.indexOf(base) < 0) return base;
+  for (let i = 2; ; i++) {
+    const essai = base + i;
+    if (pris.indexOf(essai) < 0) return essai;
+  }
+}
+
+/**
+ * Prépare un classeur nu à recevoir un diagramme : une feuille « Diagramme »,
+ * et les deux tableaux vides aux en-têtes du schéma partagé.
+ *
+ * **Cette fonction écrit dans le classeur de l'utilisatrice** — d'où trois
+ * refus plutôt qu'un dégât :
+ *
+ *  1. un diagramme complet existe déjà : rien à faire, on le dit ;
+ *  2. la feuille visée existe et **n'est pas vide** : on n'écrit pas par-dessus
+ *     ce qu'on n'a pas mis là. Ça couvre aussi le demi-diagramme (un seul des
+ *     deux tableaux), qu'il vaut mieux réparer à la main que deviner ;
+ *  3. toute erreur d'Office rend un `{ ok: false, error }` — jamais une levée :
+ *     l'appelant est un bouton de volet, pas un bloc `try`.
+ *
+ * Les tableaux sont créés avec **une ligne vide** : un tableau Excel ne peut
+ * pas en avoir zéro. Leur **nom n'a aucune importance** pour la suite — tout le
+ * reste de cet adaptateur les retrouve par leurs en-têtes — mais Excel les veut
+ * uniques, d'où `nomLibre`.
+ */
+export async function initialiserClasseur(nomFeuille?: string): Promise<Initialisation> {
+  const cible = nomFeuille || FEUILLE_DEFAUT;
+  try {
+    return await Excel.run(async context => {
+      const t = await trouverTableaux(context, cible);
+      if (t.noeuds && t.liens) {
+        return { ok: false, deja: true, feuille: t.feuille,
+                 error: "Ce classeur porte déjà un diagramme." };
+      }
+
+      // Les noms déjà pris, pour n'en écraser aucun.
+      const tables = context.workbook.tables;
+      tables.load("items/name");
+      const feuilles = context.workbook.worksheets;
+      feuilles.load("items/name");
+      await context.sync();                                        // sync 3
+
+      const pris = tables.items.map(x => x.name);
+      const existe = feuilles.items.some(f => f.name === cible);
+
+      let feuille: Excel.Worksheet;
+      if (existe) {
+        feuille = feuilles.getItem(cible);
+        // getUsedRange rend un objet nul sur une feuille vierge : c'est la
+        // seule façon de distinguer « vide » de « pleine » sans tout lire.
+        const utilisee = feuille.getUsedRangeOrNullObject();
+        utilisee.load("isNullObject, address");
+        await context.sync();                                      // sync 4
+        if (!utilisee.isNullObject) {
+          return {
+            ok: false, feuille: cible,
+            error: `L'onglet « ${cible} » existe déjà et n'est pas vide (${utilisee.address}). `
+                 + "Renomme-le, vide-le, ou ajoute les deux tableaux à la main."
+          };
+        }
+      } else {
+        feuille = feuilles.add(cible);
+      }
+
+      const cN = NODE_START - 1;                 // les constantes du schéma sont
+      const cL = LINK_START - 1;                 // en base 1 ; Office en base 0
+      feuille.getRangeByIndexes(0, cN, 1, NODE_COLS.length).values = [NODE_COLS.slice()];
+      feuille.getRangeByIndexes(0, cL, 1, LINK_COLS.length).values = [LINK_COLS.slice()];
+      // Les en-têtes doivent être POSÉES avant que le tableau ne les prenne
+      // pour siennes : d'où un sync ici. C'est une action ponctuelle, déclenchée
+      // par un clic — la règle « un seul aller-retour » ne s'y applique pas.
+      await context.sync();                                        // sync 5
+
+      const tN = feuille.tables.add(
+        feuille.getRangeByIndexes(0, cN, 1 + MIN_LIGNES, NODE_COLS.length), true);
+      tN.name = nomLibre("Noeuds", pris);
+      const tL = feuille.tables.add(
+        feuille.getRangeByIndexes(0, cL, 1 + MIN_LIGNES, LINK_COLS.length), true);
+      tL.name = nomLibre("Liens", pris.concat([tN.name]));
+      feuille.activate();
+      await context.sync();                                        // sync 6
+
+      return { ok: true, feuille: cible };
+    });
+  } catch (e) {
+    return { ok: false, error: (e as Error).message || String(e) };
+  }
 }
 
 /* ------------------------------ LECTURE ------------------------------ */
