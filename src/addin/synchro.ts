@@ -7,7 +7,7 @@
  *  - **L'auto-écho.** Écrire dans le classeur déclenche `Table.onChanged`. Sans
  *    filtre, notre propre écriture nous revient, provoque une relecture, qui
  *    marque le modèle comme changé, qui réécrit… C'est l'équivalent du
- *    `lastWriteTs` de `src/main/main.js`, en deux signaux plutôt qu'un :
+ *    en deux signaux plutôt qu'un :
  *    Excel nous dit lui-même qu'il s'agit de notre écriture
  *    (`triggerSource === "ThisLocalAddin"`), et à défaut on ignore ce qui
  *    arrive juste après une écriture.

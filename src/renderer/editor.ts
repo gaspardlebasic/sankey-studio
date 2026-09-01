@@ -9,7 +9,7 @@ import {
 import {
     renderSankey, renderSankeyGroups, wrapText, policeDuType, positionDuType
 } from "./engine";
-import { openColorPopover, openModal, normalizeHex } from "./ui";
+import { openColorPopover, normalizeHex } from "./ui";
 
 const NODE_W = 132;
 const NODE_H = 38; // hauteur d'un nœud dont le nom tient sur une ligne
@@ -205,28 +205,19 @@ let model: FlowModel = { nodes: [], links: [] };
 let options: SankeyOptions = defaultOptions();
 let view: View = "edit";
 let selection: Selection = { type: null, id: "" };
-let projectPath: string | null = null;
+/** Nom du classeur qui héberge le complément — affiché, jamais ouvert. */
 let excelPath: string | null = null;
 let idCounter = 1;
 let undoStack: string[] = [];
 let redoStack: string[] = [];
 let syncedNodeIds = new Set<string>();
 let syncedLinkIds = new Set<string>();
-let pendingExcelWrite = false;
 let dirtySinceSync = false; // modifications app non encore poussées vers Excel
-let excelLocked = false; // le classeur est ouvert dans Excel
-let excelLive = false;   // ...et l'app sait y écrire directement (excel-live.js)
-let lockDialogOpen = false; // évite d'empiler les avertissements
-let lastLockCheck = 0; // limite les relectures du verrou
-let lockMode = ""; // comment le verrou a été déterminé (« refuse » = détection dégradée)
 let pushEnCours = false; // évite qu'une écriture Excel se relance sur elle-même
 // Le classeur a-t-il été lu ? Tant que non, rien ne part vers Excel : envoyer
-// un modèle vide (ou l'exemple) écraserait les tableaux de l'utilisatrice.
+// un modèle vide écraserait les tableaux de l'utilisatrice.
 let amorceFaite = false;
 
-/** Ce que l'utilisateur essayait de faire quand le verrou l'a arrêté. */
-type LockContexte = "edition" | "ecriture";
-let prefs = defaultPrefs();
 let hiddenFilieres = new Set<string>(); // filières masquées du schéma
 
 interface ExcelNode {
@@ -261,30 +252,18 @@ export function createApp(root: HTMLElement): void {
     statusEl = root.querySelector("#status") as HTMLElement;
 
     buildToolbar();
-    const c = caps();
-    if (c.classeurImpose) {
-        // Volet Excel : le modèle vient du classeur (amorcerDepuisClasseur), et
-        // de lui seul. Ni cache local ni exemple — les envoyer dans le classeur
-        // de l'utilisatrice détruirait ses tableaux.
-        excelPath = (desktop() && desktop().nomClasseur) || "Classeur Excel";
-    } else {
-        loadFromStorage();
-        if (!model.nodes.length) loadExample();
-    }
+    // Le modèle vient du classeur (amorcerDepuisClasseur), et de lui seul. Ni
+    // cache local ni exemple — les envoyer dans le classeur de l'utilisatrice
+    // détruirait ses tableaux.
+    excelPath = (desktop() && desktop().nomClasseur) || "Classeur Excel";
 
     canvas.addEventListener("dblclick", onCanvasDblClick);
     window.addEventListener("keydown", onGlobalKey);
     window.addEventListener("resize", render);
 
-    loadPrefs();
     wireExcelWatchers();
-    wireProjectOpen();
-    // Excel peut avoir été fermé pendant que l'app était en arrière-plan.
-    if (c.classeurVerrouillable) {
-        window.addEventListener("focus", () => { refreshExcelLock(); });
-    }
 
-    // Crochet de test (utilisé pour la vérification hors Electron)
+    // Crochet de test (bancs de tests/, hors Excel)
     (window as any).__sankeyTest = {
         caps: () => caps(),
         reconcile: (data: ExcelData) => reconcileFromExcel(data),
@@ -292,16 +271,11 @@ export function createApp(root: HTMLElement): void {
         model: () => model,
         refresh: () => { render(); buildSidebar(); },
         setDirty: (v: boolean) => { dirtySinceSync = v; },
+        /** Déclare le classeur lu : sans ça rien ne part vers Excel (garde-fou). */
+        amorce: (v: boolean) => { amorceFaite = v; },
         wireWatchers: () => wireExcelWatchers(),
-        setExcelLocked: (v: boolean) => { excelLocked = v; buildSidebar(); },
-        setExcelLive: (v: boolean) => { excelLive = v; buildSidebar(); },
-        excelLive: () => excelLive,
         setExcelPath: (v: string | null) => { excelPath = v; buildSidebar(); },
         nodeCount: () => model.nodes.length,
-        prefs: () => prefs,
-        formatExcelClipboard: (m?: FlowModel, f?: Record<string, string> | null) =>
-            formatExcelClipboard(m || model, f),
-        copyExcelData: (btn?: HTMLButtonElement) => copyExcelDataToClipboard(btn),
         // --- crochets utilisés par tests/run.js ---
         loadProject: (p: ProjectFile) => {
             applyProject(p);
@@ -317,7 +291,7 @@ export function createApp(root: HTMLElement): void {
     dirtySinceSync = false; // le chargement initial n'est pas une « modification »
     render();
     buildSidebar();
-    if (c.classeurImpose) amorcerDepuisClasseur();
+    amorcerDepuisClasseur();
 }
 
 /* --------------------------- barre d'outils ------------------------ */
@@ -331,19 +305,12 @@ function buildToolbar(): void {
     toolbar.appendChild(viewToggle());
 
     toolbar.appendChild(sep());
-    const c = caps();
+    // Ni « Enregistrer sous… » ni « Ouvrir » : il n'y a pas de fichier projet.
+    // Le diagramme vit dans les tableaux, l'apparence dans le classeur.
     const saveBtn = btn("Enregistrer", () => saveProject());
-    saveBtn.title = c.apparenceDansClasseur
-        ? "Ranger l'apparence dans le classeur (Cmd+S) — le diagramme, lui, vit déjà "
-          + "dans les tableaux"
-        : "Écrase le fichier projet ouvert (Cmd+S)";
+    saveBtn.title = "Ranger l'apparence dans le classeur (Cmd+S) — le diagramme, lui, "
+        + "vit déjà dans les tableaux";
     toolbar.appendChild(saveBtn);
-    // Sans fichier projet, « Enregistrer sous… » et « Ouvrir » n'ont pas d'objet :
-    // l'apparence appartient au classeur ouvert.
-    if (!c.apparenceDansClasseur) {
-        toolbar.appendChild(btn("Enregistrer sous…", () => saveProject(true)));
-        toolbar.appendChild(btn("Ouvrir", openProject));
-    }
 
     toolbar.appendChild(sep());
     const pngBtn = btn("⇩ PNG", () => exportImage("png"));
@@ -417,7 +384,7 @@ function currentFiliereForNew(): string {
 }
 
 function addNode(column?: number, rank?: number, lane?: number): void {
-    if (!beginEdit()) return;
+    snapshot();
     // Colonne : donnée (double-clic) sinon colonne du nœud de référence + 1
     if (column === undefined) {
         const ref =
@@ -454,7 +421,7 @@ function addLink(sourceId: string, targetId: string): void {
     if (sourceId === targetId) return;
     const exists = model.links.some(l => l.source === sourceId && l.target === targetId);
     if (exists) return;
-    if (!beginEdit()) return;
+    snapshot();
     const l: FlowLink = {
         id: newId("l"),
         source: sourceId,
@@ -471,7 +438,7 @@ function addLink(sourceId: string, targetId: string): void {
 
 function deleteSelected(): void {
     if (!selection.type) return;
-    if (!beginEdit()) return;
+    snapshot();
     if (selection.type === "node") {
         model.nodes = model.nodes.filter(n => n.id !== selection.id);
         model.links = model.links.filter(
@@ -1010,7 +977,7 @@ function onDragMove(e: MouseEvent): void {
     const n = nodeById(ds.id);
     if (!n) return;
     if (!ds.moved) {
-        if (!beginEdit()) { onDragEnd(); return; } // classeur ouvert dans Excel
+        snapshot();
         ds.moved = true;
         // Positions affichées initiales = grille actuelle
         layoutGrid();
@@ -1161,182 +1128,6 @@ function isEditingText(): boolean {
     );
 }
 
-/* ---------------- garde-fou : classeur ouvert dans Excel ----------------- */
-
-/**
- * Point de passage OBLIGATOIRE avant toute modification de la structure
- * (nœuds et liens).
- *
- * Excel garde sa copie du classeur en mémoire : écrire le fichier pendant ce
- * temps ne sert à rien, sa prochaine sauvegarde écraserait tout. Deux issues
- * quand le classeur est ouvert :
- *   - on sait piloter Excel (`excelLive`) : on édite, et l'écriture se fera
- *     DANS le classeur ouvert ;
- *   - sinon : on refuse et on demande de fermer le classeur.
- */
-function beginEdit(): boolean {
-    // Dans le volet Excel, le classeur est ouvert par construction et l'app y
-    // écrit directement : le garde-fou n'a plus d'objet (PLAN §6, phase 3).
-    if (!caps().classeurVerrouillable) {
-        snapshot();
-        return true;
-    }
-    if (!excelLocked) {
-        // Le surveillant de fichiers peut avoir raté l'ouverture d'Excel :
-        // on revérifie en tâche de fond (au plus une fois par seconde).
-        if (Date.now() - lastLockCheck > 1000) {
-            lastLockCheck = Date.now();
-            refreshExcelLock();
-        }
-        snapshot();
-        return true;
-    }
-    if (excelLive) {
-        snapshot();
-        return true;
-    }
-    resolveExcelLock(); // sans await : prévient / ferme Excel en arrière-plan
-    return false;
-}
-
-/** Relit l'état du verrou auprès du process principal. */
-async function refreshExcelLock(): Promise<boolean> {
-    const d = desktop();
-    if (!d || !caps().classeurVerrouillable || !excelPath) {
-        excelLocked = false;
-        return false;
-    }
-    let r: { locked?: boolean; mode?: string; live?: boolean } | null = null;
-    try {
-        r = await d.isExcelLocked(excelPath);
-    } catch {
-        return excelLocked; // IPC indisponible : on garde le dernier état connu
-    }
-    const was = excelLocked;
-    const wasMode = lockMode;
-    const wasLive = excelLive;
-    excelLocked = !!(r && r.locked);
-    excelLive = !!(r && r.live);
-    lockMode = (r && r.mode) || "";
-    if (wasMode !== lockMode || was !== excelLocked || wasLive !== excelLive) buildSidebar();
-    return excelLocked;
-}
-
-/** Demande à Excel d'enregistrer puis de fermer le classeur lié. */
-async function closeWorkbookInExcel(): Promise<boolean> {
-    const d = desktop();
-    if (!d || !caps().classeurVerrouillable || !excelPath) return false;
-    setStatus("Demande à Excel d'enregistrer et de fermer le classeur…");
-    const r = await d.closeExcelWorkbook(excelPath);
-    excelLocked = !!(r && r.locked);
-    buildSidebar();
-    if (!excelLocked) {
-        setStatus(
-            r.state === "closed"
-                ? "Excel a enregistré et fermé le classeur — l'édition est de nouveau possible."
-                : "Le classeur n'est plus ouvert dans Excel — l'édition est de nouveau possible."
-        );
-        // Le classeur est libre. Si l'app est en avance, on pousse ; sinon on
-        // récupère ce qu'Excel vient d'enregistrer.
-        if (pendingExcelWrite || dirtySinceSync) {
-            pendingExcelWrite = false;
-            pushToExcel();
-        } else {
-            pullExcel(false);
-        }
-        return true;
-    }
-    await openModal({
-        title: "Excel n'a pas pu fermer le classeur",
-        lines: [excelCloseFailure(r)],
-        buttons: [{ label: "Compris", value: "ok", kind: "primary" }]
-    });
-    return false;
-}
-
-function excelCloseFailure(r: { state?: string; error?: string }): string {
-    switch (r && r.state) {
-        case "denied":
-            return "macOS a refusé le pilotage d'Excel. Autorise « Sankey Studio » à contrôler " +
-                "« Microsoft Excel » dans Réglages Système ▸ Confidentialité et sécurité ▸ Automatisation, " +
-                "puis réessaie.";
-        case "save-failed":
-            return "Excel n'a pas réussi à enregistrer le classeur : il reste ouvert et rien n'a été " +
-                "perdu. Enregistre-le manuellement, puis ferme-le.";
-        case "timeout":
-            return "Excel n'a pas répondu. Une boîte de dialogue y est peut-être ouverte : " +
-                "règle-la, enregistre puis ferme le classeur.";
-        case "unsupported":
-            return "Le pilotage d'Excel n'est disponible que sur macOS et Windows. " +
-                "Enregistre et ferme le classeur manuellement.";
-        default:
-            return "Le classeur est toujours ouvert dans Excel. Enregistre-le et ferme-le manuellement." +
-                (r && r.error ? "\n\n(" + r.error + ")" : "");
-    }
-}
-
-/** Prévient l'utilisateur (ou ferme Excel tout seul si l'option est active). */
-async function resolveExcelLock(contexte: LockContexte = "edition"): Promise<boolean> {
-    if (lockDialogOpen) return false;
-    lockDialogOpen = true;
-    try {
-        // Le verrou peut dater : on revérifie avant d'embêter l'utilisateur.
-        if (!(await refreshExcelLock())) {
-            setStatus(
-                contexte === "ecriture"
-                    ? "Le classeur n'est plus ouvert dans Excel."
-                    : "Le classeur n'est plus ouvert dans Excel — reprends ta modification."
-            );
-            return true;
-        }
-        const d = desktop();
-        if (prefs.autoCloseExcel && d && d.canControlExcel) {
-            return await closeWorkbookInExcel();
-        }
-        const buttons: { label: string; value: string; kind?: "primary" | "ghost" | "danger" }[] = [];
-        if (d && d.canControlExcel) {
-            buttons.push({ label: "Enregistrer et fermer Excel", value: "close", kind: "primary" });
-        }
-        buttons.push({ label: "J'ai fermé le classeur", value: "recheck" });
-        buttons.push({ label: "Annuler", value: "cancel", kind: "ghost" });
-
-        const res = await openModal({
-            title: "Le classeur est ouvert dans Excel",
-            lines: [
-                "« " + basename(excelPath || "") + " » est actuellement ouvert dans Excel. " +
-                (contexte === "ecriture"
-                    ? "Enregistre-le et ferme-le pour que l'application puisse y écrire."
-                    : "Enregistre-le et ferme-le avant de modifier les nœuds et les liens."),
-                "Tant qu'Excel garde le classeur ouvert, il en conserve sa propre copie en mémoire : " +
-                "sa prochaine sauvegarde écraserait la structure écrite par l'application."
-            ],
-            checkbox: d && d.canControlExcel
-                ? {
-                    label: "Laisser Sankey Studio enregistrer et fermer Excel automatiquement",
-                    checked: prefs.autoCloseExcel
-                }
-                : undefined,
-            buttons
-        });
-        if (d && d.canControlExcel && res.checked !== prefs.autoCloseExcel) {
-            prefs.autoCloseExcel = res.checked;
-            savePrefs();
-            buildSidebar();
-        }
-        if (res.value === "close") return await closeWorkbookInExcel();
-        if (res.value === "recheck") {
-            if (!(await refreshExcelLock())) {
-                setStatus("Classeur fermé — l'édition est de nouveau possible.");
-                return true;
-            }
-            setStatus("Le classeur est toujours ouvert dans Excel.");
-        }
-        return false;
-    } finally {
-        lockDialogOpen = false;
-    }
-}
-
 /* ------------------------------ historique ------------------------- */
 
 function snapshot(): void {
@@ -1377,7 +1168,7 @@ function selectionValid(): boolean {
 /* ---------------------- ajout de nœud lié (bouton +) --------------- */
 
 function addLinkedNode(src: FlowNode): void {
-    if (!beginEdit()) return;
+    snapshot();
     const column = src.column + 1;
     const n: FlowNode = {
         id: newId("n"),
@@ -1433,7 +1224,7 @@ function editNodeName(n: FlowNode): void {
         done = true;
         const v = input.value.trim();
         if (save && v && v !== n.name) {
-            if (!beginEdit()) { input.remove(); canvas.focus(); return; }
+            snapshot();
             n.name = v;
             render();
             buildSidebar();
@@ -1546,7 +1337,7 @@ function editColumnTitle(column: number): void {
         done = true;
         const v = input.value.trim();
         if (save && v !== current) {
-            if (!beginEdit()) { input.remove(); canvas.focus(); return; }
+            snapshot();
             setColumnTitle(column, v);
             render();
             buildSidebar();
@@ -1573,7 +1364,8 @@ function toCanvas(e: MouseEvent): { x: number; y: number } {
 function buildSidebar(): void {
     sidebar.innerHTML = "";
 
-    sidebar.appendChild(buildExcelPanel());
+    const ep = buildExcelPanel();
+    if (ep) sidebar.appendChild(ep);
 
     const fp = buildFilierePanel();
     if (fp) sidebar.appendChild(fp);
@@ -1600,8 +1392,7 @@ function buildSidebar(): void {
             }));
             s.appendChild(colorField(
                 "Couleur", n.color || options.nodes.nodeColor,
-                v => { n.color = v; render(); persist(); },
-                true // couleur écrite dans Excel -> soumise au garde-fou
+                v => { n.color = v; render(); persist(); }
             ));
             s.appendChild(divider());
             s.appendChild(numberField("Colonne", n.column, v => { n.column = Math.max(1, Math.round(v)); render(); persist(); }));
@@ -1718,354 +1509,39 @@ function buildFilierePanel(): HTMLElement | null {
     return s;
 }
 
-/** Compare deux textes comme les lit une francophone : casse et accents ignorés. */
-function comparerTexte(a: string | undefined | null, b: string | undefined | null): number {
-    return String(a || "").localeCompare(String(b || ""), "fr", { sensitivity: "base" });
-}
-
-/** Compare le placement de deux nœuds : colonne, puis couloir, puis ordre vertical. */
-function comparerPlacement(a?: FlowNode, b?: FlowNode): number {
-    const nb = (v: unknown, d: number) => (typeof v === "number" && !isNaN(v) ? v : d);
-    const couloir = (n?: FlowNode) => {
-        const v = Math.round(Number(n && n.lane));
-        return isFinite(v) && v >= 1 ? v : 1;
-    };
-    return (
-        nb(a && a.column, 0) - nb(b && b.column, 0) ||
-        couloir(a) - couloir(b) ||
-        nb(a && a.order, 0) - nb(b && b.order, 0)
-    );
-}
-
-/** Filière portée par un lien : celle de son origine, sinon celle de sa destination. */
-function filiereDuLien(sNode?: FlowNode, tNode?: FlowNode): string {
-    return (sNode && sNode.filiere) || (tNode && tNode.filiere) || "";
-}
-
 /**
- * Génère le contenu TSV tabulaire prêt à être collé dans Excel (onglet Diagramme, cellule A1).
- * Comprend :
- * - Tableau Nœuds (colonnes A à I) : Filière, Noeud, Numéro de colonne, Intitulé, Ordre, Couleur, ID, Couloir, Type
- * - Colonne J vide (GAP = 1)
- * - Tableau Liens (colonnes K à Q) : Filière, Origine, Destination, Valeur du flux, Unité, ID origine, ID destination
+ * Le panneau n'a plus de section « Synchronisation Excel » : le classeur est
+ * celui qui est ouvert, et les modifications y partent d'elles-mêmes. Il n'y a
+ * rien à connecter, rien à dissocier, rien à déclencher — donc rien à montrer.
  *
- * `formules` (facultatif) : formules « Valeur du flux » relevées dans le classeur,
- * indexées par « id:<origine> <destination> » ou « name:<Origine> <Destination> ».
- * Quand une formule existe pour un lien, on colle la formule (« =… ») plutôt que
- * sa valeur calculée, pour ne pas écraser un calcul qui pointe vers d'autres onglets.
+ * Sauf sur un Excel trop ancien pour `ExcelApi 1.7` : sans ses évènements, il
+ * n'y a pas de synchronisation automatique, et ces deux boutons sont alors le
+ * SEUL moyen de faire passer quoi que ce soit dans un sens ou dans l'autre.
+ * C'est à ce titre qu'ils restent — pas comme confort.
  */
-function formatExcelClipboard(m: FlowModel, formules?: Record<string, string> | null): string {
-    const nodeCols = [
-        "Filière",
-        "Noeud",
-        "Numéro de colonne d'affichage",
-        "Intitulé de la colonne d'affichage",
-        "Ordre vertical d'affichage",
-        "Couleur",
-        "ID",
-        "Couloir",
-        "Type"
-    ];
-    const linkCols = [
-        "Filière",
-        "Origine",
-        "Destination",
-        "Valeur du flux",
-        "Unité",
-        "ID origine",
-        "ID destination"
-    ];
+function buildExcelPanel(): HTMLElement | null {
+    if (!caps().excel || caps().envoiAutomatique) return null;
 
-    const nodeById = new Map(m.nodes.map(n => [n.id, n]));
-    const nameById = new Map(m.nodes.map(n => [n.id, n.name]));
-    const nomDe = (node: FlowNode | undefined, id: string) =>
-        (node && node.name) || nameById.get(id) || "";
-    // Même rangement que l'écriture dans le classeur (`buildModelRows`) : filière,
-    // puis colonne, couloir et ordre vertical — un collage doit donner exactement
-    // les mêmes lignes qu'un « App → Excel ». On trie des copies.
-    const noeuds = m.nodes.slice().sort(
-        (a, b) =>
-            comparerTexte(a.filiere, b.filiere) ||
-            comparerPlacement(a, b) ||
-            comparerTexte(a.name, b.name)
-    );
-    const liens = m.links.slice().sort((a, b) => {
-        const sa = nodeById.get(a.source), ta = nodeById.get(a.target);
-        const sb = nodeById.get(b.source), tb = nodeById.get(b.target);
-        return (
-            comparerTexte(filiereDuLien(sa, ta), filiereDuLien(sb, tb)) ||
-            comparerPlacement(sa, sb) ||
-            comparerPlacement(ta, tb) ||
-            comparerTexte(nomDe(sa, a.source), nomDe(sb, b.source)) ||
-            comparerTexte(nomDe(ta, a.target), nomDe(tb, b.target))
-        );
-    });
-
-    const nodeRows: (string | number)[][] = noeuds.map(n => {
-        const laneVal = Math.round(Number(n.lane));
-        const lane = isFinite(laneVal) && laneVal >= 1 ? laneVal : 1;
-        return [
-            n.filiere || "",
-            n.name,
-            n.column,
-            n.title || "",
-            typeof n.order === "number" ? n.order : 0,
-            n.color || "",
-            n.id,
-            lane,
-            kindOf(n) === "industrie" ? "Industrie" : "Produit"
-        ];
-    });
-
-    const linkRows: (string | number)[][] = liens.map(l => {
-        const sNode = nodeById.get(l.source);
-        const tNode = nodeById.get(l.target);
-        const filiere = filiereDuLien(sNode, tNode);
-        const sName = nomDe(sNode, l.source);
-        const tName = nomDe(tNode, l.target);
-        const brute = typeof l.value === "number" && !isNaN(l.value) ? l.value : (l.value || 0);
-        const formule = formules
-            ? formules["id:" + l.source + " " + l.target]
-              || formules["name:" + sName + " " + tName]
-            : null;
-        const val: string | number = formule
-            ? (formule.charAt(0) === "=" ? formule : "=" + formule)
-            : brute;
-        return [
-            filiere,
-            sName,
-            tName,
-            val,
-            l.unit || "",
-            l.source,
-            l.target
-        ];
-    });
-
-    const totalRows = Math.max(nodeRows.length, linkRows.length);
-    const lines: string[] = [];
-
-    // Ligne 1 : En-têtes (8 colonnes nœuds + 1 colonne vide + 7 colonnes liens)
-    lines.push([...nodeCols, "", ...linkCols].join("\t"));
-
-    // Lignes de données
-    for (let i = 0; i < totalRows; i++) {
-        const nParts = nodeRows[i] || nodeCols.map(() => "");
-        const lParts = linkRows[i] || linkCols.map(() => "");
-        lines.push([...nParts, "", ...lParts].join("\t"));
-    }
-
-    return lines.join("\r\n");
-}
-
-async function copyExcelDataToClipboard(btnElement?: HTMLButtonElement): Promise<void> {
-    const d = desktop();
-    // Les valeurs du classeur sont souvent des formules pointant vers d'autres
-    // onglets : on les recopie telles quelles plutôt que leur résultat.
-    let formules: Record<string, string> | null = null;
-    if (d && excelPath && typeof d.excelFormulas === "function") {
-        try {
-            const r = await d.excelFormulas(excelPath);
-            if (r && r.ok && r.formules) formules = r.formules;
-        } catch { /* pas de formules récupérables : on colle les valeurs */ }
-    }
-    const text = formatExcelClipboard(model, formules);
-    let copied = false;
-
-    try {
-        if (d && typeof d.copyToClipboard === "function") {
-            await d.copyToClipboard(text);
-            copied = true;
-        } else if (navigator.clipboard && navigator.clipboard.writeText) {
-            try {
-                await navigator.clipboard.writeText(text);
-                copied = true;
-            } catch {
-                // Si l'API asynchrone échoue (ex. manque de focus), on tente le repli execCommand
-            }
-        }
-        if (!copied) {
-            const ta = document.createElement("textarea");
-            ta.value = text;
-            ta.style.position = "fixed";
-            ta.style.top = "0";
-            ta.style.left = "0";
-            ta.style.opacity = "0";
-            document.body.appendChild(ta);
-            ta.focus();
-            ta.select();
-            copied = document.execCommand("copy");
-            document.body.removeChild(ta);
-        }
-    } catch (e) {
-        copied = false;
-    }
-
-    if (copied) {
-        const nbF = formules ? model.links.filter(l =>
-            formules!["id:" + l.source + " " + l.target]
-            || formules!["name:" + (nodeById(l.source)?.name || "") + " " + (nodeById(l.target)?.name || "")]
-        ).length : 0;
-        setStatus(`Données Excel copiées dans le presse-papier (${model.nodes.length} nœud(s), ${model.links.length} lien(s)`
-            + (nbF ? `, ${nbF} formule(s) conservée(s)` : "")
-            + " — à coller en A1).");
-        if (btnElement) {
-            const originalText = btnElement.textContent;
-            btnElement.textContent = "✓ Données copiées !";
-            btnElement.disabled = true;
-            setTimeout(() => {
-                btnElement.textContent = originalText;
-                btnElement.disabled = false;
-            }, 1800);
-        }
-    } else {
-        setStatus("Échec de la copie dans le presse-papier.");
-    }
-}
-
-function buildExcelPanel(): HTMLElement {
-    const s = section("Synchronisation Excel");
-    const d = desktop();
-    const c = caps();
-    if (!d || !c.excel) {
-        const copyBtn = wideBtn(
-            "📋  Copier les données Excel",
-            "Copier les tableaux Nœuds et Liens dans le presse-papier (à coller en A1 dans Excel)",
-            () => { copyExcelDataToClipboard(copyBtn); }
-        );
-        s.appendChild(copyBtn);
-        const p = document.createElement("p");
-        p.className = "hint";
-        p.textContent = "Synchronisation directe disponible uniquement dans l'application de bureau.";
-        s.appendChild(p);
-        return s;
-    }
-
-    const fileBox = document.createElement("div");
-    fileBox.className = "excel-file"
-        + (excelPath ? (excelLocked && !excelLive ? " locked" : "") : " none");
-    if (excelPath) {
-        const name = document.createElement("div");
-        name.className = "excel-name";
-        name.textContent = basename(excelPath);
-        name.title = excelPath;
-        const sub = document.createElement("div");
-        sub.className = "excel-sub";
-        sub.textContent = c.classeurImpose
-            ? (c.envoiAutomatique
-                ? "Classeur ouvert — synchronisation automatique"
-                : "Classeur ouvert — synchronisation par boutons")
-            : excelLocked
-                ? (excelLive ? "Ouvert dans Excel — écriture directe" : "Ouvert dans Excel")
-                : "Classeur connecté";
-        fileBox.appendChild(name);
-        fileBox.appendChild(sub);
-    } else {
-        fileBox.textContent = "Aucun classeur connecté.";
-    }
-    s.appendChild(fileBox);
-
-    const copyBtn = wideBtn(
-        "📋  Copier les données Excel",
-        "Copier les tableaux Nœuds et Liens dans le presse-papier (à coller en A1 dans l'onglet Diagramme)",
-        () => { copyExcelDataToClipboard(copyBtn); }
-    );
-    s.appendChild(copyBtn);
-
-    if (!c.classeurImpose) {
-        s.appendChild(wideBtn(
-            "📂  Ouvrir un classeur existant…",
-            "Ouvrir un .xlsx existant et charger son diagramme",
-            connectExistingExcel
-        ));
-        s.appendChild(wideBtn(
-            "✦  Nouveau classeur…",
-            "Créer un nouveau .xlsx et y écrire le diagramme actuel",
-            connectExcel
-        ));
-    }
-
-    if (excelPath) {
-        s.appendChild(wideBtn(
-            "⬆︎  App → Excel",
-            "Écrire la structure de l'app dans Excel (les valeurs saisies dans Excel sont conservées)",
-            pushToExcel
-        ));
-        s.appendChild(wideBtn(
-            "⬇︎  Excel → App",
-            "Remplacer le diagramme de l'app par le contenu du classeur Excel",
-            () => pullExcel(true)
-        ));
-        if (excelLocked) {
-            const warn = document.createElement("p");
-            warn.className = excelLive ? "hint" : "hint warn";
-            warn.textContent = excelLive
-                ? "Classeur ouvert dans Excel : l'app écrit directement dedans, l'édition reste "
-                  + "possible. Excel le montrera comme modifié tant que tu ne l'auras pas enregistré."
-                : "Classeur ouvert dans Excel : l'édition des nœuds et des liens est suspendue. "
-                  + "Enregistre-le et ferme-le pour reprendre.";
-            s.appendChild(warn);
-            if (d.canControlExcel) {
-                s.appendChild(wideBtn(
-                    "⏻  Enregistrer et fermer Excel",
-                    "Demander à Excel d'enregistrer le classeur puis de le fermer",
-                    () => { closeWorkbookInExcel(); }
-                ));
-            }
-        }
-        if (lockMode === "refuse" || lockMode === "indetermine") {
-            const deg = document.createElement("p");
-            deg.className = "hint warn";
-            deg.textContent = lockMode === "refuse"
-                ? "Détection dégradée : macOS refuse à l'app de consulter Excel. Autorise-la dans "
-                  + "Réglages Système ▸ Confidentialité et sécurité ▸ Automatisation, sinon "
-                  + "l'app ne peut pas voir qu'un classeur OneDrive est ouvert."
-                : "Détection dégradée : Excel n'a pas répondu. Un classeur ouvert depuis OneDrive "
-                  + "peut passer inaperçu — ferme-le avant d'écrire.";
-            s.appendChild(deg);
-        }
-        if (d.canControlExcel) {
-            s.appendChild(checkField(
-                "Piloter Excel automatiquement",
-                prefs.autoCloseExcel,
-                v => {
-                    prefs.autoCloseExcel = v;
-                    savePrefs();
-                    if (v && excelLocked) closeWorkbookInExcel();
-                }
-            ));
-            const note = document.createElement("p");
-            note.className = "hint";
-            note.textContent = excelLive
-                ? "Sert de secours : l'app écrit déjà directement dans le classeur ouvert. "
-                  + "Si elle n'y parvient pas, elle l'enregistre et le ferme d'elle-même."
-                : "L'app enregistre et ferme le classeur elle-même dès qu'une modification "
-                  + "l'exige, au lieu de te le demander.";
-            s.appendChild(note);
-        }
-        if (dirtySinceSync) {
-            const warn = document.createElement("p");
-            warn.className = "hint warn";
-            warn.textContent = "Modifications locales non écrites vers Excel.";
-            s.appendChild(warn);
-        }
-        if (c.classeurImpose) {
-            const note = document.createElement("p");
-            note.className = "hint";
-            note.textContent = c.envoiAutomatique
-                ? "Les modifications partent dans le classeur au fil de l'eau, et ce qui est "
-                  + "saisi dans Excel revient ici. Excel montrera le classeur comme modifié : "
-                  + "enregistre-le quand tu veux (Ctrl-Z n'y défait pas nos écritures)."
-                : "Excel est trop ancien pour signaler ses modifications (ExcelApi 1.7) : "
-                  + "utilise « App → Excel » et « Excel → App ».";
-            s.appendChild(note);
-        } else {
-            const dis = document.createElement("button");
-            dis.className = "linklike";
-            dis.textContent = "Dissocier";
-            dis.addEventListener("click", disconnectExcel);
-            s.appendChild(dis);
-        }
+    const s = section("Synchronisation manuelle");
+    s.appendChild(hint(
+        "Cet Excel est trop ancien pour signaler ses modifications (ExcelApi 1.7) : "
+        + "les échanges avec le classeur passent par ces deux boutons."
+    ));
+    s.appendChild(wideBtn(
+        "⬆︎  Diagramme → Excel",
+        "Écrire la structure du diagramme dans les tableaux (les valeurs saisies dans Excel sont conservées)",
+        () => { pushToExcel(); }
+    ));
+    s.appendChild(wideBtn(
+        "⬇︎  Excel → Diagramme",
+        "Remplacer le diagramme par le contenu des tableaux du classeur",
+        () => { pullExcel(true); }
+    ));
+    if (dirtySinceSync) {
+        const warn = document.createElement("p");
+        warn.className = "hint warn";
+        warn.textContent = "Modifications non encore écrites dans le classeur.";
+        s.appendChild(warn);
     }
     return s;
 }
@@ -2573,15 +2049,11 @@ function couleursDuDocument(): string[] {
 /**
  * Champ « couleur » : un bouton pastille qui ouvre la palette en surcouche
  * (une teinte par colonne, les nuances en lignes — comme dans Word/Excel).
- *
- * `gated` : true pour les couleurs qui partent dans Excel (couleur d'un nœud),
- * afin de passer par le garde-fou « classeur ouvert dans Excel ».
  */
 function colorField(
     label: string,
     value: string,
-    onChange: (v: string) => void,
-    gated?: boolean
+    onChange: (v: string) => void
 ): HTMLElement {
     const trigger = document.createElement("button");
     trigger.type = "button";
@@ -2601,13 +2073,12 @@ function colorField(
     trigger.appendChild(hex);
 
     trigger.addEventListener("click", () => {
-        if (gated && excelLocked && !excelLive) { resolveExcelLock(); return; }
         openColorPopover({
             anchor: trigger,
             label,
             value: normalizeHex(value) || toHex(value),
             usedColors: couleursDuDocument(),
-            onBeforeChange: () => { if (gated) beginEdit(); else snapshot(); },
+            onBeforeChange: () => { snapshot(); },
             onPick: v => { paint(v); onChange(v); }
         });
     });
@@ -2663,14 +2134,9 @@ function dangerBtn(label: string, onClick: () => void): HTMLElement {
 }
 
 function attachSnapshotOnFocus(container: HTMLElement): void {
-    // Snapshot avant la 1re modification d'un champ (permet l'annulation Cmd+Z)
-    // et refus de la saisie tant qu'Excel tient le classeur ouvert.
+    // Snapshot avant la 1re modification d'un champ : permet l'annulation Cmd+Z.
     container.querySelectorAll("input, select").forEach(el => {
-        el.addEventListener("focus", () => {
-            // blur différé : pendant l'évènement « focus », le navigateur ignore
-            // un blur() synchrone et le champ resterait éditable.
-            if (!beginEdit()) setTimeout(() => (el as HTMLInputElement).blur(), 0);
-        });
+        el.addEventListener("focus", () => { snapshot(); });
     });
 }
 
@@ -2692,43 +2158,24 @@ function toHex(c: string): string {
     return named[c.toLowerCase()] || "#6b6b6b";
 }
 
-/* -------------------- préférences (poste de travail) ---------------- */
-
-interface Prefs {
-    /** Autoriser l'app à demander à Excel d'enregistrer + fermer le classeur. */
-    autoCloseExcel: boolean;
-}
-function defaultPrefs(): Prefs {
-    return { autoCloseExcel: false };
-}
-function loadPrefs(): void {
-    try {
-        const raw = localStorage.getItem("sankey-prefs");
-        if (raw) prefs = Object.assign(defaultPrefs(), JSON.parse(raw));
-    } catch { /* ignore */ }
-}
-function savePrefs(): void {
-    try { localStorage.setItem("sankey-prefs", JSON.stringify(prefs)); } catch { /* ignore */ }
-}
-
 /* --------------------------- persistance --------------------------- */
 
+/**
+ * Un diagramme complet — modèle ET apparence — en un seul objet.
+ *
+ * Plus aucun fichier n'a cette forme : dans le complément le modèle vient des
+ * tableaux et l'apparence de `document.settings`. Elle reste le format des
+ * FIXTURES : c'est par là que les bancs d'essai et `tests/run.js` chargent un
+ * diagramme d'un coup, sans Excel (crochet `__sankeyTest.loadProject`).
+ */
 interface ProjectFile {
     version: number;
     model: FlowModel;
     options: SankeyOptions;
     idCounter: number;
-    excelPath?: string | null;
     hiddenFilieres?: string[];
 }
 
-function serialize(): string {
-    const p: ProjectFile = {
-        version: 1, model, options, idCounter, excelPath,
-        hiddenFilieres: Array.from(hiddenFilieres)
-    };
-    return JSON.stringify(p, null, 2);
-}
 function applyProject(p: ProjectFile): void {
     model = p.model;
     // Compat : garantit le champ filiere sur les anciens projets
@@ -2752,7 +2199,6 @@ function applyProject(p: ProjectFile): void {
             "vérifie les liens des nœuds concernés."
         );
     }
-    excelPath = p.excelPath || null;
     hiddenFilieres = new Set(p.hiddenFilieres || []);
     selection = { type: null, id: "" };
 }
@@ -2819,22 +2265,14 @@ function guessCounter(): number {
     ids.forEach(id => { const m = id.match(/\d+/); if (m) max = Math.max(max, +m[0]); });
     return max + 1;
 }
-/** Le titre de la fenêtre porte le nom du projet ouvert (usage macOS). */
-function updateWindowTitle(): void {
-    document.title = projectPath ? basename(projectPath) : "Sankey Studio";
-}
-
+/**
+ * Aucun cache local ici, et c'est délibéré : la source de vérité du modèle est
+ * le classeur, sans exception. Un modèle rejoué depuis `localStorage`
+ * ressusciterait des nœuds que l'utilisatrice a supprimés dans Excel.
+ */
 function persist(): void {
-    dirtySinceSync = true; // toute modification rend l'app « en avance » sur Excel
-    // Le cache local rejouerait un modèle que le classeur ne connaît plus : dans
-    // le volet, la source de vérité du modèle est Excel, sans exception.
-    if (!caps().classeurImpose) {
-        try {
-            localStorage.setItem("sankey-project", serialize());
-            if (projectPath) localStorage.setItem("sankey-project-path", projectPath);
-        } catch { /* ignore */ }
-    }
-    planifierEnregistrementAuto();
+    dirtySinceSync = true; // toute modification rend le diagramme « en avance »
+    planifierEnregistrementApparence();
     planifierEnvoiExcel();
 }
 
@@ -2900,23 +2338,6 @@ let minuteurApparence = 0;
 /** Délai d'apaisement avant d'écrire vers Excel, comme `notifyTimer` (main.js:62). */
 const DELAI_ENVOI_EXCEL = 300;
 
-/**
- * Réécrit ce qui tient lieu de projet, peu après la dernière modification :
- * le fichier .sankey ouvert, ou l'apparence rangée dans le classeur.
- */
-function planifierEnregistrementAuto(): void {
-    const c = caps();
-    if (c.apparenceDansClasseur) { planifierEnregistrementApparence(); return; }
-    const d = desktop();
-    if (!d || !c.fichiers || !projectPath) return; // rien à écraser sans fichier
-    clearTimeout(minuteurProjet);
-    minuteurProjet = setTimeout(() => {
-        const chemin = projectPath;
-        if (!chemin) return;
-        d.saveProject(serialize(), chemin).catch(() => { /* réessayé au prochain changement */ });
-    }, 800) as unknown as number;
-}
-
 /** Range l'apparence dans le classeur (`document.settings`, PLAN §5.2). */
 function planifierEnregistrementApparence(): void {
     const d = desktop();
@@ -2929,12 +2350,12 @@ function planifierEnregistrementApparence(): void {
 }
 
 /**
- * Envoi automatique vers Excel — **seulement là où écrire est gratuit**.
+ * Envoi automatique vers Excel, peu après la dernière modification.
  *
- * Dans l'app Electron, une écriture à chaud coûte ~1 s et ferait téléverser
- * OneDrive à chaque frappe : la capacité est fausse et l'envoi reste manuel
- * (bouton « App → Excel » ou copie presse-papier). Dans le volet, elle coûte
- * 12 ms et ne déclenche aucun enregistrement (mesures RESULTATS-PHASE-0).
+ * Il n'a lieu que parce qu'écrire est GRATUIT ici : 12 ms depuis le classeur
+ * ouvert, sans déclencher d'enregistrement (mesures RESULTATS-PHASE-0). Là où
+ * `envoiAutomatique` est faux — Excel sans ExcelApi 1.7 — ce sont les deux
+ * boutons du panneau qui font le travail.
  */
 function planifierEnvoiExcel(): void {
     if (!caps().envoiAutomatique || !amorceFaite) return;
@@ -2946,83 +2367,19 @@ function planifierEnvoiExcel(): void {
         pushToExcel({ silencieux: true });
     }, DELAI_ENVOI_EXCEL) as unknown as number;
 }
-function loadFromStorage(): void {
-    try {
-        const raw = localStorage.getItem("sankey-project");
-        if (raw) applyProject(JSON.parse(raw));
-        // Se souvient du fichier projet ouvert (écrasé sans confirmation ensuite)
-        projectPath = localStorage.getItem("sankey-project-path") || null;
-    } catch { /* ignore */ }
-    updateWindowTitle();
-}
-
-async function saveProject(forceDialog?: boolean): Promise<void> {
+/** Range l'apparence dans le classeur, à la demande (bouton « Enregistrer »). */
+async function saveProject(): Promise<void> {
     const d = desktop();
-    const c = caps();
-    if (c.apparenceDansClasseur && d && typeof d.ecrireApparence === "function") {
-        // Le modèle est déjà dans les tableaux : il ne reste que l'apparence.
-        const r = await d.ecrireApparence(serialiserApparence());
-        setStatus(r && r.ok === false
-            ? "L'apparence n'a pas pu être rangée dans le classeur."
-            : "Apparence enregistrée dans le classeur — enregistre-le dans Excel "
-              + "pour qu'elle suive le fichier.");
+    if (!d || typeof d.ecrireApparence !== "function") {
+        setStatus("Aucun classeur : l'apparence n'a nulle part où aller.");
         return;
     }
-    const json = serialize();
-    if (d && c.fichiers) {
-        // Sans forceDialog : réécrit le fichier ouvert sans rien demander.
-        const r = await d.saveProject(json, forceDialog ? null : projectPath);
-        if (!r.canceled) {
-            projectPath = r.path;
-            try { localStorage.setItem("sankey-project-path", projectPath as string); } catch { /* ignore */ }
-            updateWindowTitle();
-            setStatus("Projet enregistré : " + basename(projectPath as string));
-        }
-    } else {
-        const blob = new Blob([json], { type: "application/json" });
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = "diagramme.sankey";
-        a.click();
-    }
-}
-/**
- * Installe un projet lu sur disque (dialogue « Ouvrir » ou double-clic sur un
- * fichier .sankey) et rafraîchit l'interface.
- */
-function appliquerProjetOuvert(chemin: string, contenu: string): void {
-    applyProject(JSON.parse(contenu));
-    projectPath = chemin;
-    try { localStorage.setItem("sankey-project-path", chemin); } catch { /* ignore */ }
-    updateWindowTitle();
-    if (excelPath) startWatch(excelPath);
-    dirtySinceSync = false;
-    render();
-    buildSidebar();
-}
-
-async function openProject(): Promise<void> {
-    const d = desktop();
-    if (d && caps().fichiers) {
-        const r = await d.openProject();
-        if (!r.canceled) appliquerProjetOuvert(r.path, r.content);
-    } else {
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = ".sankey,.json";
-        input.onchange = () => {
-            const f = input.files?.[0];
-            if (!f) return;
-            const reader = new FileReader();
-            reader.onload = () => {
-                applyProject(JSON.parse(String(reader.result)));
-                render();
-                buildSidebar();
-            };
-            reader.readAsText(f);
-        };
-        input.click();
-    }
+    // Le modèle est déjà dans les tableaux : il ne reste que l'apparence.
+    const r = await d.ecrireApparence(serialiserApparence());
+    setStatus(r && r.ok === false
+        ? "L'apparence n'a pas pu être rangée dans le classeur."
+        : "Apparence enregistrée dans le classeur — enregistre-le dans Excel "
+          + "pour qu'elle suive le fichier.");
 }
 
 /* ------------------------------ Export ----------------------------- */
@@ -3064,15 +2421,8 @@ async function exportImage(format: "png" | "svg"): Promise<void> {
     await saveExport("sankey.png", "image/png", base64, true);
 }
 
+/** Le navigateur d'Office télécharge le fichier : pas de dialogue natif ici. */
 async function saveExport(name: string, mime: string, data: string, binary: boolean): Promise<void> {
-    const d = desktop();
-    if (d && typeof d.exportSave === "function") {
-        const r = await d.exportSave(name, data, binary);
-        if (r && r.ok) setStatus("Exporté : " + basename(r.path));
-        else if (r && !r.canceled) setStatus("Échec de l'export.");
-        return;
-    }
-    // Repli navigateur : téléchargement
     let blob: Blob;
     if (binary) {
         const bin = atob(data);
@@ -3098,193 +2448,54 @@ function desktop(): any {
 /**
  * Ce que la coquille qui héberge le renderer sait faire.
  *
- * Le même code d'édition tourne dans deux coquilles — l'app Electron
- * (`src/main/preload.js`) et le volet Excel (`src/addin/pont.ts`) — et il ne
- * doit jamais tester laquelle : il demande une CAPACITÉ. `isElectron` reste
- * exposé, mais seulement comme repli pour un pont qui ne déclarerait rien.
+ * Il n'y a plus qu'une coquille — le complément — mais la seam reste, parce
+ * qu'elle porte encore une vraie variation : `envoiAutomatique` dépend d'un jeu
+ * d'exigences SONDÉ sur le poste (`ExcelApi 1.7`), pas de la plateforme. Le
+ * code d'édition demande une CAPACITÉ ; il ne teste jamais où il tourne.
+ *
+ * Trois implémentations : `src/addin/pont.ts` (le volet, sur le classeur),
+ * `src/addin/pont-fenetre.ts` (la fenêtre d'édition, par le tunnel) et les faux
+ * ponts des bancs de `tests/`.
  */
 interface Capacites {
-    /** Dialogues natifs, fichiers .sankey, classeur choisi sur le disque. */
-    fichiers: boolean;
     /** Un classeur Excel est joignable en lecture/écriture. */
     excel: boolean;
-    /** Le classeur est CELUI QUI EST OUVERT : rien à connecter ni à dissocier. */
-    classeurImpose: boolean;
-    /** Excel peut tenir le classeur et nous en interdire l'écriture (garde-fou). */
-    classeurVerrouillable: boolean;
-    /** Écrire vers Excel à chaque modification (le complément : 12 ms). */
+    /** Écrire vers Excel à chaque modification (mesuré à 12 ms, phase 0). */
     envoiAutomatique: boolean;
-    /** L'apparence est rangée dans le classeur, pas dans un fichier .sankey. */
-    apparenceDansClasseur: boolean;
 }
 
-const SANS_CAPACITE: Capacites = {
-    fichiers: false, excel: false, classeurImpose: false,
-    classeurVerrouillable: false, envoiAutomatique: false, apparenceDansClasseur: false
-};
+const SANS_CAPACITE: Capacites = { excel: false, envoiAutomatique: false };
 
 function caps(): Capacites {
     const d = desktop();
-    if (!d) return SANS_CAPACITE;                       // page web nue (npm run serve)
-    if (d.capacites) return Object.assign({}, SANS_CAPACITE, d.capacites);
-    // Pont sans capacités déclarées : avant elles, `isElectron` valait pour tout.
-    return d.isElectron
-        ? Object.assign({}, SANS_CAPACITE,
-            { fichiers: true, excel: true, classeurVerrouillable: true })
-        : SANS_CAPACITE;
+    if (!d || !d.capacites) return SANS_CAPACITE;       // page web nue (npm run serve)
+    return Object.assign({}, SANS_CAPACITE, d.capacites);
 }
 
 /**
- * Fichiers .sankey ouverts depuis le Finder ou l'Explorateur : celui qui a
- * lancé l'app (pendingProject) puis ceux reçus pendant qu'elle tourne.
+ * Branche l'écoute des modifications faites DANS Excel.
+ *
+ * Il n'y a plus ni verrou ni surveillance de fichier : le classeur est celui
+ * qui est ouvert, et c'est Office qui nous signale ses tableaux qui bougent.
  */
-function wireProjectOpen(): void {
-    const d = desktop();
-    if (!d || typeof d.onProjectOpened !== "function"
-        || typeof d.pendingProject !== "function") return;
-    const accueillir = (p: { path: string; content: string } | null) => {
-        if (!p) return;
-        try {
-            appliquerProjetOuvert(p.path, p.content);
-            setStatus("Projet ouvert : " + basename(p.path));
-        } catch {
-            setStatus("Fichier illisible : " + basename(p.path));
-        }
-    };
-    d.onProjectOpened(accueillir);
-    d.pendingProject().then(accueillir).catch(() => { /* rien à ouvrir */ });
-}
-
 function wireExcelWatchers(): void {
     const d = desktop();
     if (!d || !caps().excel) return;
-    if (excelPath) startWatch(excelPath);
     if (typeof d.onExcelChanged === "function") d.onExcelChanged(() => onExcelFileChanged());
-    // Le verrou n'existe que là où Excel peut tenir le classeur contre nous.
-    if (typeof d.onExcelLock !== "function") return;
-    d.onExcelLock((p: { locked: boolean; mode?: string; live?: boolean }) => {
-        const etaitOuvert = excelLocked;
-        excelLocked = p.locked;
-        excelLive = !!p.live;
-        if (p.mode) lockMode = p.mode;
-        buildSidebar();
-        if (!p.locked && pendingExcelWrite) {
-            pendingExcelWrite = false;
-            setStatus("Excel fermé — écriture des modifications en attente…");
-            pushToExcel();
-        } else if (!p.locked) {
-            if (etaitOuvert) setStatus("Classeur fermé dans Excel.");
-        } else if (excelLive) {
-            setStatus("Classeur ouvert dans Excel — les modifications y sont écrites directement.");
-        } else {
-            setStatus("Classeur ouvert dans Excel — édition des nœuds et des liens suspendue.");
-        }
-    });
-}
-
-/** Lance la surveillance et récupère l'état initial du verrou. */
-async function startWatch(filePath: string): Promise<void> {
-    const d = desktop();
-    if (!d || typeof d.watchExcel !== "function") return;
-    const r = await d.watchExcel(filePath);
-    excelLocked = !!(r && r.locked);
-    buildSidebar();
 }
 
 function basename(p: string): string {
     return p.split(/[\\/]/).pop() || p;
 }
 
-/**
- * Le classeur vit-il dans un dossier synchronisé (OneDrive, Dropbox, Drive) ?
- *
- * Cela change tout : Excel pour Mac n'ouvre pas la copie locale d'un fichier
- * OneDrive mais son adresse SharePoint. Tant que la synchronisation n'a pas
- * téléversé ce que l'app vient d'écrire, Excel affiche la version du serveur —
- * et l'enregistrer redescend cette version, effaçant nos modifications.
- */
-function cheminSynchronise(p: string | null): boolean {
-    return !!p && /\/Library\/CloudStorage\/|OneDrive|Dropbox|Google Drive/i.test(p);
-}
-
-/** Crée / connecte un NOUVEAU classeur (l'app y écrit sa structure). */
-async function connectExcel(): Promise<boolean> {
-    const d = desktop();
-    if (!d || !caps().fichiers) {
-        setStatus("Disponible uniquement dans l'application de bureau.");
-        return false;
-    }
-    const r = await d.chooseExcel();
-    if (r.canceled) return false;
-    const chosen: string = r.path;
-    excelPath = chosen;
-    persist();
-    startWatch(chosen);
-    buildSidebar();
-    setStatus("Classeur connecté : " + basename(chosen));
-    return true;
-}
-
-/** Ouvre un classeur EXISTANT et charge son diagramme dans l'app. */
-async function connectExistingExcel(): Promise<void> {
-    const d = desktop();
-    if (!d || !caps().fichiers) {
-        setStatus("Disponible uniquement dans l'application de bureau.");
-        return;
-    }
-    const r = await d.openExistingExcel();
-    if (r.canceled) return;
-    if (
-        model.nodes.length &&
-        !confirm(
-            "Ouvrir ce classeur va remplacer le diagramme actuel par son contenu.\n\nContinuer ?"
-        )
-    ) {
-        return;
-    }
-    const chosen: string = r.path;
-    // Repart de zéro pour un chargement propre du contenu Excel.
-    model = { nodes: [], links: [] };
-    syncedNodeIds = new Set();
-    syncedLinkIds = new Set();
-    selection = { type: null, id: "" };
-    excelPath = chosen;
-
-    const read = await d.readExcel(chosen);
-    if (read.ok && read.data) {
-        reconcileFromExcel(read.data);
-        markAllSynced();
-    }
-    startWatch(chosen);
-    dirtySinceSync = false;
-    render();
-    buildSidebar();
-    persist();
-    dirtySinceSync = false;
-    setStatus("Classeur chargé : " + basename(chosen));
-}
-
-function disconnectExcel(): void {
-    excelPath = null;
-    excelLocked = false;
-    persist();
-    buildSidebar();
-    setStatus("Classeur Excel dissocié.");
-}
-
-/** Sens App → Excel : écrit la structure de l'app (valeurs Excel conservées). */
+/** Sens diagramme → Excel : écrit la structure (les valeurs saisies sont conservées). */
 async function pushToExcel(opts?: { silencieux?: boolean }): Promise<void> {
     const silencieux = !!(opts && opts.silencieux);
     const d = desktop();
-    const c = caps();
-    if (!d || !c.excel) return;
-    if (!excelPath && (silencieux || !c.fichiers || !(await connectExcel()))) return;
-    // closeWorkbookInExcel() relance l'écriture en attente : sans ce garde-fou,
-    // « App → Excel » se rappellerait lui-même.
-    //
-    // Une écriture à chaud dure ~1 s : pendant ce temps l'utilisatrice continue
-    // d'éditer. On ne jette PAS la modification suivante, on la reprogramme —
-    // sinon le dernier changement d'une salve n'arriverait jamais dans Excel.
+    if (!d || !caps().excel) return;
+    // Une écriture dure quelques millisecondes, mais l'utilisatrice continue
+    // d'éditer pendant ce temps. On ne jette PAS la modification suivante, on la
+    // reprogramme — sinon le dernier changement d'une salve n'arriverait jamais.
     if (pushEnCours) {
         planifierEnvoiExcel();
         if (!silencieux) setStatus("Écriture vers Excel déjà en cours — celle-ci suivra.");
@@ -3292,78 +2503,32 @@ async function pushToExcel(opts?: { silencieux?: boolean }): Promise<void> {
     }
     pushEnCours = true;
     try {
-        // Deux tentatives : la seconde sert au cas où le classeur aurait été
-        // rouvert entre la vérification et l'écriture.
-        for (let essai = 0; essai < 2; essai++) {
-            // Classeur ouvert dans Excel : ou bien on sait y écrire directement
-            // (`excelLive`) et on continue, ou bien on avertit / on le ferme.
-            // La synchro de fond, elle, diffère sans interrompre la saisie.
-            if ((await refreshExcelLock()) && !excelLive) {
-                if (silencieux) {
-                    pendingExcelWrite = true;
-                    buildSidebar();
-                    return;
-                }
-                if (!(await resolveExcelLock("ecriture"))) {
-                    pendingExcelWrite = true;
-                    buildSidebar();
-                    setStatus("Écriture différée : le classeur est toujours ouvert dans Excel.");
-                    return;
-                }
-            }
+        // Conserve les valeurs déjà saisies dans Excel pour les liens existants
+        const rd = await d.readExcel(excelPath);
+        if (rd.ok && rd.data) mergeValuesFromExcel(rd.data);
 
-            // Conserve les valeurs déjà saisies dans Excel pour les liens existants
-            const rd = await d.readExcel(excelPath);
-            if (rd.ok && rd.data) mergeValuesFromExcel(rd.data);
-
-            // Une écriture à chaud n'enregistre que sur demande explicite : la
-            // synchro de fond laisserait sinon OneDrive téléverser à chaque frappe.
-            const res = await d.writeExcel(
-                { nodes: model.nodes, links: model.links }, excelPath, undefined,
-                { save: !silencieux }
-            );
-            if (res.ok) {
-                pendingExcelWrite = false;
-                markAllSynced();
-                dirtySinceSync = false;
-                if (!linkDrag && !dragState) {
-                    render();
-                    buildSidebar();
-                }
-                persist();
-                dirtySinceSync = false;
-                if (!silencieux) setStatus(messageEcriture(res));
-                return;
-            }
-            if (!res.locked) {
-                setStatus("Échec de l'écriture Excel : " + res.error);
-                return;
-            }
-            // L'écriture à chaud a échoué : on retombe sur l'avertissement.
-            if (res.liveState) excelLive = false;
-            excelLocked = true; // rouvert entre-temps : on repasse par l'avertissement
+        const res = await d.writeExcel(
+            { nodes: model.nodes, links: model.links }, excelPath, undefined,
+            { save: !silencieux }
+        );
+        if (!res.ok) {
+            setStatus("Échec de l'écriture Excel : " + res.error);
+            return;
         }
-        pendingExcelWrite = true;
-        buildSidebar();
-        setStatus("Écriture différée : le classeur est toujours ouvert dans Excel.");
+        markAllSynced();
+        dirtySinceSync = false;
+        if (!linkDrag && !dragState) {
+            render();
+            buildSidebar();
+        }
+        persist();
+        dirtySinceSync = false;
+        if (!silencieux) {
+            setStatus("Écrit dans le classeur — enregistre-le dans Excel quand tu veux.");
+        }
     } finally {
         pushEnCours = false;
     }
-}
-
-/** Ce qu'on annonce après une écriture réussie, selon le chemin emprunté. */
-function messageEcriture(res: {
-    live?: boolean; enregistre?: boolean | null; path?: string; formules?: number;
-}): string {
-    if (res.live) {
-        return "Écrit dans le classeur ouvert dans Excel"
-            + (res.enregistre ? " — Excel l'a enregistré." : " — enregistre-le dans Excel quand tu veux.");
-    }
-    return "Écrit vers Excel : " + basename(res.path || excelPath || "")
-        + (cheminSynchronise(excelPath)
-            ? " — laisse OneDrive terminer la synchronisation avant d'ouvrir "
-              + "le classeur, Excel l'ouvre depuis SharePoint."
-            : "");
 }
 
 /**
@@ -3375,7 +2540,7 @@ function messageEcriture(res: {
 async function amorcerDepuisClasseur(): Promise<void> {
     const d = desktop();
     if (!d) return;
-    if (caps().apparenceDansClasseur && typeof d.lireApparence === "function") {
+    if (typeof d.lireApparence === "function") {
         try {
             const json = await d.lireApparence();
             if (json) appliquerApparence(json);
@@ -3583,43 +2748,4 @@ function reconcileFromExcel(data: ExcelData): boolean {
     // Le classeur peut contenir des identifiants au-delà du compteur courant.
     syncCounterWithModel();
     return assigned;
-}
-
-/* ----------------------------- exemple ----------------------------- */
-
-function loadExample(): void {
-    idCounter = 1;
-    const mk = (
-        name: string, column: number, title: string, order: number,
-        filiere: string, color: string, x: number, y: number, kind: NodeKind = "produit"
-    ): FlowNode =>
-        ({ id: newId("n"), name, column, title, order, lane: 1, kind, filiere, color, x, y });
-
-    const nProd = mk("Production", 1, "Production", 0, "", "#e0503f", 40, 260, "industrie");
-    const nLait = mk("Lait", 2, "", 0, "", "#e79a3c", 230, 260);
-    const nTrans = mk("Transformation", 3, "Transformation", 0, "", "#e79a3c", 420, 260, "industrie");
-    const nBeurre = mk("Beurre", 4, "", 0, "Matières grasses", "#e79a3c", 610, 120);
-    const nCreme = mk("Crème", 4, "", 1, "Matières grasses", "#e79a3c", 610, 220);
-    const nFromage = mk("Fromage", 4, "", 2, "Fromagerie", "#e79a3c", 610, 320);
-    const nDist = mk("Distribution", 5, "Distribution", 0, "", "#3b46e0", 800, 260, "industrie");
-    const nExp = mk("Exportation de produits transformés", 6, "", 0, "", "#2aa02a", 990, 180);
-    const nCons = mk("Consommation de produits laitiers", 6, "", 1, "", "#8a2be2", 990, 340);
-    model.nodes = [nProd, nLait, nTrans, nBeurre, nCreme, nFromage, nDist, nExp, nCons];
-
-    const link = (s: FlowNode, t: FlowNode, value: number): FlowLink =>
-        ({ id: newId("l"), source: s.id, target: t.id, value, unit: "t" });
-    model.links = [
-        link(nProd, nLait, 5500000),
-        link(nLait, nTrans, 5500000),
-        link(nTrans, nBeurre, 92000),
-        link(nTrans, nCreme, 497000),
-        link(nTrans, nFromage, 652000),
-        link(nBeurre, nDist, 92000),
-        link(nCreme, nDist, 497000),
-        link(nFromage, nDist, 652000),
-        link(nDist, nExp, 500000),
-        link(nDist, nCons, 741000)
-    ];
-    selection = { type: null, id: "" };
-    persist();
 }

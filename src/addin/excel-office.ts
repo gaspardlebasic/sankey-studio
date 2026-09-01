@@ -1,10 +1,8 @@
 /**
  * Adaptateur Office.js — lecture/écriture du diagramme dans le classeur OUVERT.
  *
- * Équivalent de src/main/excel.js (fichier fermé) et src/main/excel-live.js
- * (pilotage d'Excel), mais depuis l'intérieur d'Excel. Le schéma — colonnes,
- * ordre de tri, types, préservation des formules — n'est PAS redéfini ici : il
- * vient de src/shared/modele-excel.js, partagé avec l'écriture du .xlsx.
+ * Le schéma — colonnes, ordre de tri, types, préservation des formules — n'est
+ * PAS redéfini ici : il vient de src/shared/modele-excel.js.
  *
  * Deux règles gouvernent tout ce fichier :
  *
@@ -86,9 +84,8 @@ function indexer(entetes: string[]): Map<string, number> {
  * un second pour leurs lignes d'en-tête.
  *
  * **Les deux tableaux doivent être sur la MÊME feuille**, et cette feuille est
- * d'abord celle qu'on demande (« Diagramme » par défaut). C'est la règle de
- * src/main/excel.js, qui ne lit jamais que les tableaux d'une seule feuille —
- * et ce n'était pas celle d'ici : le premier essai dans Excel a repéré comme
+ * d'abord celle qu'on demande (« Diagramme » par défaut). Ce n'était pas la
+ * règle au départ : le premier essai dans Excel a repéré comme
  * tableau des liens un `flux_lait` sans rapport, posé sur une autre feuille,
  * parce qu'il portait lui aussi une colonne « Origine » et venait en premier.
  * 32 liens lus au lieu de 129 — et, à la première écriture, un tableau de
@@ -292,8 +289,7 @@ export async function initialiserClasseur(nomFeuille?: string): Promise<Initiali
 /* ------------------------------ LECTURE ------------------------------ */
 
 /**
- * Lit le diagramme dans le classeur ouvert. Rend la même forme que
- * readDiagram() de src/main/excel.js — mêmes replis, mêmes valeurs par défaut.
+ * Lit le diagramme dans le classeur ouvert.
  */
 export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel | null> {
   return Excel.run(async context => {
@@ -364,23 +360,6 @@ export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel |
       hasLane: !!(t.noeuds && t.noeuds.index.has("Couloir")),
       hasKind: !!(t.noeuds && t.noeuds.index.has("Type"))
     };
-  });
-}
-
-/**
- * Formules « Valeur du flux » du classeur, indexées `id:<src> <tgt>` puis
- * `name:<Origine> <Destination>` — **sans le « = » initial**, comme le <f> du
- * XML, pour que les deux chemins d'écriture partagent la même convention.
- */
-export async function lireFormules(nomFeuille?: string): Promise<Formules> {
-  return Excel.run(async context => {
-    const t = await trouverTableaux(context, nomFeuille);
-    if (!t.liens) return {};
-    const r = corpsAvecEntete(t.liens);
-    r.load("values, formulas");
-    await context.sync();                                          // sync 3
-
-    return collecterFormules(t.liens, r.values, r.formulas);
   });
 }
 

@@ -1,5 +1,6 @@
-// Petit serveur statique pour prévisualiser le rendu dans un navigateur
-// (utilisé pour la vérification ; l'app réelle passe par Electron).
+// Petit serveur statique pour éprouver l'éditeur et les pages du complément
+// dans un navigateur ordinaire. Le complément réel, lui, est servi par
+// `npm run addin:serve` (HTTPS) ou par l'hébergeur (DIFFUSION.md).
 import { createServer } from "http";
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { extname, join } from "path";

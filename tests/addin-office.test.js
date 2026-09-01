@@ -356,16 +356,6 @@ await test("repérage : écrire ne touche pas le tableau étranger", async () =>
   egal(c.lignesDe("flux_lait"), JSON.parse(avant), "« flux_lait » intact");
 });
 
-/* ------------------------------ FORMULES ------------------------------ */
-
-await test("formules : indexées par IDs et par noms, sans le « = »", async () => {
-  classeurType();
-  const f = await office.lireFormules();
-  egal(f["id:n2 n3"], "Lentilles!C68", "index par IDs, sans le =");
-  egal(f["name:Lait cru Transformation"], "Lentilles!C68", "index par noms");
-  attendu(f["id:n1 n2"] === undefined, "un lien sans formule n'entre pas dans la table");
-});
-
 /* ------------------------------ ÉCRITURE ------------------------------ */
 
 await test("écriture : aller-retour neutre — réécrire ce qu'on a lu ne change rien", async () => {

@@ -115,7 +115,6 @@
         enregistre: false, formules: 0, ms: 12
       });
     },
-    excelFormulas: function () { return Promise.resolve({ ok: true, formules: {} }); },
     lireApparence: function () { return Promise.resolve(apparence); },
     ecrireApparence: function (json) { apparence = json; return Promise.resolve({ ok: true }); }
   };
@@ -159,10 +158,7 @@
         t: "accueil",
         accueil: {
           // Exactement les capacités déclarées par src/addin/pont.ts.
-          capacites: {
-            fichiers: false, excel: true, classeurImpose: true,
-            classeurVerrouillable: false, envoiAutomatique: true, apparenceDansClasseur: true
-          },
+          capacites: { excel: true, envoiAutomatique: true },
           nomClasseur: NOM,
           evenements: true
         }

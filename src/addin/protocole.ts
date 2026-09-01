@@ -6,11 +6,11 @@
  * `document.settings`. Le volet garde donc Office.js et devient **courtier** ;
  * la fenêtre, qui héberge l'éditeur, lui passe commande.
  *
- * CE QUI TRAVERSE, et c'est peu : cinq méthodes du contrat `window.desktop`
- * (`readExcel`, `writeExcel`, `excelFormulas`, `lireApparence`,
- * `ecrireApparence`), un évènement (« le classeur a changé ») et une poignée de
- * main. Tout le reste — presse-papier, export d'image, constantes de verrou —
- * reste local à la fenêtre : ces méthodes-là n'ont jamais eu besoin d'Excel.
+ * CE QUI TRAVERSE, et c'est peu : quatre méthodes du contrat `window.desktop`
+ * (`readExcel`, `writeExcel`, `lireApparence`, `ecrireApparence`), un évènement
+ * (« le classeur a changé ») et une poignée de main. Tout le reste — l'export
+ * d'image, par exemple — reste local à la fenêtre : ces méthodes-là n'ont
+ * jamais eu besoin d'Excel.
  *
  * TROIS CONTRAINTES portées ici, et nulle part ailleurs :
  *

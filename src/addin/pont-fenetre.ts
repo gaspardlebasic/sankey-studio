@@ -1,13 +1,12 @@
 /**
  * `window.desktop` vu depuis la FENÊTRE D'ÉDITION (phase 4).
  *
- * C'est la troisième implémentation du même contrat, après `src/main/preload.js`
- * (Electron) et `src/addin/pont.ts` (volet Excel) — et de loin la plus mince :
- * une fenêtre de dialogue Office n'a pas `Excel.run`, donc tout ce qui touche au
- * classeur est passé au volet par le tunnel (`protocole.ts`). Le reste est fait
- * sur place, parce qu'il n'a jamais eu besoin d'Excel.
+ * La seconde implémentation du contrat, après `src/addin/pont.ts` (le volet) —
+ * et de loin la plus mince : une fenêtre de dialogue Office n'a pas `Excel.run`,
+ * donc tout ce qui touche au classeur est passé au volet par le tunnel
+ * (`protocole.ts`).
  *
- * DEUX PRÉCAUTIONS qui n'ont pas d'équivalent dans les deux autres ponts :
+ * DEUX PRÉCAUTIONS qui n'ont pas d'équivalent dans le pont du volet :
  *
  *  - **Aucune méthode ne lève.** Un tunnel peut expirer, ce qu'un appel direct
  *    à Office.js ne fait jamais. Chaque méthode rend donc la forme d'échec que
@@ -19,7 +18,6 @@
  */
 
 import { Mandataire, type Accueil } from "./protocole.js";
-import { copierPressePapier } from "./navigateur.js";
 import type { Modele } from "../shared/modele-excel.js";
 
 /** Le rappel du renderer pour « le classeur a changé ». */
@@ -41,12 +39,10 @@ async function tunnel<T extends Record<string, unknown>>(
 
 function construirePontFenetre(mandataire: Mandataire, accueil: Accueil) {
   return {
-    isElectron: false,
     // Telles que le volet les a déclarées : c'est lui qui sait ce qu'Excel
     // permet ici (`envoiAutomatique` dépend d'ExcelApi 1.7, sondé là-bas).
     capacites: accueil.capacites,
     nomClasseur: accueil.nomClasseur,
-    canControlExcel: false,
 
     readExcel: () => tunnel(mandataire, "readExcel", [],
       { ok: false, live: true } as { ok: boolean; live: boolean; data?: unknown; error?: string }),
@@ -56,20 +52,8 @@ function construirePontFenetre(mandataire: Mandataire, accueil: Accueil) {
       tunnel(mandataire, "writeExcel", [model, chemin ?? null, feuille, options],
         { ok: false, live: true } as { ok: boolean; live: boolean; error?: string }),
 
-    excelFormulas: () => tunnel(mandataire, "excelFormulas", [],
-      { ok: false, formules: {} } as { ok: boolean; formules: Record<string, string>; error?: string }),
-
-    // Le classeur est ouvert par construction : rien ne traverse pour ça.
-    async isExcelLocked() { return { locked: false, live: true, mode: "complement" }; },
-    async watchExcel() { return { locked: false, live: true, mode: "complement" }; },
-    async closeExcelWorkbook() { return { locked: false, state: "closed" }; },
-
     /** Le volet nous pousse l'évènement ; ici on ne fait que le retenir. */
     onExcelChanged(cb: () => void) { rappelChangement = cb; },
-
-    // Sur place : la fenêtre est un contexte de navigateur ordinaire, et elle a
-    // le focus — le presse-papier y marche mieux que dans le volet.
-    copyToClipboard: copierPressePapier,
 
     async lireApparence(): Promise<string | null> {
       try { return await mandataire.appeler("lireApparence") as string | null; }

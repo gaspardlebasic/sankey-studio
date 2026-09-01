@@ -1,16 +1,19 @@
 /**
  * Tests des fonctionnalités d'édition de Sankey Studio.
  *
- * Chaque test charge un projet dans une fenêtre Electron masquée puis pilote
- * l'éditeur par de vrais évènements souris/clavier — c'est le seul moyen de
- * vérifier l'application ici, la fenêtre n'étant pas automatisable autrement.
+ * Chaque test charge un diagramme dans une fenêtre Electron masquée puis pilote
+ * l'éditeur par de vrais évènements souris/clavier. Electron n'est PAS le
+ * produit — Sankey Studio est un complément Excel : c'est ici un simple
+ * navigateur pilotable, le seul qui permette de vraies frappes et de vrais
+ * glissers. Le pont posé devant l'éditeur est `tests/pont-essai.js`, qui
+ * déclare les mêmes capacités que le volet.
  *
  * Usage :
  *   npm test                 tous les tests
  *   npm test -- liaison      seulement ceux dont le nom contient « liaison »
  */
 "use strict";
-const { app, BrowserWindow, ipcMain, clipboard } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 const fs = require("fs");
 
@@ -448,294 +451,22 @@ test("identifiants : lier après ajout vise le bon nœud", "compteurPerime", asy
   egal(r.obtenu, r.attendu, `le lien doit relier les nœuds visés (obtenu : ${r.lisible})`);
 });
 
-test("App→Excel : prévient par une modale si l'app ne peut pas piloter Excel", "complexe", async (p, excel) => {
-  excel.verrou = true;
-  excel.pilotage = false;
-  const r = await p(`
-    T.setExcelPath('/tmp/classeur-test.xlsx');
-    await sleep(80);
-    const bouton = [...document.querySelectorAll('#sidebar button')]
-        .find(b => /App\\s*→\\s*Excel/.test(b.textContent));
-    if (!bouton) throw new Error('bouton « App → Excel » introuvable');
-    bouton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await sleep(400);
-    const modale = document.querySelector('.ov-modal');
-    const texte = modale ? modale.textContent : '';
-    if (modale) {
-      [...modale.querySelectorAll('.ov-btn')].find(b => /Annuler/.test(b.textContent))
-        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    }
-    await sleep(200);
-    return {
-      modaleAffichee: !!modale,
-      titre: modale ? modale.querySelector('.ov-title').textContent : null,
-      parleDEcriture: /y écrire/.test(texte),
-      statut: document.getElementById('status').textContent
-    };
-  `);
-  attendu(r.modaleAffichee, "une modale doit prévenir que le classeur est ouvert");
-  egal(r.titre, "Le classeur est ouvert dans Excel", "titre de la modale");
-  attendu(r.parleDEcriture, "le message doit parler d'écriture, pas d'édition des nœuds");
-  attendu(/différée/.test(r.statut), "le statut doit indiquer que l'écriture est différée");
-  egal(excel.ecritures, 0, "aucune écriture ne doit être tentée tant que le classeur est ouvert");
-});
-
-test("App→Excel : écrit sans modale quand le classeur est fermé", "complexe", async (p, excel) => {
-  excel.verrou = false;
-  const r = await p(`
-    T.setExcelPath('/tmp/classeur-test.xlsx');
-    await sleep(80);
-    [...document.querySelectorAll('#sidebar button')]
-        .find(b => /App\\s*→\\s*Excel/.test(b.textContent))
-        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await sleep(400);
-    return { modale: !!document.querySelector('.ov-modal'),
-             statut: document.getElementById('status').textContent };
-  `);
-  attendu(!r.modale, "aucune modale ne doit s'afficher si le classeur est fermé");
-  egal(excel.ecritures, 1, "l'écriture doit être tentée une seule fois");
-});
-
-test("App→Excel : ferme Excel tout seul si l'option est active", "complexe", async (p, excel) => {
-  excel.verrou = true;
-  excel.pilotage = false; // le repli : sans pilotage direct, il faut fermer le classeur
-  const r = await p(`
-    T.prefs().autoCloseExcel = true;
-    T.setExcelPath('/tmp/classeur-test.xlsx');
-    await sleep(80);
-    [...document.querySelectorAll('#sidebar button')]
-        .find(b => /App\\s*→\\s*Excel/.test(b.textContent))
-        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await sleep(600);
-    const res = { modale: !!document.querySelector('.ov-modal'),
-                  statut: document.getElementById('status').textContent };
-    T.prefs().autoCloseExcel = false;
-    return res;
-  `);
-  attendu(!r.modale, "en mode automatique, aucune modale ne doit s'afficher");
-  egal(excel.fermetures, 1, "Excel doit avoir été fermé une fois");
-  egal(excel.ecritures, 1, "l'écriture doit avoir lieu après la fermeture");
-});
-
-test("App→Excel : écrit dans le classeur ouvert, sans demander de le fermer", "complexe", async (p, excel) => {
-  excel.verrou = true;
-  const r = await p(`
-    T.setExcelPath('/tmp/classeur-test.xlsx');
-    await sleep(80);
-    [...document.querySelectorAll('#sidebar button')]
-        .find(b => /App\\s*→\\s*Excel/.test(b.textContent))
-        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await sleep(400);
-    return { modale: !!document.querySelector('.ov-modal'),
-             statut: document.getElementById('status').textContent };
-  `);
-  attendu(!r.modale, "aucune modale : l'app sait écrire dans le classeur ouvert");
-  egal(excel.ecrituresLive, 1, "l'écriture doit passer par le classeur ouvert");
-  egal(excel.fermetures, 0, "Excel ne doit pas être fermé");
-  egal(excel.enregistrements, 1, "un « App → Excel » explicite demande l'enregistrement");
-  attendu(/classeur ouvert dans Excel/.test(r.statut),
-    "le statut doit dire où l'écriture a eu lieu — obtenu : " + r.statut);
-});
-
-test("presse-papier Excel : format TSV complet avec nœuds, colonne vide et liens", "complexe", async p => {
-  const r = await p(`
-    const tsv = T.formatExcelClipboard();
-    const lignes = tsv.split('\\r\\n');
-    const entetes = lignes[0].split('\\t');
-    const model = T.model();
-    const l1 = lignes[1] ? lignes[1].split('\\t') : [];
-    return {
-      nbLignes: lignes.length,
-      nbColonnesEntete: entetes.length,
-      enteteNoeuds: entetes.slice(0, 9),
-      colonneVide: entetes[9],
-      enteteLiens: entetes.slice(10),
-      nbNoeuds: model.nodes.length,
-      nbLiens: model.links.length,
-      premierLigneCol: l1.length
-    };
-  `);
-  egal(r.nbColonnesEntete, 17, "17 colonnes au total : 9 nœuds + 1 vide + 7 liens");
-  egal(r.colonneVide, "", "la 10e colonne (colonne J) doit être vide");
-  egal(r.enteteNoeuds[0], "Filière");
-  egal(r.enteteNoeuds[1], "Noeud");
-  egal(r.enteteNoeuds[2], "Numéro de colonne d'affichage");
-  egal(r.enteteNoeuds[3], "Intitulé de la colonne d'affichage");
-  egal(r.enteteNoeuds[4], "Ordre vertical d'affichage");
-  egal(r.enteteNoeuds[5], "Couleur");
-  egal(r.enteteNoeuds[6], "ID");
-  egal(r.enteteNoeuds[7], "Couloir");
-  egal(r.enteteNoeuds[8], "Type");
-  egal(r.enteteLiens[0], "Filière");
-  egal(r.enteteLiens[1], "Origine");
-  egal(r.enteteLiens[2], "Destination");
-  egal(r.enteteLiens[3], "Valeur du flux");
-  egal(r.enteteLiens[4], "Unité");
-  egal(r.enteteLiens[5], "ID origine");
-  egal(r.enteteLiens[6], "ID destination");
-  egal(r.nbLignes, Math.max(r.nbNoeuds, r.nbLiens) + 1, "1 ligne d'en-tête + max(nœuds, liens) lignes");
-});
-
-test("presse-papier Excel : les lignes descendent par filière, colonne, couloir puis ordre", "complexe", async p => {
-  const r = await p(`
-    const lignes = T.formatExcelClipboard().split('\\r\\n');
-    const entetes = lignes[0].split('\\t');
-    const iF = entetes.indexOf('Filière'), iC = entetes.indexOf("Numéro de colonne d'affichage");
-    const iL = entetes.indexOf('Couloir'), iO = entetes.indexOf("Ordre vertical d'affichage");
-    const iId = entetes.indexOf('ID');
-    const iFL = entetes.indexOf('Filière', 10);
-    const corps = lignes.slice(1).map(l => l.split('\\t'));
-    return {
-      cles: corps.filter(cs => cs[iId]).map(cs => [cs[iF], Number(cs[iC]), Number(cs[iL]), Number(cs[iO])]),
-      filieresLiens: corps.map(cs => cs[iFL]).filter(f => f),
-      nbNoeuds: T.model().nodes.length,
-      nbLiens: T.model().links.length
-    };
-  `);
-  egal(r.cles.length, r.nbNoeuds, "toutes les lignes de nœuds sont présentes");
-  const rang = (a, b) =>
-    a[0].localeCompare(b[0], "fr", { sensitivity: "base" }) || a[1] - b[1] || a[2] - b[2] || a[3] - b[3];
-  for (let i = 1; i < r.cles.length; i++) {
-    attendu(rang(r.cles[i - 1], r.cles[i]) <= 0,
-      `ligne ${i + 1} mal rangée : ${JSON.stringify(r.cles[i - 1])} devrait précéder ${JSON.stringify(r.cles[i])}`);
-  }
-  egal(r.filieresLiens.length, r.nbLiens, "toutes les lignes de liens sont présentes");
-  // Chaque filière ne doit apparaître que d'un seul tenant dans le tableau des liens.
-  const vues = new Set();
-  let precedente = null;
-  for (const f of r.filieresLiens) {
-    if (f !== precedente) {
-      attendu(!vues.has(f), `la filière « ${f} » revient après une autre : les liens ne sont pas groupés`);
-      vues.add(f);
-      precedente = f;
-    }
-  }
-});
-
-test("bouton copier Excel : copie les données et affiche la confirmation", "complexe", async p => {
-  const r = await p(`
-    const btn = [...document.querySelectorAll('#sidebar button')]
-        .find(b => /Copier les données Excel/.test(b.textContent));
-    if (!btn) return { trouve: false };
-    btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await sleep(200);
-    return {
-      trouve: true,
-      texteBouton: btn.textContent,
-      statut: document.getElementById('status').textContent
-    };
-  `);
-  attendu(r.trouve, "le bouton Copier les données Excel doit être présent dans la barre latérale");
-  attendu(/Données copiées/.test(r.texteBouton), "le bouton doit afficher une confirmation temporaire (obtenu : " + r.texteBouton + ", statut : " + r.statut + ")");
-  attendu(/copiées dans le presse-papier/.test(r.statut), "la barre de statut doit confirmer la copie");
-});
-
-test("presse-papier Excel : la colonne Valeur reprend la formule du classeur", "complexe", async (p, excel) => {
-  const r = await p(`
-    const l = T.model().links[0];
-    const cle = "id:" + l.source + " " + l.target;
-    const tsv = T.formatExcelClipboard(undefined, { [cle]: "Approvisionnement!B12*1000" });
-    // Index relevé sur l'en-tête : le tableau des nœuds gagne des colonnes.
-    // La ligne est retrouvée par ses IDs : les liens sont rangés par filière,
-    // colonne, couloir et ordre vertical, pas dans l'ordre du modèle.
-    const entetes = tsv.split('\\r\\n')[0].split('\\t');
-    const iVal = entetes.indexOf('Valeur du flux');
-    const iSrc = entetes.indexOf('ID origine'), iDst = entetes.indexOf('ID destination');
-    const trouver = t => t.split('\\r\\n').slice(1).map(x => x.split('\\t'))
-        .find(cs => cs[iSrc] === l.source && cs[iDst] === l.target) || [];
-    const ligne = trouver(tsv);
-    const sansFormule = trouver(T.formatExcelClipboard());
-    return { valeur: ligne[iVal], valeurBrute: sansFormule[iVal] };
-  `);
-  egal(r.valeur, "=Approvisionnement!B12*1000",
-    "la formule du classeur doit être collée telle quelle, préfixée de « = »");
-  attendu(!/^=/.test(r.valeurBrute),
-    "sans formule connue, la valeur calculée reste collée — obtenu : " + r.valeurBrute);
-});
-
-test("presse-papier Excel : le bouton va chercher les formules du classeur", "complexe", async (p, excel) => {
-  const cle = await p(`const l = T.model().links[0]; return "id:" + l.source + " " + l.target;`);
-  excel.formules = { [cle]: "Approvisionnement!B12*1000" };
-  const r = await p(`
-    T.setExcelPath('/tmp/classeur-test.xlsx');
-    await sleep(60);
-    const btn = [...document.querySelectorAll('#sidebar button')]
-        .find(b => /Copier les données Excel/.test(b.textContent));
-    btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await sleep(250);
-    const statut = document.getElementById('status').textContent;
-    T.setExcelPath(null);
-    return { statut };
-  `);
-  attendu(/1 formule\(s\) conservée\(s\)/.test(r.statut),
-    "le statut doit signaler la formule conservée — obtenu : " + r.statut);
-});
-
-test("synchro auto désactivée : modifier un nœud n'envoie pas de push automatique vers Excel", "complexe", async (p, excel) => {
-  excel.verrou = false;
+test("synchro automatique : une modification part seule dans le classeur", "complexe", async (p, excel) => {
   excel.ecritures = 0;
-  excel.ecrituresLive = 0;
-  const r = await p(`
-    T.setExcelPath('/tmp/classeur-test.xlsx');
-    await sleep(60);
+  await p(`
+    // L'amorce (lecture du classeur) est un bouchon en échec dans ce banc :
+    // sans elle, rien ne part vers Excel — c'est le garde-fou qui évite
+    // d'écraser les tableaux avec un modèle vide. On la déclare faite.
+    T.amorce(true);
     const src = one('Féverolle');
     await selectNode(src.id);
     await clickPlus();
-    await sleep(1500); // attend au-delà de l'ancien délai de 1200ms
-    T.setExcelPath(null);
-    return { ok: true };
+    await sleep(600); // au-delà du délai d'apaisement (300 ms)
+    T.amorce(false);
+    return true;
   `);
-  egal(excel.ecritures, 0, "aucune écriture fichier ne doit être envoyée automatiquement");
-  egal(excel.ecrituresLive, 0, "aucune écriture live ne doit être envoyée automatiquement");
-});
-
-test("édition : reste possible quand le classeur est ouvert et pilotable", "complexe", async p => {
-  const r = await p(`
-    T.setExcelPath('/tmp/classeur-test.xlsx');
-    T.setExcelLocked(true);
-    T.setExcelLive(true);
-    await sleep(60);
-    const src = one('Féverolle');
-    await selectNode(src.id);
-    const avant = nodes().length;
-    await clickPlus();
-    await sleep(120);
-    const res = { avant, apres: nodes().length, modale: !!document.querySelector('.ov-modal') };
-    T.setExcelLocked(false); T.setExcelLive(false); T.setExcelPath(null);
-    return res;
-  `);
-  egal(r.apres, r.avant + 1, "le nœud doit être créé malgré le classeur ouvert");
-  attendu(!r.modale, "aucune modale ne doit interrompre l'édition");
-});
-
-test("édition : toujours refusée quand l'app ne peut pas piloter Excel", "complexe", async (p, excel) => {
-  // Le verrou est relu auprès du process principal avant d'afficher la modale :
-  // le bouchon doit donc confirmer que le classeur est bien ouvert.
-  excel.verrou = true;
-  excel.pilotage = false;
-  const r = await p(`
-    T.setExcelPath('/tmp/classeur-test.xlsx');
-    T.setExcelLocked(true);
-    T.setExcelLive(false);
-    await sleep(60);
-    const src = one('Féverolle');
-    await selectNode(src.id);
-    const avant = nodes().length;
-    await clickPlus();
-    await sleep(400);
-    const modale = document.querySelector('.ov-modal');
-    const titre = modale ? modale.querySelector('.ov-title').textContent : null;
-    if (modale) {
-      [...modale.querySelectorAll('.ov-btn')].find(b => /Annuler/.test(b.textContent))
-        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    }
-    await sleep(150);
-    const res = { avant, apres: nodes().length, titre };
-    T.setExcelLocked(false); T.setExcelPath(null);
-    return res;
-  `);
-  egal(r.apres, r.avant, "aucun nœud ne doit être créé");
-  egal(r.titre, "Le classeur est ouvert dans Excel", "la modale doit expliquer le refus");
+  attendu(excel.ecritures >= 1,
+    "la modification doit partir d'elle-même dans le classeur — écritures : " + excel.ecritures);
 });
 
 test("couloirs : le couloir 2 se range sous le couloir 1", "complexe", async p => {
@@ -1027,27 +758,22 @@ test("filières empilées : la même colonne tombe à la même abscisse", "compl
     `      court : ${JSON.stringify(court)}\n      long  : ${JSON.stringify(long)}`);
 });
 
-test("types : le champ « Type » change la nature du nœud et part dans Excel", "complexe", async p => {
+// La colonne « Type » du classeur (« Industrie » en clair) est éprouvée là où
+// elle s'écrit : buildModelRows, dans tests/addin-office.test.js. Ici on ne
+// vérifie que ce qui appartient à l'éditeur — le champ change bien le nœud.
+test("types : le champ « Type » change la nature du nœud", "complexe", async p => {
   const r = await p(`
     const cible = nodes().find(n => !T.hidden().includes(n.filiere));
     await selectNode(cible.id);
     await setField('Type', 'industrie');
     await sleep(150);
-    const lignes = T.formatExcelClipboard().split('\\r\\n');
-    const entetes = lignes[0].split('\\t');
-    const iType = entetes.indexOf('Type'), iId = entetes.indexOf('ID');
-    const ligne = lignes.slice(1).map(l => l.split('\\t')).find(cs => cs[iId] === cible.id);
     return {
       kind: byId(cible.id).kind,
-      industries: nodes().filter(n => n.kind === 'industrie').length,
-      colonneType: iType,
-      valeurExcel: ligne ? ligne[iType] : null
+      industries: nodes().filter(n => n.kind === 'industrie').length
     };
   `);
   egal(r.kind, "industrie", "le champ doit fixer le type du nœud");
   egal(r.industries, 1, "un seul nœud a changé de type");
-  attendu(r.colonneType >= 0, "le tableau des nœuds doit porter une colonne « Type »");
-  egal(r.valeurExcel, "Industrie", "le type part dans Excel écrit en clair");
 });
 
 test("types : sans réglage propre, la mise en page ne bouge pas d'un pixel", "complexe", async p => {
@@ -1774,38 +1500,27 @@ async function charger(win, fixture) {
 // `pilotage` : l'app sait-elle écrire dans le classeur ouvert (excel-live.js) ?
 // À false, on retrouve l'ancien comportement — refus, modale, fermeture d'Excel.
 const excelSimule = {
-  verrou: false, pilotage: true,
-  fermetures: 0, ecritures: 0, ecrituresLive: 0, enregistrements: 0,
-  formules: {}
+  ecritures: 0,
+  derniereEcriture: null,
+  apparence: null
 };
+
+/**
+ * Les bouchons du classeur. Le banc n'a pas d'Excel : `readExcel` échoue
+ * volontairement, ce qui laisse `amorceFaite` à faux — donc AUCUNE écriture
+ * automatique pendant les tests d'édition. Le test qui veut la synchro
+ * automatique déclare l'amorce lui-même (`T.amorce(true)`).
+ */
 function stubExcelIpc() {
-  ipcMain.handle("excel:isLocked", () => ({
-    locked: excelSimule.verrou, exists: true, mode: "excel",
-    live: excelSimule.verrou && excelSimule.pilotage
-  }));
-  ipcMain.handle("excel:watch", () => ({ ok: true, locked: excelSimule.verrou }));
   ipcMain.handle("excel:read", () => ({ ok: false, error: "bouchon" }));
-  ipcMain.handle("excel:write", (_e, _model, _path, _sheet, options) => {
+  ipcMain.handle("excel:write", (_e, model) => {
     excelSimule.ecritures++;
-    if (!excelSimule.verrou) {
-      return { ok: true, live: false, path: "/tmp/bouchon.xlsx", sheetName: "Diagramme" };
-    }
-    if (!excelSimule.pilotage) {
-      return { ok: false, error: "Classeur ouvert dans Excel", locked: true };
-    }
-    excelSimule.ecrituresLive++;
-    const enregistre = !!(options && options.save);
-    if (enregistre) excelSimule.enregistrements++;
-    return { ok: true, live: true, enregistre, path: "/tmp/bouchon.xlsx", sheetName: "Diagramme" };
+    excelSimule.derniereEcriture = model;
+    return { ok: true, live: true, path: "Classeur d'essai.xlsx", sheetName: "Diagramme" };
   });
-  ipcMain.handle("excel:closeInExcel", () => {
-    excelSimule.fermetures++;
-    excelSimule.verrou = false;
-    return { ok: true, state: "closed", locked: false };
-  });
-  ipcMain.handle("excel:formulas", () => ({ ok: true, formules: excelSimule.formules }));
-  ipcMain.handle("clipboard:write", (_e, text) => {
-    clipboard.writeText(text);
+  ipcMain.handle("apparence:lire", () => null);
+  ipcMain.handle("apparence:ecrire", (_e, json) => {
+    excelSimule.apparence = json;
     return { ok: true };
   });
 }
@@ -1815,7 +1530,7 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1000, height: 620, show: false,
     webPreferences: {
-      preload: path.join(ROOT, "src/main/preload.js"),
+      preload: path.join(__dirname, "pont-essai.js"),
       contextIsolation: true,
       nodeIntegration: false
     }
@@ -1833,13 +1548,9 @@ app.whenReady().then(async () => {
   for (const t of tests) {
     if (filter && !t.name.includes(filter)) continue;
     try {
-      excelSimule.verrou = false;
-      excelSimule.pilotage = true;
-      excelSimule.fermetures = 0;
       excelSimule.ecritures = 0;
-      excelSimule.ecrituresLive = 0;
-      excelSimule.enregistrements = 0;
-      excelSimule.formules = {};
+      excelSimule.derniereEcriture = null;
+      excelSimule.apparence = null;
       await charger(win, t.fixture);
       await t.fn(page, excelSimule);
       console.log("  ok    " + t.name);

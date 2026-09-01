@@ -77,10 +77,7 @@ function ordonnanceur() {
 function fauxPont() {
   return {
     journal: [],
-    capacites: {
-      fichiers: false, excel: true, classeurImpose: true,
-      classeurVerrouillable: false, envoiAutomatique: true, apparenceDansClasseur: true
-    },
+    capacites: { excel: true, envoiAutomatique: true },
     async readExcel() {
       this.journal.push("readExcel");
       return { ok: true, live: true, data: { nodes: [{ id: "n1" }], links: [], hasLane: true } };
@@ -89,7 +86,7 @@ function fauxPont() {
       this.journal.push({ m: "writeExcel", noeuds: model.nodes.length, chemin, feuille, options });
       return { ok: true, live: true, ms: 12 };
     },
-    async excelFormulas() { throw new Error("classeur illisible"); },
+    async lireDiagrammeQuiRate() { throw new Error("classeur illisible"); },
     async lireApparence() { return "{\"version\":1}"; },
     async ecrireApparence(json) { this.journal.push({ m: "ecrireApparence", taille: json.length }); return { ok: true }; }
   };
@@ -203,7 +200,7 @@ await test("une erreur du pont revient comme un rejet, pas comme un plantage", a
   const c = relier(fauxPont());
   await c.mandataire.bonjour();
   let motif = null;
-  await c.mandataire.appeler("excelFormulas").catch(e => { motif = e.message; });
+  await c.mandataire.appeler("lireDiagrammeQuiRate").catch(e => { motif = e.message; });
   egal(motif, "classeur illisible", "le message d'Excel traverse");
 });
 
@@ -280,10 +277,10 @@ await test("le contrat est posé avec les capacités du volet", async () => {
   const accueil = await pontFenetre.installerPontFenetre(c.mandataire);
   egal(accueil.nomClasseur, "Flux lait.xlsx", "la poignée de main a eu lieu");
   const d = global.window.desktop;
-  egal(d.isElectron, false, "ce n'est pas Electron");
   egal(d.nomClasseur, "Flux lait.xlsx", "le nom du classeur est là avant createApp");
   egal(d.capacites.excel, true, "les capacités viennent du volet");
-  egal((await d.isExcelLocked()).locked, false, "le classeur n'est jamais verrouillé");
+  egal(d.capacites.envoiAutomatique, true,
+    "envoiAutomatique traverse : c'est le volet qui sait ce qu'ExcelApi permet");
 });
 
 await test("une lecture traverse jusqu'au pont du volet", async () => {
