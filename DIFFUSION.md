@@ -3,9 +3,12 @@
 Suit `PLAN-COMPLEMENT-EXCEL.md` §5.3 et phase 5. Ce document est la procédure ; le plan reste
 la décision.
 
-> **Statut : outillage prêt, rien n'est publié.** Le workflow, le manifeste de production et sa
-> vérification existent et sont éprouvés localement. Ce qui reste demande des droits que le
-> dépôt n'a pas : activer Pages, et téléverser au centre d'administration M365.
+> **Statut : publié le 2026-09-01.** Pages est activé (source = GitHub Actions), le workflow a
+> tourné, et le site répond :
+> **<https://gaspardlebasic.github.io/sankey-studio/>** — pages, bundles, polices, icônes et
+> manifeste (`.../manifest.xml`, `<Version>` 0.1.0.0), tout en HTTPS sur une origine unique.
+> **Reste la seule étape qui demande un administrateur : le téléversement au centre
+> d'administration M365 (§3), à faire depuis ton compte.**
 
 ---
 
@@ -22,11 +25,17 @@ train.
 
 ---
 
-## 1. Une fois : activer GitHub Pages
+## 1. Une fois : activer GitHub Pages — **fait le 2026-09-01**
 
 Réglages du dépôt ▸ **Pages** ▸ *Source* = **GitHub Actions**.
 
 Sans ça, le workflow construit correctement et échoue à la dernière étape, en le disant.
+
+En ligne de commande, si c'était à refaire sur un autre dépôt :
+
+```bash
+gh api -X POST repos/<compte>/<dépôt>/pages -f build_type=workflow
+```
 
 ## 2. Publier
 
@@ -42,7 +51,7 @@ manifeste avec l'adresse réelle du site** — il ne peut donc pas viser une adr
 Quand il a fini, vérifier à la main que la page répond :
 
 ```
-https://<compte>.github.io/sankey-studio/index.html
+https://gaspardlebasic.github.io/sankey-studio/index.html
 ```
 
 Une page blanche avec « Sankey Studio fonctionne dans Excel. » est le bon résultat : hors
@@ -50,11 +59,11 @@ d'Excel, le complément n'a rien d'autre à dire.
 
 ## 3. Téléverser le manifeste au centre d'administration M365
 
-Le manifeste publié est à `https://<compte>.github.io/sankey-studio/manifest.xml`. On peut aussi
+Le manifeste publié est à `https://gaspardlebasic.github.io/sankey-studio/manifest.xml`. On peut aussi
 le refaire localement, à l'identique :
 
 ```bash
-npm run addin:manifeste -- https://<compte>.github.io/sankey-studio
+npm run addin:manifeste -- https://gaspardlebasic.github.io/sankey-studio
 ```
 
 Puis, dans <https://admin.microsoft.com> (il faut être administrateur) :

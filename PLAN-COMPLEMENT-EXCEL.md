@@ -328,7 +328,7 @@ seule et l'aller-retour complet passe sur un classeur de 122 nœuds et 129 liens
 (`RESULTATS-ESSAI-MAC.md`). **Reste** : mesurer le poids des messages avec la sonde (§7), et
 confirmer `DialogApi 1.2` sur un poste Windows (phase 6).
 
-### Phase 5 — diffusion — **outillage prêt, rien n'est publié**
+### Phase 5 — diffusion — **le site est en ligne ; reste le centre d'administration M365**
 
 Procédure complète : **`DIFFUSION.md`**. Ce qui reste demande des droits que le dépôt n'a pas —
 activer Pages, et téléverser au centre d'administration M365.
@@ -354,9 +354,13 @@ activer Pages, et téléverser au centre d'administration M365.
   commentaire**, et une ligne de commande à options longues casse le fichier — Excel aurait
   refusé de charger le complément sans dire pourquoi.
 
-**Reste** : activer Pages (*Réglages ▸ Pages ▸ Source = GitHub Actions*), lancer le workflow,
-téléverser le manifeste au centre d'administration, attribuer, et faire l'essai sur un poste
-tiers — la liste de contrôle est dans `DIFFUSION.md`.
+**Fait le 2026-09-01** : Pages activé (source = GitHub Actions), workflow passé, site en ligne
+sur <https://gaspardlebasic.github.io/sankey-studio/> — les deux pages, les bundles hachés, les
+polices, les icônes et le manifeste de production, tout en HTTPS sur une origine unique.
+
+**Reste** : téléverser le manifeste au centre d'administration M365, attribuer, et faire l'essai
+sur un poste tiers — la liste de contrôle est dans `DIFFUSION.md`. Ça demande un compte
+administrateur : le dépôt ne peut pas le faire.
 
 ### Phase 6 — validation Windows — **instrument prêt, mesures à faire**
 
