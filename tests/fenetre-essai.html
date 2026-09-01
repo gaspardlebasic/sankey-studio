@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sankey Studio — volet + fenêtre (banc d'essai)</title>
+<link rel="stylesheet" href="/styles.css" />
+<style>
+  html, body { height: 100%; }
+  body { display: flex; }
+  #volet {
+    flex: 0 0 350px;              /* la largeur d'ouverture mesurée en phase 0 */
+    border-right: 2px solid var(--dark); padding: 16px;
+    display: flex; flex-direction: column; gap: 12px; min-width: 0;
+  }
+  #volet h1 { font-size: 17px; margin: 0; }
+  #volet p { margin: 0; font-size: 13px; }
+  #volet .muted { color: var(--muted); font-size: 12px; line-height: 1.45; }
+  #volet button {
+    font: inherit; font-size: 13px; font-weight: 600; padding: 10px 12px;
+    border: 1px solid var(--dark); background: none; cursor: pointer;
+  }
+  #volet button:hover { background: var(--dark); color: var(--bright); }
+  #journal {
+    flex: 1 1 auto; overflow: auto; border-top: 1px solid var(--grey); padding-top: 10px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px; line-height: 1.6;
+  }
+  #journal div { white-space: nowrap; }
+  #journal .vers-volet { color: var(--dark); }
+  #journal .vers-fenetre { color: var(--muted); }
+  #total { font-size: 12px; font-weight: 600; }
+  #cadre { flex: 1 1 auto; border: 0; min-width: 0; }
+</style>
+</head>
+<body>
+<!--
+  Banc d'essai de la PHASE 4 : le volet courtier et la fenêtre d'édition, sans
+  Excel.
+
+    npm run serve   puis   http://localhost:8811/fenetre-essai.html
+
+  À gauche, cette page joue le VOLET : elle tient le classeur (en mémoire) et
+  répond aux demandes de la fenêtre. À droite, un iframe charge le vrai code de
+  la fenêtre (tests/fenetre-cadre.html → src/addin/fenetre.ts, pont-fenetre.ts,
+  protocole.ts, renderer).
+
+  Ce qu'on vient y vérifier :
+    · l'éditeur démarre alors que TOUT passe par le tunnel ;
+    · le modèle vient du classeur, et une modification y repart toute seule ;
+    · une modification « faite dans Excel » revient dans la fenêtre ;
+    · et surtout LE POIDS des messages — la seule inconnue que Microsoft ne
+      documente pas (PLAN §9). Le journal affiche chaque message et son poids.
+
+  Ce que le banc NE PROUVE PAS : `displayDialogAsync`, `messageParent` et leurs
+  limites réelles. Cela ne s'éprouve que dans Excel.
+
+  Le côté volet est réécrit ici en JavaScript simple plutôt que d'utiliser la
+  classe `Courtier` : le banc joue l'ENVIRONNEMENT, comme tests/faux-office.js
+  joue Excel. Si le protocole change de version, la fenêtre le dira d'elle-même
+  (message de désaccord) — c'est le signal qu'il faut mettre ce banc à jour.
+-->
+<div id="volet">
+  <h1>Sankey Studio</h1>
+  <p id="classeur"></p>
+  <button id="ouvrir" type="button">Ouvrir la fenêtre d'édition</button>
+  <button id="modifier" type="button">Modifier « dans Excel »</button>
+  <p id="etat" class="muted"></p>
+  <p id="total"></p>
+  <div id="journal"></div>
+  <p class="muted">Volet simulé à 350 px — la largeur d'ouverture mesurée sur le
+     poste (RESULTATS-PHASE-0 §G).</p>
+</div>
+<iframe id="cadre" title="Fenêtre d'édition"></iframe>
+
+<script>
+(function () {
+  var VERSION_PROTOCOLE = 1;      // doit suivre src/addin/protocole.ts
+  var NOM = "flux lait essai.xlsx";
+
+  /* --------------------- le classeur, en mémoire --------------------- */
+  // Le même que tests/volet-essai.html : ce banc-ci n'éprouve pas Excel, il
+  // éprouve le tunnel.
+  var classeur = {
+    nodes: [
+      { id: "n1", name: "Production", column: 1, title: "Amont", order: 0, lane: 1, kind: "industrie", filiere: "Lait", color: "#e0503f" },
+      { id: "n2", name: "Lait cru", column: 2, title: "", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: "#e79a3c" },
+      { id: "n3", name: "Beurre", column: 3, title: "Aval", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: "#e79a3c" }
+    ],
+    links: [
+      { sourceId: "n1", targetId: "n2", sourceName: "Production", targetName: "Lait cru", value: 5500, unit: "t" },
+      { sourceId: "n2", targetId: "n3", sourceName: "Lait cru", targetName: "Beurre", value: 92, unit: "t" }
+    ],
+    hasLane: true, hasKind: true
+  };
+  var apparence = null;
+  var derniereEcriture = null;
+  var journal = [];
+  function copie(o) { return JSON.parse(JSON.stringify(o)); }
+
+  /* ------------------------- le pont du volet ------------------------- */
+  // Les cinq méthodes qui traversent, et elles seules (PLAN §4 phase 4).
+  var pont = {
+    readExcel: function () {
+      return Promise.resolve({ ok: true, live: true, data: copie(classeur) });
+    },
+    // Comme dans tests/volet-essai.html, l'écriture ne modifie PAS le classeur
+    // en mémoire : traduire le modèle vers la forme des tableaux Excel, c'est
+    // le travail d'`ecrireDiagramme`, et il est éprouvé ailleurs
+    // (tests/addin-office.test.js, sur le faux classeur). Ici on ne juge que le
+    // tunnel : ce qui part, et ce que ça pèse.
+    writeExcel: function (model) {
+      derniereEcriture = { noeuds: model.nodes.length, liens: model.links.length, t: Date.now() };
+      return Promise.resolve({
+        ok: true, live: true, path: NOM, sheetName: "Diagramme",
+        enregistre: false, formules: 0, ms: 12
+      });
+    },
+    excelFormulas: function () { return Promise.resolve({ ok: true, formules: {} }); },
+    lireApparence: function () { return Promise.resolve(apparence); },
+    ecrireApparence: function (json) { apparence = json; return Promise.resolve({ ok: true }); }
+  };
+
+  /* ---------------------------- le tunnel ---------------------------- */
+  var cadre = document.getElementById("cadre");
+  var octets = { montant: 0, descendant: 0 };
+
+  function noter(sens, texte, quoi) {
+    journal.push({ sens: sens, quoi: quoi, octets: texte.length, t: Date.now() });
+    if (sens === "vers-volet") octets.montant += texte.length;
+    else octets.descendant += texte.length;
+    var ligne = document.createElement("div");
+    ligne.className = sens;
+    ligne.textContent = (sens === "vers-volet" ? "↑ " : "↓ ") + quoi
+      + "  " + (texte.length >= 1024 ? (texte.length / 1024).toFixed(1) + " Ko" : texte.length + " o");
+    var vue = document.getElementById("journal");
+    vue.appendChild(ligne);
+    vue.scrollTop = vue.scrollHeight;
+    document.getElementById("total").textContent =
+      "Cumul : ↑ " + (octets.montant / 1024).toFixed(1) + " Ko · ↓ "
+      + (octets.descendant / 1024).toFixed(1) + " Ko";
+  }
+
+  function versLaFenetre(corps, quoi) {
+    corps.p = "sankey";
+    corps.v = VERSION_PROTOCOLE;
+    var texte = JSON.stringify(corps);
+    noter("vers-fenetre", texte, quoi);
+    cadre.contentWindow.postMessage({ sankey: true, sens: "vers-fenetre", texte: texte }, "*");
+  }
+
+  window.addEventListener("message", function (e) {
+    if (!e.data || !e.data.sankey || e.data.sens !== "vers-volet") return;
+    var m;
+    try { m = JSON.parse(e.data.texte); } catch (err) { return; }
+    noter("vers-volet", e.data.texte, m.t === "appel" ? m.m : m.t);
+
+    if (m.t === "bonjour") {
+      versLaFenetre({
+        t: "accueil",
+        accueil: {
+          // Exactement les capacités déclarées par src/addin/pont.ts.
+          capacites: {
+            fichiers: false, excel: true, classeurImpose: true,
+            classeurVerrouillable: false, envoiAutomatique: true, apparenceDansClasseur: true
+          },
+          nomClasseur: NOM,
+          evenements: true
+        }
+      }, "accueil");
+      return;
+    }
+    if (m.t !== "appel") return;
+
+    var fn = pont[m.m];
+    if (typeof fn !== "function") {
+      versLaFenetre({ t: "reponse", id: m.id, e: "méthode inconnue : " + m.m }, "reponse " + m.m);
+      return;
+    }
+    Promise.resolve(fn.apply(pont, m.a)).then(
+      function (r) { versLaFenetre({ t: "reponse", id: m.id, r: r }, "reponse " + m.m); },
+      function (err) { versLaFenetre({ t: "reponse", id: m.id, e: String(err && err.message || err) }, "erreur " + m.m); }
+    );
+  });
+
+  /* ------------------------------ le volet ------------------------------ */
+  var etat = document.getElementById("etat");
+  document.getElementById("classeur").textContent = NOM;
+
+  function ouvrir() {
+    cadre.src = "/fenetre-cadre.html";
+    etat.textContent = "L'édition se fait dans la fenêtre. Ce volet la relie au classeur.";
+  }
+  document.getElementById("ouvrir").addEventListener("click", ouvrir);
+
+  document.getElementById("modifier").addEventListener("click", function () {
+    window.__essai.modifierDansExcel();
+  });
+
+  window.__essai = {
+    journal: journal,
+    octets: octets,
+    classeur: classeur,
+    apparence: function () { return apparence; },
+    derniereEcriture: function () { return derniereEcriture; },
+    /** Joue une modification faite « dans Excel » : le volet la pousse. */
+    modifierDansExcel: function (nom) {
+      classeur.nodes[1].name = nom || "Lait cru bio";
+      classeur.links[0].targetName = classeur.nodes[1].name;
+      classeur.links[1].sourceName = classeur.nodes[1].name;
+      versLaFenetre({ t: "pousse", n: "excel" }, "pousse excel");
+    }
+  };
+
+  ouvrir();   // comme le volet réel, qui tente l'ouverture au démarrage
+})();
+</script>
+</body>
+</html>

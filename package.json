@@ -1,0 +1,114 @@
+{
+  "name": "sankey-studio",
+  "version": "0.1.0",
+  "description": "Éditeur graphique de diagrammes de flux (Sankey) synchronisé avec Excel",
+  "main": "src/main/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node build.mjs && electron .",
+    "serve": "node build.mjs && node serve.mjs",
+    "addin:certs": "office-addin-dev-certs install",
+    "addin:serve": "node scripts/serve-addin.mjs",
+    "addin:install": "node scripts/install-addin.mjs",
+    "addin:manifeste": "node build.mjs && node scripts/manifeste-prod.mjs",
+    "dist": "node build.mjs && electron-builder --mac",
+    "dist:dir": "node build.mjs && electron-builder --mac --dir",
+    "dist:win": "node build.mjs && electron-builder --win",
+    "dist:all": "node build.mjs && electron-builder --mac --win",
+    "install:app": "node build.mjs && electron-builder --mac --dir && node scripts/install-macos.mjs",
+    "smoke": "node build.mjs && electron scripts/smoke.js",
+    "test": "node build.mjs && node tests/excel-live.test.js && node tests/addin-office.test.js && node tests/addin-synchro.test.js && node tests/addin-protocole.test.js && node tests/addin-manifeste.test.js && electron tests/run.js",
+    "verifier": "node scripts/verifier-projet.mjs",
+    "test:live": "node tests/excel-live.test.js",
+    "proto:excel": "node scripts/proto-excel-live.mjs",
+    "test:addin": "node tests/addin-office.test.js && node tests/addin-synchro.test.js && node tests/addin-protocole.test.js && node tests/addin-manifeste.test.js"
+  },
+  "author": "Mathieu Peychet",
+  "license": "MIT",
+  "build": {
+    "appId": "com.mathieupeychet.sankeystudio",
+    "productName": "Sankey Studio",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/main/**/*",
+      "dist/renderer/**/*",
+      "package.json"
+    ],
+    "fileAssociations": [
+      {
+        "ext": "sankey",
+        "name": "Diagramme Sankey Studio",
+        "description": "Diagramme de flux Sankey Studio",
+        "mimeType": "application/x-sankey-studio",
+        "role": "Editor"
+      }
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
+      "identity": null,
+      "extendInfo": {
+        "NSAppleEventsUsageDescription": "Sankey Studio demande à Microsoft Excel d'enregistrer et de fermer le classeur lié, afin de pouvoir y écrire le diagramme sans risque de perte."
+      }
+    },
+    "dmg": {
+      "title": "Sankey Studio ${version}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "fileAssociations": [
+        {
+          "ext": "sankey",
+          "name": "Diagramme Sankey Studio",
+          "description": "Diagramme de flux Sankey Studio",
+          "mimeType": "application/x-sankey-studio",
+          "role": "Editor",
+          "icon": "build/icon.ico"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-${version}-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "afterPack": "scripts/apres-empaquetage.js"
+  },
+  "dependencies": {
+    "d3-sankey": "^0.12.3",
+    "d3-selection": "^3.0.0",
+    "jszip": "^3.10.1"
+  },
+  "devDependencies": {
+    "@types/d3-sankey": "^0.12.4",
+    "@types/d3-selection": "^3.0.10",
+    "@types/office-js": "^1.0.608",
+    "electron": "^32.2.0",
+    "electron-builder": "^24.13.3",
+    "esbuild": "^0.24.0",
+    "office-addin-dev-certs": "^2.0.10",
+    "typescript": "^5.4.5"
+  }
+}

@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Manifeste du complément Sankey Studio (phase 2 du PLAN-COMPLEMENT-EXCEL.md).
+  La sonde de la phase 0 garde le sien : src/addin/manifest-sonde.xml.
+
+  Chargement de côté (macOS) :
+    npm run addin:serve     (à laisser tourner : la page vient d'un HTTPS local)
+    npm run addin:install   (dépose ce fichier dans le conteneur d'Excel)
+  Puis, Excel redémarré : Accueil ▸ « Sankey Studio », ou
+  Insertion ▸ Mes compléments ▸ Compléments de développement.
+
+  DEUX RÈGLES à ne pas défaire :
+
+  1. Le jeu d'exigences déclaré est MINIMAL (ExcelApi 1.1). Déclarer 1.7 ici
+     empêcherait le complément de se charger DU TOUT sur un Excel plus ancien,
+     au lieu de le laisser fonctionner en mode manuel. Ce dont on a besoin
+     (onChanged, largeur du volet, réglages) est sondé à l'exécution avec
+     isSetSupported — cf. src/addin/pont.ts.
+  2. SourceLocation doit être en HTTPS, y compris en développement, et le
+     domaine du complément doit rester le même pour toutes ses pages. Depuis la
+     phase 4 il y en a DEUX : index.html (le volet courtier) et fenetre.html
+     (la fenêtre d'édition, ouverte par displayDialogAsync). La seconde n'a pas
+     à être déclarée ici — elle est sur le domaine d'AppDomains, et son adresse
+     est déduite de celle du volet (src/addin/courtier-volet.ts).
+
+  Ce fichier vise localhost et DOIT le rester : c'est lui qu'on charge de côté
+  pour développer. Le manifeste de production en est engendré, avec les URL
+  changées et rien d'autre (PLAN §5.3) :
+    SANKEY_BASE=https://hébergement/chemin npm run addin:manifeste
+  Il refuse de produire un manifeste incohérent. Procédure : DIFFUSION.md.
+
+  Attention en éditant ce commentaire : XML interdit deux tirets consécutifs
+  dans un commentaire. Une ligne de commande avec des options longues casse le
+  fichier, et Excel refuse alors de charger le complément.
+-->
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+           xsi:type="TaskPaneApp">
+  <Id>ee63133a-59e6-426f-b8b0-f9c992010e9e</Id>
+  <Version>0.1.0.0</Version>
+  <ProviderName>Sankey Studio</ProviderName>
+  <DefaultLocale>fr-FR</DefaultLocale>
+  <DisplayName DefaultValue="Sankey Studio" />
+  <Description DefaultValue="Éditeur de diagrammes de flux (Sankey) synchronisé avec les tableaux du classeur." />
+  <IconUrl DefaultValue="https://localhost:3000/assets/icon-64.png" />
+  <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-80.png" />
+  <SupportUrl DefaultValue="https://localhost:3000/" />
+  <AppDomains>
+    <AppDomain>https://localhost:3000</AppDomain>
+  </AppDomains>
+  <Hosts>
+    <Host Name="Workbook" />
+  </Hosts>
+  <Requirements>
+    <Sets DefaultMinVersion="1.1">
+      <Set Name="ExcelApi" MinVersion="1.1" />
+    </Sets>
+  </Requirements>
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://localhost:3000/index.html" />
+  </DefaultSettings>
+  <Permissions>ReadWriteDocument</Permissions>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+                    xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Workbook">
+        <DesktopFormFactor>
+          <!-- Sans bouton de ruban (Office trop ancien), le complément reste
+               accessible par Insertion ▸ Mes compléments : rien n'est perdu. -->
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="SankeyStudio.Groupe">
+                <Label resid="Groupe.Label" />
+                <Icon>
+                  <bt:Image size="16" resid="Icone.16" />
+                  <bt:Image size="32" resid="Icone.32" />
+                  <bt:Image size="80" resid="Icone.80" />
+                </Icon>
+                <Control xsi:type="Button" id="SankeyStudio.Ouvrir">
+                  <Label resid="Bouton.Label" />
+                  <Supertip>
+                    <Title resid="Bouton.Label" />
+                    <Description resid="Bouton.Info" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icone.16" />
+                    <bt:Image size="32" resid="Icone.32" />
+                    <bt:Image size="80" resid="Icone.80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>SankeyStudio.Volet</TaskpaneId>
+                    <SourceLocation resid="Volet.Url" />
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icone.16" DefaultValue="https://localhost:3000/assets/icon-16.png" />
+        <bt:Image id="Icone.32" DefaultValue="https://localhost:3000/assets/icon-32.png" />
+        <bt:Image id="Icone.80" DefaultValue="https://localhost:3000/assets/icon-80.png" />
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Volet.Url" DefaultValue="https://localhost:3000/index.html" />
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="Groupe.Label" DefaultValue="Sankey Studio" />
+        <bt:String id="Bouton.Label" DefaultValue="Diagramme de flux" />
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="Bouton.Info" DefaultValue="Ouvrir l'éditeur de diagramme Sankey sur les tableaux Nœuds et Liens du classeur." />
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

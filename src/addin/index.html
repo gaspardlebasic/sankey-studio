@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sankey Studio</title>
+    <!-- Office.js d'abord : le bundle appelle Office.onReady au chargement. -->
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+        /* Le volet courtier : quelques lignes, aux jetons de la charte. Rien
+           de cliquable dans les 34×32 px du coin haut-droit (menu personnalité
+           d'Excel pour Mac) — d'où le retrait en haut. */
+        /* `#app` est un flex dans styles.css : sans ça, `hidden` ne cache rien. */
+        [hidden] { display: none !important; }
+        #courtier { padding: 44px 16px 16px; display: flex; flex-direction: column; gap: 14px; }
+        #courtier h1 { font-size: 17px; font-weight: 700; margin: 0; }
+        #courtier-classeur { margin: 0; font-size: 13px; color: var(--muted); word-break: break-word; }
+        #courtier button {
+            font: inherit; font-size: 13px; font-weight: 600; line-height: 1;
+            padding: 11px 12px; border: var(--hairline) solid var(--dark);
+            background: none; border-radius: var(--radius); cursor: pointer; color: var(--dark);
+            transition: background .25s var(--ease), color .25s var(--ease);
+        }
+        #courtier button:hover { background: var(--dark); color: var(--bright); }
+        #courtier-etat { margin: 0; font-size: 13px; }
+        #courtier-etat.erreur { color: var(--alert); }
+        #courtier .note, #courtier-synchro {
+            margin: 0; font-size: 12px; color: var(--muted); line-height: 1.45;
+            border-top: var(--hairline) solid var(--grey); padding-top: 12px;
+        }
+    </style>
+</head>
+<body>
+    <!--
+      Le volet en mode COURTIER (phase 4) : il ne montre plus l'éditeur, qui
+      vit dans fenetre.html. Il reste affiché parce qu'Office ferme la fenêtre
+      avec le volet — et parce que c'est lui qui tient Office.js.
+    -->
+    <div id="courtier" hidden>
+        <h1>Sankey Studio</h1>
+        <p id="courtier-classeur"></p>
+        <button id="courtier-ouvrir" type="button">Ouvrir la fenêtre d'édition</button>
+        <p id="courtier-etat"></p>
+        <p class="note">Garde ce volet ouvert : la fenêtre d'édition se ferme avec lui.
+            Le diagramme, lui, vit dans le classeur — rien n'est perdu si tu la refermes.</p>
+        <p id="courtier-synchro" hidden></p>
+    </div>
+
+    <!--
+      Le même squelette que src/renderer/index.html : c'est le même renderer.
+      Il ne sert que dans le repli de compatibilité (DialogApi 1.2 absent), où
+      l'éditeur reste dans le volet — et pour les messages d'échec.
+    -->
+    <div id="app" hidden>
+        <div id="toolbar"></div>
+        <div id="main">
+            <div id="content">
+                <div id="canvas-wrap">
+                    <svg id="canvas" tabindex="0"></svg>
+                </div>
+                <div id="statusbar"><span id="status"></span></div>
+            </div>
+            <div id="sidebar"></div>
+        </div>
+    </div>
+    <!-- Nom haché à la construction : les webviews Office cachent durement. -->
+    <script src="__BUNDLE__"></script>
+</body>
+</html>

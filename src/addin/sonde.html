@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sankey Studio — sonde</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 10px 12px 40px;
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  /* Le menu « personnalité » d'Office occupe le coin haut-droit :
+     34x32 px sur Mac, 12x32 px sur Windows. On ne met rien de cliquable là. */
+  header { padding-right: 40px; margin-bottom: 10px; }
+  h1 { font-size: 15px; margin: 0 0 2px; }
+  .sous { opacity: .65; font-size: 11px; }
+  .mesure { display: flex; gap: 8px; align-items: baseline; font-size: 11px; opacity: .7; margin-top: 4px; }
+  button {
+    display: block; width: 100%; margin: 0 0 6px; padding: 8px 10px;
+    font: inherit; text-align: left; border: 1px solid rgba(128,128,128,.45);
+    border-radius: 6px; background: transparent; cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: rgba(128,128,128,.12); }
+  button:disabled { opacity: .4; cursor: default; }
+  button b { font-weight: 600; }
+  button span { display: block; font-size: 11px; opacity: .65; }
+  .danger { border-color: rgba(200,80,40,.6); }
+  fieldset { border: 0; padding: 0; margin: 0 0 14px; }
+  legend { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; opacity: .55; padding: 0 0 6px; }
+  #journal {
+    white-space: pre-wrap; word-break: break-word;
+    font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    border-top: 1px solid rgba(128,128,128,.3); padding-top: 8px; margin-top: 4px;
+  }
+  .ok::before   { content: "✓ "; color: #2e7d32; }
+  .ko::before   { content: "✗ "; color: #c62828; }
+  .info::before { content: "· "; opacity: .5; }
+  .titre { font-weight: 600; margin-top: 10px; }
+  .avert {
+    border: 1px solid rgba(200,80,40,.5); border-radius: 6px;
+    padding: 8px 10px; margin-bottom: 12px; font-size: 11.5px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sonde — phases 0 et 6</h1>
+  <div class="sous">Banc d'essai du complément Sankey Studio</div>
+  <div class="mesure">
+    <span id="largeur">largeur : —</span>
+    <span id="plateforme">plateforme : —</span>
+  </div>
+</header>
+
+<div class="avert">
+  <b>Travaille sur une COPIE du classeur.</b> Les essais d'écriture réécrivent
+  les tableaux ; rien n'est enregistré, mais <code>Ctrl-Z</code> ne défait pas
+  une écriture par complément.
+</div>
+
+<fieldset>
+  <legend>Lecture seule</legend>
+  <button id="b-exigences"><b>A · Jeux d'exigences</b><span>ExcelApi, TaskPaneAPI, Settings, DialogApi</span></button>
+  <button id="b-lecture"><b>B · Lire les deux tableaux</b><span>Trouve les tableaux par en-têtes, chronomètre</span></button>
+  <button id="b-formules"><b>D1 · Relever les formules</b><span>Colonne « Valeur du flux »</span></button>
+  <button id="b-largeur"><b>G · Élargir le volet</b><span>setWidth à 50 % de la fenêtre Excel</span></button>
+</fieldset>
+
+<fieldset>
+  <legend>Écriture — sur une copie</legend>
+  <button id="b-ecriture" class="danger"><b>C+D2 · Aller-retour neutre</b><span>Réécrit à l'identique, compare, chronomètre</span></button>
+</fieldset>
+
+<fieldset>
+  <legend>Suivi</legend>
+  <button id="b-evenements"><b>E · Écouter les modifications</b><span>Table.onChanged — puis tape dans une cellule</span></button>
+  <button id="b-stockage"><b>F · Stockage de l'apparence</b><span>document.settings, de 1 Ko à 2 Mo</span></button>
+  <button id="b-persistance"><b>F2 · Persistance du stockage</b><span>Laisse un marqueur ; enregistre, ferme, rouvre, reclique</span></button>
+  <button id="b-nettoyer"><span>Effacer le marqueur de persistance</span></button>
+</fieldset>
+
+<fieldset>
+  <legend>Phase 6 — validation Windows</legend>
+  <button id="b-tunnel"><b>H · Le tunnel volet ↔ fenêtre</b><span>Ouvre une fenêtre, mesure le poids et le délai des messages</span></button>
+  <button id="b-fermer-fenetre"><span>Refermer la fenêtre de mesure</span></button>
+  <button id="b-polices"><b>I · Polices du diagramme</b><span>Source Sans Pro se charge-t-elle dans la webview ?</span></button>
+</fieldset>
+
+<fieldset>
+  <legend></legend>
+  <button id="b-tout"><b>Tout lancer (sauf écriture et tunnel)</b></button>
+  <button id="b-vider"><span>Vider le journal</span></button>
+</fieldset>
+
+<div id="journal"></div>
+<script src="sonde.js"></script>
+</body>
+</html>

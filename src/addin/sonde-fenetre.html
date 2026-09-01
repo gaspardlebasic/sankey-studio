@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sonde — fenêtre</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 18px 20px;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  h1 { font-size: 15px; margin: 0 0 6px; }
+  p { margin: 0 0 10px; opacity: .7; font-size: 12px; }
+  #etat { font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body>
+<!--
+  La fenêtre de la SONDE (phase 6 du PLAN-COMPLEMENT-EXCEL.md).
+
+  Elle ne sert qu'à mesurer le tunnel : combien pèse un message qui passe, dans
+  quel sens, et en combien de temps. C'est la question ouverte nº1 du chantier —
+  Microsoft ne documente aucune limite de taille pour `messageParent` /
+  `messageChild`, et la solution retenue (§5.4) fait transiter tout le modèle.
+
+  Elle n'utilise PAS `src/addin/protocole.ts` : le protocole du produit a des
+  délais de garde et des reprises qui masqueraient justement ce qu'on cherche à
+  voir. Ici, un message, une réponse, un chronomètre.
+
+  Servie par `npm run addin:serve` depuis src/addin (même origine que la sonde).
+-->
+<h1>Sonde — fenêtre d'édition</h1>
+<p>Cette fenêtre ne sert qu'aux mesures du tunnel. Laisse-la ouverte, et
+   retourne dans le volet.</p>
+<div id="etat">en attente d'Office…</div>
+
+<script>
+(function () {
+  var etat = document.getElementById("etat");
+  var lignes = [];
+  function dire(t) {
+    lignes.push(t);
+    if (lignes.length > 12) lignes.shift();
+    etat.textContent = lignes.join("\n");
+  }
+
+  /** Une charge de `n` octets — un octet par caractère, pour que la mesure
+      affichée soit celle du message réellement envoyé. */
+  function charge(n) {
+    return new Array(n + 1).join("x");
+  }
+
+  function repondre(objet) {
+    var texte = JSON.stringify(objet);
+    try {
+      Office.context.ui.messageParent(texte);
+      dire("→ " + objet.t + " " + texte.length + " o");
+    } catch (e) {
+      // Un messageParent trop gros peut lever : c'est un résultat de mesure,
+      // pas un incident — mais le volet, lui, ne verra qu'un silence.
+      dire("✗ messageParent a refusé " + texte.length + " o : " + (e.message || e));
+    }
+  }
+
+  function traiter(texte) {
+    var m;
+    try { m = JSON.parse(texte); } catch (e) { dire("✗ message illisible"); return; }
+    dire("← " + m.t + " " + texte.length + " o");
+
+    if (m.t === "bonjour") { repondre({ t: "pret" }); return; }
+    // Descendant : le volet nous a envoyé une charge, on accuse sa taille.
+    if (m.t === "recois") { repondre({ t: "recu", octets: texte.length, utile: (m.charge || "").length }); return; }
+    // Montant : le volet demande une charge de m.n octets.
+    if (m.t === "envoie") { repondre({ t: "charge", charge: charge(m.n) }); return; }
+  }
+
+  if (typeof Office === "undefined") {
+    etat.textContent = "Office.js n'a pas pu charger — vérifie la connexion Internet.";
+    return;
+  }
+
+  Office.onReady(function () {
+    Office.context.ui.addHandlerAsync(
+      Office.EventType.DialogParentMessageReceived,
+      function (arg) { if (arg && typeof arg.message === "string") traiter(arg.message); },
+      function (r) {
+        if (r.status === Office.AsyncResultStatus.Succeeded) {
+          dire("prête — écoute le volet");
+          repondre({ t: "pret" });
+        } else {
+          dire("✗ écoute impossible : " + ((r.error && r.error.message) || "?"));
+        }
+      }
+    );
+  });
+})();
+</script>
+</body>
+</html>

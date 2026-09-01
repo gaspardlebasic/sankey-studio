@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Manifeste de la SONDE (phase 0 du PLAN-COMPLEMENT-EXCEL.md).
+  Ce n'est pas le complément final : c'est un banc d'essai qui répond aux
+  questions techniques du plan avant tout engagement.
+
+  Chargement de côté : `npm run addin:install`, option « sonde ».
+  macOS → conteneur d'Excel ; Windows → clé de développement du Registre.
+  Puis dans Excel : Insertion ▸ Mes compléments ▸ Compléments de développement.
+
+  La sonde ouvre une FENÊTRE (sonde-fenetre.html) pour mesurer le tunnel de la
+  phase 6. Elle est sur le même domaine que SourceLocation, donc autorisée ;
+  AppDomains est déclaré par prudence, pas par obligation.
+
+  Le jeu d'exigences déclaré est volontairement MINIMAL (ExcelApi 1.1) : déclarer
+  un jeu élevé ici empêcherait le complément de se charger du tout sur un Excel
+  plus ancien, au lieu de nous laisser sonder. Cf. PLAN §3.
+-->
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+           xsi:type="TaskPaneApp">
+  <Id>96df9050-7a3b-4586-8e7a-b9e55799d5f5</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Sankey Studio</ProviderName>
+  <DefaultLocale>fr-FR</DefaultLocale>
+  <DisplayName DefaultValue="Sankey Studio — sonde" />
+  <Description DefaultValue="Banc d'essai de la phase 0 : jeux d'exigences, lecture/écriture des tableaux, formules, évènements, stockage, largeur du volet." />
+  <IconUrl DefaultValue="https://localhost:3000/assets/icon-64.png" />
+  <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-80.png" />
+  <SupportUrl DefaultValue="https://localhost:3000/sonde.html" />
+  <AppDomains>
+    <AppDomain>https://localhost:3000</AppDomain>
+  </AppDomains>
+  <Hosts>
+    <Host Name="Workbook" />
+  </Hosts>
+  <Requirements>
+    <Sets DefaultMinVersion="1.1">
+      <Set Name="ExcelApi" MinVersion="1.1" />
+    </Sets>
+  </Requirements>
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://localhost:3000/sonde.html" />
+  </DefaultSettings>
+  <Permissions>ReadWriteDocument</Permissions>
+</OfficeApp>

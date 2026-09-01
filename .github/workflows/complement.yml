@@ -1,0 +1,88 @@
+name: Publier le complément Excel
+
+# Phase 5 du PLAN-COMPLEMENT-EXCEL.md — l'hébergement du complément Office.
+#
+# POURQUOI GitHub Pages : un complément doit être servi en HTTPS, depuis une
+# origine unique, sans certificat à installer sur les postes. Pages coche les
+# trois, le dépôt y est déjà, et le site ne porte AUCUNE donnée : le classeur ne
+# quitte jamais Excel (PLAN §5.3).
+#
+# CE QUI EST PUBLIÉ : `dist/addin/` tel quel — les deux pages (volet et fenêtre
+# d'édition), leurs bundles hachés, les styles, les polices, les icônes, et le
+# manifeste de production engendré avec l'adresse réelle du site.
+#
+# AVANT LE PREMIER USAGE, une fois : Réglages du dépôt ▸ Pages ▸ Source =
+# « GitHub Actions ». Sans ça, l'étape de déploiement échoue en le disant.
+#
+# Le manifeste n'est PAS installé par ce workflow : il se téléverse à la main au
+# centre d'administration M365 (DIFFUSION.md). Le workflow le publie aussi sur le
+# site, pour qu'on puisse toujours retrouver celui qui correspond au code en ligne.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/addin/**"
+      - "src/renderer/**"
+      - "src/shared/**"
+      - "build.mjs"
+      - "package.json"
+      - ".github/workflows/complement.yml"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Un seul déploiement à la fois, et on ne coupe pas celui qui est en cours :
+# une publication à moitié faite laisserait le volet et la fenêtre en désaccord
+# de version (PLAN §9).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  construire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Installer les dépendances
+        run: npm install
+
+      - name: Vérifier les types (TypeScript)
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Éprouver le complément sans Excel
+        run: npm run test:addin
+
+      # AVANT la construction : c'est cette étape qui donne l'adresse réelle du
+      # site, et le manifeste doit être engendré avec elle.
+      - name: Préparer Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Construire et engendrer le manifeste
+        # `base_url` vient d'être calculée : le manifeste ne peut donc pas viser
+        # une adresse périmée. Le script refuse de produire un manifeste
+        # incohérent (URL hors base, localhost oublié, dist incomplet).
+        run: npm run addin:manifeste -- "${{ steps.pages.outputs.base_url }}"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/addin
+
+  deployer:
+    needs: construire
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploiement.outputs.page_url }}
+    steps:
+      - id: deploiement
+        uses: actions/deploy-pages@v4

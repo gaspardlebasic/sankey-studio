@@ -2,10 +2,10 @@
 node_modules/
 
 # Sorties de build
-sankey-app/dist/
-sankey-app/release/
-sankey-flux-visual/dist/
-sankey-flux-visual/.tmp/
+dist/
+release/
+powerbi-visual/dist/
+powerbi-visual/.tmp/
 
 # OS
 .DS_Store

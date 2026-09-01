@@ -1,0 +1,132 @@
+/**
+ * Entrée de la coquille « complément Office » — le VOLET.
+ *
+ * Depuis la phase 4, le volet ne montre plus l'éditeur : il est le courtier
+ * d'une **fenêtre d'édition** séparée (`fenetre.html`), qui, elle, occupe
+ * l'écran. Le volet garde Office.js, le classeur, et l'état.
+ *
+ * DEUX CHEMINS, décidés à l'exécution :
+ *
+ *  - `DialogApi 1.2` présent — le cas normal : volet courtier + fenêtre.
+ *    C'est 1.2 qui apporte `messageChild` (volet → fenêtre) ; sans elle le
+ *    tunnel serait à sens unique, donc inutilisable.
+ *  - `DialogApi 1.2` absent — repli de compatibilité : l'éditeur reste dans le
+ *    volet, comme avant la phase 4. Étroit, mais entier.
+ *
+ * L'ORDRE est tout, dans les deux cas : le renderer lit `window.desktop` dès
+ * `createApp` (capacités, nom du classeur). On ne démarre donc qu'une fois
+ * Office prêt ET le pont posé. Un simple `<script>` avant le bundle ne
+ * suffirait pas : `Office.onReady` est asynchrone.
+ */
+
+import { installerPont, elargirVolet, supporte } from "./pont";
+import type { Pont } from "./pont";
+import { CourtierVolet, JEU_FENETRE, type Etat } from "./courtier-volet";
+import { createApp } from "../renderer/editor";
+
+function element<T extends HTMLElement>(id: string): T | null {
+  return document.getElementById(id) as T | null;
+}
+
+/** Un message à la place de tout le reste : on n'ira pas plus loin. */
+function annoncer(message: string): void {
+  const panneau = element("courtier");
+  if (panneau) panneau.hidden = true;
+  const racine = element("app");
+  if (racine) { racine.hidden = false; racine.textContent = message; }
+}
+
+/* --------------------------- volet courtier --------------------------- */
+
+/** Ce que le volet dit de chaque état de la fenêtre. */
+const PHRASES: Record<Etat, string> = {
+  fermee: "La fenêtre d'édition est fermée.",
+  ouverture: "Ouverture de la fenêtre d'édition…",
+  ouverte: "L'édition se fait dans la fenêtre. Ce volet la relie au classeur.",
+  erreur: ""            // remplacée par le motif, toujours fourni
+};
+
+function montrerCourtier(pont: Pont, nomClasseur: string, evenements: boolean): CourtierVolet | null {
+  const panneau = element("courtier");
+  const racine = element("app");
+  const bouton = element<HTMLButtonElement>("courtier-ouvrir");
+  const ligneEtat = element("courtier-etat");
+  const ligneClasseur = element("courtier-classeur");
+  if (!panneau || !bouton || !ligneEtat) return null;
+
+  if (racine) racine.hidden = true;
+  panneau.hidden = false;
+  if (ligneClasseur) ligneClasseur.textContent = nomClasseur;
+
+  const synchro = element("courtier-synchro");
+  if (synchro && !evenements) {
+    synchro.hidden = false;
+    synchro.textContent = "Cette version d'Excel ne signale pas les modifications "
+      + "(ExcelApi 1.7 absent) : relis le classeur depuis la fenêtre d'édition.";
+  }
+
+  const courtier = new CourtierVolet({
+    pont,
+    // Les capacités déclarées par le pont, telles quelles : c'est le volet qui
+    // sait ce qu'Excel permet ici, pas la fenêtre.
+    accueil: () => ({ capacites: pont.capacites, nomClasseur, evenements }),
+    surEtat: (etat, motif) => {
+      ligneEtat.textContent = motif || PHRASES[etat];
+      ligneEtat.classList.toggle("erreur", etat === "erreur");
+      bouton.hidden = etat === "ouverte" || etat === "ouverture";
+      bouton.textContent = etat === "erreur" ? "Réessayer" : "Ouvrir la fenêtre d'édition";
+    }
+  });
+
+  bouton.addEventListener("click", () => courtier.ouvrir());
+  return courtier;
+}
+
+/* ------------------------------ démarrage ------------------------------ */
+
+function demarrer(): void {
+  Office.onReady(async info => {
+    if (!element("app")) return;
+    if (info.host !== Office.HostType.Excel) {
+      annoncer("Sankey Studio fonctionne dans Excel.");
+      return;
+    }
+
+    let pont: Pont;
+    let nomClasseur: string;
+    let evenements: boolean;
+    try {
+      ({ pont, nomClasseur, evenements } = await installerPont());
+    } catch (e) {
+      annoncer("Impossible de joindre le classeur : " + ((e as Error).message || e));
+      return;
+    }
+
+    if (!supporte(JEU_FENETRE)) {
+      // Repli : l'éditeur dans le volet, comme avant la phase 4. Le canevas y
+      // est à l'étroit (phase 0 §G) mais tout fonctionne.
+      console.warn("Sankey Studio : DialogApi 1.2 absent — l'éditeur reste dans le volet.");
+      const racine = element("app")!;
+      racine.hidden = false;
+      createApp(racine);
+      elargirVolet();
+      return;
+    }
+
+    const courtier = montrerCourtier(pont, nomClasseur, evenements);
+    if (!courtier) { annoncer("Page du volet incomplète."); return; }
+    // Confort du bureau : la fenêtre s'ouvre seule. Sur Excel pour le web, une
+    // ouverture sans clic est refusée — le bouton prend alors le relais.
+    courtier.ouvrir();
+  });
+}
+
+// office.js vient d'Internet (c'est la règle du modèle Office) : hors ligne il
+// manque, et la page resterait blanche sans rien dire. Le risque est assumé
+// (PLAN §7), mais il doit s'expliquer.
+if (typeof Office === "undefined") {
+  annoncer("Sankey Studio n'a pas pu charger Office.js — vérifie la connexion "
+    + "Internet, puis referme et rouvre le volet.");
+} else {
+  demarrer();
+}

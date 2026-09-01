@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sankey Studio — fenêtre d'édition (banc d'essai)</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<!--
+  La FENÊTRE D'ÉDITION du banc d'essai (phase 4). Chargée dans un iframe par
+  tests/fenetre-essai.html, qui joue le volet.
+
+  Elle exécute le VRAI code de la fenêtre — src/addin/fenetre.ts, pont-fenetre.ts,
+  protocole.ts et le renderer entier — au-dessus d'un faux Office.js réduit à ce
+  qu'une fenêtre de dialogue offre réellement : `messageParent`, l'écoute des
+  messages du volet, et rien d'autre. Pas d'`Excel.run` : c'est exactement la
+  contrainte que la phase 4 doit encaisser.
+
+  Le transport est un `postMessage` entre l'iframe et sa page parente, à la
+  place du canal d'Office. C'est le seul point où le banc ment.
+-->
+<div id="app">
+    <div id="toolbar"></div>
+    <div id="main">
+        <div id="content">
+            <div id="canvas-wrap">
+                <svg id="canvas" tabindex="0"></svg>
+            </div>
+            <div id="statusbar"><span id="status"></span></div>
+        </div>
+        <div id="sidebar"></div>
+    </div>
+</div>
+<script>
+(function () {
+  var ecoute = null;
+
+  window.Office = {
+    HostType: { Excel: "Excel" },
+    EventType: { DialogParentMessageReceived: "DialogParentMessageReceived" },
+    AsyncResultStatus: { Succeeded: "succeeded", Failed: "failed" },
+    // Asynchrone, comme le vrai : c'est ce qui impose l'ordre d'amorçage.
+    onReady: function (cb) { setTimeout(function () { cb({ host: "Excel" }); }, 0); },
+    context: {
+      ui: {
+        messageParent: function (texte) {
+          parent.postMessage({ sankey: true, sens: "vers-volet", texte: texte }, "*");
+        },
+        addHandlerAsync: function (type, handler, cb) {
+          if (type === "DialogParentMessageReceived") ecoute = handler;
+          setTimeout(function () { cb({ status: "succeeded" }); }, 0);
+        }
+      }
+    }
+  };
+
+  window.addEventListener("message", function (e) {
+    if (!e.data || !e.data.sankey || e.data.sens !== "vers-fenetre") return;
+    if (ecoute) ecoute({ message: e.data.texte });
+  });
+})();
+</script>
+<script src="/addin/fenetre.js"></script>
+</body>
+</html>

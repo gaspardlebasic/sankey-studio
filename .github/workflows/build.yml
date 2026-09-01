@@ -21,16 +21,13 @@ jobs:
           - os: windows-latest
             script: dist:win
             artifact: windows-installers
-            pattern: sankey-app/release/*.exe
+            pattern: release/*.exe
           - os: macos-latest
             script: dist
             artifact: macos-dmg
-            pattern: sankey-app/release/*.dmg
+            pattern: release/*.dmg
 
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: sankey-app
     env:
       # Build non signé : on empêche electron-builder de chercher un certificat.
       CSC_IDENTITY_AUTO_DISCOVERY: false

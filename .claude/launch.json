@@ -4,7 +4,7 @@
     {
       "name": "sankey-renderer",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "sankey-app", "run", "serve"],
+      "runtimeArgs": ["run", "serve"],
       "port": 8811
     }
   ]

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sankey Studio — édition</title>
+    <!--
+      La fenêtre d'édition (phase 4). Elle DOIT être servie depuis le même
+      domaine que le volet, sous-domaine compris : Office l'exige, et c'est
+      pourquoi son adresse est déduite de celle du volet plutôt que codée en
+      dur (src/addin/courtier-volet.ts).
+
+      Office.js est chargé ici aussi — mais il n'y offre que `messageParent` et
+      `isSetSupported`. Pas d'`Excel.run` : le classeur, c'est le volet.
+    -->
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <!-- Même squelette que src/renderer/index.html : c'est le même renderer. -->
+    <div id="app">
+        <div id="toolbar"></div>
+        <div id="main">
+            <div id="content">
+                <div id="canvas-wrap">
+                    <svg id="canvas" tabindex="0"></svg>
+                </div>
+                <div id="statusbar"><span id="status"></span></div>
+            </div>
+            <div id="sidebar"></div>
+        </div>
+    </div>
+    <!-- Nom haché à la construction : les webviews Office cachent durement. -->
+    <script src="__BUNDLE__"></script>
+</body>
+</html>

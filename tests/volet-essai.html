@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sankey Studio — volet (banc d'essai)</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<!--
+  Banc d'essai du renderer SOUS LES CAPACITÉS DU COMPLÉMENT, sans Excel.
+
+    npm run serve   puis   http://localhost:8811/volet-essai.html
+
+  Il pose un faux `window.desktop` — les mêmes capacités que src/addin/pont.ts,
+  au-dessus d'un classeur en mémoire — AVANT le bundle, exactement comme le fait
+  la vraie coquille. Ce qu'on vient y vérifier : le modèle vient du classeur (ni
+  exemple ni cache local), le panneau ne propose pas de connecter un classeur,
+  une modification part toute seule, et une modification « dans Excel » revient.
+
+  Ce qu'il ne prouve PAS : Office.js lui-même (c'est l'objet de la sonde et de
+  l'essai réel dans Excel).
+-->
+<div id="app">
+    <div id="toolbar"></div>
+    <div id="main">
+        <div id="content">
+            <div id="canvas-wrap">
+                <svg id="canvas" tabindex="0"></svg>
+            </div>
+            <div id="statusbar"><span id="status"></span></div>
+        </div>
+        <div id="sidebar"></div>
+    </div>
+</div>
+<script>
+(function () {
+  // Un classeur minuscule, au format que rend lireDiagramme().
+  var classeur = {
+    nodes: [
+      { id: "n1", name: "Production", column: 1, title: "Amont", order: 0, lane: 1, kind: "industrie", filiere: "Lait", color: "#e0503f" },
+      { id: "n2", name: "Lait cru", column: 2, title: "", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: "#e79a3c" },
+      { id: "n3", name: "Beurre", column: 3, title: "Aval", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: "#e79a3c" }
+    ],
+    links: [
+      { sourceId: "n1", targetId: "n2", sourceName: "Production", targetName: "Lait cru", value: 5500, unit: "t" },
+      { sourceId: "n2", targetId: "n3", sourceName: "Lait cru", targetName: "Beurre", value: 92, unit: "t" }
+    ],
+    hasLane: true, hasKind: true
+  };
+
+  var journal = [];
+  var apparence = null;
+  var rappel = null;
+
+  window.__volet = {
+    journal: journal,
+    classeur: classeur,
+    apparence: function () { return apparence; },
+    /** Joue une modification faite « dans Excel ». */
+    modifierDansExcel: function (nom) {
+      classeur.nodes[1].name = nom || "Lait cru bio";
+      classeur.links[0].targetName = classeur.nodes[1].name;
+      classeur.links[1].sourceName = classeur.nodes[1].name;
+      if (rappel) rappel();
+    }
+  };
+
+  function copie(o) { return JSON.parse(JSON.stringify(o)); }
+
+  window.desktop = {
+    isElectron: false,
+    // Les mêmes capacités que src/addin/pont.ts.
+    capacites: {
+      fichiers: false, excel: true, classeurImpose: true,
+      classeurVerrouillable: false, envoiAutomatique: true, apparenceDansClasseur: true
+    },
+    nomClasseur: "flux lait essai.xlsx",
+    canControlExcel: false,
+    readExcel: function () {
+      journal.push({ quoi: "read", t: Date.now() });
+      return Promise.resolve({ ok: true, live: true, data: copie(classeur) });
+    },
+    writeExcel: function (model) {
+      journal.push({ quoi: "write", noeuds: model.nodes.length, liens: model.links.length, t: Date.now() });
+      return Promise.resolve({
+        ok: true, live: true, path: "flux lait essai.xlsx",
+        sheetName: "Diagramme", enregistre: false, formules: 0, ms: 12
+      });
+    },
+    excelFormulas: function () { return Promise.resolve({ ok: true, formules: {} }); },
+    isExcelLocked: function () { return Promise.resolve({ locked: false, live: true, mode: "complement" }); },
+    watchExcel: function () { return Promise.resolve({ locked: false, live: true, mode: "complement" }); },
+    closeExcelWorkbook: function () { return Promise.resolve({ locked: false, state: "closed" }); },
+    onExcelChanged: function (cb) { rappel = cb; },
+    copyToClipboard: function (t) { journal.push({ quoi: "presse-papier", taille: t.length }); return Promise.resolve({ ok: true }); },
+    lireApparence: function () { return Promise.resolve(apparence); },
+    ecrireApparence: function (json) {
+      apparence = json;
+      journal.push({ quoi: "apparence", taille: json.length, t: Date.now() });
+      return Promise.resolve({ ok: true });
+    }
+  };
+})();
+</script>
+<script src="/bundle.js"></script>
+</body>
+</html>

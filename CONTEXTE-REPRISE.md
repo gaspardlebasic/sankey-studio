@@ -5,11 +5,11 @@
 
 ## Résumé
 
-On développe **deux livrables** dans `/Users/gaspardbenoit/Downloads/module power bi sankey/` :
+On développe **deux livrables** dans `/Users/gaspardbenoit/Documents/sankey-studio/` :
 
-1. **`sankey-flux-visual/`** — un **visuel personnalisé Power BI** (Sankey par colonnes),
+1. **`powerbi-visual/`** — un **visuel personnalisé Power BI** (Sankey par colonnes),
    packagé en `.pbiviz` dans `dist/`. **Terminé** (v3.2.0). TypeScript + d3-sankey, API 5.11.
-2. **`sankey-app/`** — une **application de bureau Electron « Sankey Studio »** : éditeur graphique
+2. **la racine du dépôt** — une **application de bureau Electron « Sankey Studio »** : éditeur graphique
    de diagrammes de flux synchronisé avec Excel. **C'est le projet actif.** Les 6 phases prévues
    sont faites + fonctionnalités supplémentaires (filière, export image).
 
@@ -23,9 +23,16 @@ Fichier source de données de référence : `flux lait essai.xlsx` (flux de prod
   (`reconcile`, `setSynced`, `model`, `refresh`).
 - Je vérifie **`excel.js`** en **Node + openpyxl** (openpyxl est installé, c'est un validateur fiable).
 - Je vérifie le **démarrage Electron** avec `npx electron .` en cherchant les erreurs dans les logs.
+- Pour le **complément Office**, je ne peux pas cliquer dans le ruban d'Excel, mais je vois tout le
+  reste : le **journal du serveur** (`npm run addin:serve` écrit une ligne par requête — c'est là
+  qu'un 404 de la webview se voit), **AppleScript** pour lire le classeur *ouvert* (valeurs et
+  formules, avant/après une écriture du complément), et `screencapture` pour regarder l'écran.
+  Piège d'AppleScript : la liste rendue par `get value of range` est séparée par des virgules
+  **sans guillemets** — un nom qui contient une virgule casse tout découpage. Comparer sur les
+  colonnes **numériques**, ou cellule par cellule.
 - Toujours : `npx tsc --noEmit -p tsconfig.json` puis `node build.mjs`.
 
-## sankey-app — architecture
+## Application de bureau (racine) — architecture
 
 - **Stack** : Electron + TypeScript ; renderer bundlé par **esbuild** (`build.mjs`) ; process
   principal en `src/main/*.js` ; renderer en `src/renderer/*.ts`. Dépendances : `jszip` (Excel),
@@ -60,7 +67,7 @@ Fichier source de données de référence : `flux lait essai.xlsx` (flux de prod
     si un lien l'exige (flux gauche→droite valide ; évite un plantage d'affichage de d3-sankey).
   - La **Filière** filtre l'affichage (voir `viewNodes/viewLinks/viewModel` + `hiddenFilieres`).
 
-## Fonctionnalités faites (sankey-app)
+## Fonctionnalités faites (application de bureau)
 
 Éditeur graphique **aimanté sur grille** (colonnes × ordre, glisser pour réordonner) ; aperçu Sankey
 live ; **panneau d'apparence complet** (cartes repliables : Liens, Nœuds, Étiquettes, Titres,
@@ -84,6 +91,10 @@ electron-builder.
 
 ## À faire (prochaines étapes)
 
+- **Complément Excel** : il a tourné dans Excel pour Mac le 2026-09-01 (`RESULTATS-ESSAI-MAC.md`).
+  Restent la **mesure du tunnel avec la sonde**, la **publication** (`DIFFUSION.md` : activer
+  GitHub Pages, téléverser au centre d'administration M365) et la **campagne Windows**
+  (`RESULTATS-PHASE-6.md`).
 - **Signature + notarisation** macOS (compte Apple Developer ; actuellement `identity: null` →
   clic droit → Ouvrir au 1er lancement). Puis builds **Windows (.exe)** et **Linux (AppImage/deb)**.
 - Visuel Power BI : dédoubler l'« Ordre d'affichage des liens » en **ordre de départ / d'arrivée**

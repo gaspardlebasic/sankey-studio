@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "es2019",
+    "module": "esnext",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "lib": [
+      "es2019",
+      "dom"
+    ]
+  },
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/addin/**/*.ts",
+    "src/shared/**/*.d.ts"
+  ]
+}
