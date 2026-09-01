@@ -267,6 +267,8 @@ npm run serve       # sert dist/renderer sur http://localhost:8811 (dev navigate
 npm run test:addin  # tests de l'adaptateur Office.js, du rythme de synchro et du tunnel
 npm run addin:certs   # UNE FOIS : certificat HTTPS de dev (demande le mot de passe)
 npm run addin:install # charge le manifeste de côté (-- --sonde, -- --retirer)
+npm run addin:install -- --enligne  # pose le manifeste PUBLIÉ : ni serveur local ni certificat
+                                    # (mode de diffusion sans droits M365, DIFFUSION.md §6)
                     # macOS : conteneur d'Excel · Windows : clé WEF\Developer du Registre
 npm run addin:serve   # sert dist/addin en HTTPS sur https://localhost:3000
 npm run addin:manifeste -- https://hote/chemin   # manifeste de production (voir DIFFUSION.md)

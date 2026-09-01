@@ -2,9 +2,16 @@
 /**
  * Charge le complément de côté dans Excel — macOS et Windows.
  *
- *   npm run addin:install               le complément (src/addin/manifest.xml)
+ *   npm run addin:install               le complément DE DÉVELOPPEMENT (localhost:3000)
+ *   npm run addin:install -- --enligne  le complément PUBLIÉ (aucun serveur local)
  *   npm run addin:install -- --sonde    la sonde (phases 0 et 6)
  *   npm run addin:install -- --retirer  retire les deux
+ *
+ * `--enligne` installe le manifeste de PRODUCTION (dist/addin/manifest.xml,
+ * engendré par `npm run addin:manifeste`) : la page vient de l'hébergeur, donc
+ * ni serveur local, ni certificat, ni dépôt sur le poste. C'est le mode de
+ * diffusion de qui n'a pas les droits d'administration M365 — poste par poste,
+ * mais sans rien demander à personne (DIFFUSION.md §6).
  *
  * Deux mécanismes, parce qu'Office n'en offre pas un seul :
  *
@@ -21,19 +28,28 @@
  * Le chemin Windows n'a **jamais été exécuté** : c'est l'objet de la phase 6.
  */
 
-import { copyFileSync, mkdirSync, existsSync, rmSync } from "fs";
+import { copyFileSync, mkdirSync, existsSync, rmSync, readFileSync } from "fs";
 import { execFileSync } from "child_process";
 import { join, resolve, dirname } from "path";
 import { homedir, platform } from "os";
 
 const CIBLES = {
   complement: { source: "src/addin/manifest.xml", nom: "sankey-studio.xml", titre: "Sankey Studio" },
+  // Même NOM de fichier que le complément de développement, et même <Id> : le
+  // second remplace le premier au lieu de cohabiter avec lui. Deux manifestes
+  // de même identité dans `wef` donneraient un doublon dans le ruban.
+  enligne: { source: "dist/addin/manifest.xml", nom: "sankey-studio.xml", titre: "Sankey Studio" },
   sonde: { source: "src/addin/manifest-sonde.xml", nom: "sankey-sonde.xml", titre: "Sankey Studio — sonde" }
 };
 
 const sonde = process.argv.includes("--sonde");
+const enligne = process.argv.includes("--enligne");
 const retirer = process.argv.includes("--retirer");
-const choix = sonde ? CIBLES.sonde : CIBLES.complement;
+if (sonde && enligne) {
+  console.error("--sonde et --enligne s'excluent : la sonde n'est pas publiée.");
+  process.exit(1);
+}
+const choix = sonde ? CIBLES.sonde : enligne ? CIBLES.enligne : CIBLES.complement;
 const os_ = platform();
 
 if (os_ !== "darwin" && os_ !== "win32") {
@@ -128,20 +144,56 @@ if (retirer) {
 }
 
 const source = resolve(choix.source);
-if (!existsSync(source)) { console.error("Manifeste introuvable : " + source); process.exit(1); }
+if (!existsSync(source)) {
+  console.error("Manifeste introuvable : " + source);
+  if (enligne) {
+    console.error("\nLe manifeste de production s'engendre, il ne s'écrit pas à la main :\n");
+    console.error("  npm run addin:manifeste -- https://<hôte>/<chemin>\n");
+    console.error("Voir DIFFUSION.md.");
+  }
+  process.exit(1);
+}
+
+// Un manifeste de production qui vise encore localhost transformerait une
+// installation « sans serveur » en page blanche, et rien ne le dirait dans
+// Excel : on le refuse ici, pendant qu'on peut encore l'expliquer.
+let adresse = null;
+if (enligne) {
+  const xml = readFileSync(source, "utf8");
+  const m = /<SourceLocation DefaultValue="([^"]+)"/.exec(xml);
+  adresse = m ? m[1] : null;
+  if (!adresse || !adresse.startsWith("https://") || /localhost|127\.0\.0\.1/.test(adresse)) {
+    console.error("Ce manifeste ne vise pas un hébergeur : " + (adresse || "aucune SourceLocation"));
+    console.error("\nIl faut l'engendrer avec l'adresse du site :\n");
+    console.error("  npm run addin:manifeste -- https://<hôte>/<chemin>\n");
+    process.exit(1);
+  }
+}
 
 const ou = os_ === "darwin" ? installerMac(source) : installerWindows(source);
 
 console.log("Manifeste installé :\n  " + ou + "\n");
-console.log("Ensuite :");
-console.log("  1. npm run addin:certs         (UNE FOIS : certificat HTTPS de développement)");
-console.log("  2. npm run build               (construit dist/addin)");
-console.log("  3. npm run addin:serve         (dans un autre terminal, à laisser tourner)");
-console.log("  4. Quitte Excel complètement, puis rouvre-le");
-console.log("  5. Ouvre ton classeur" + (sonde ? " — une COPIE : la sonde réécrit les tableaux" : ""));
-console.log(sonde
-  ? "  6. Insertion ▸ Mes compléments ▸ Compléments de développement ▸ « " + choix.titre + " »"
-  : "  6. Accueil ▸ « Diagramme de flux » (ou Insertion ▸ Mes compléments ▸ Compléments de développement)");
+if (enligne) {
+  // Aucune des étapes de développement ne s'applique : c'est tout l'intérêt.
+  console.log("Il vise le site publié :\n  " + adresse + "\n");
+  console.log("Ni serveur local, ni certificat, ni dépôt : la page vient de l'hébergeur.");
+  console.log("\nEnsuite :");
+  console.log("  1. Quitte Excel COMPLÈTEMENT, puis rouvre-le");
+  console.log("  2. Ouvre ton classeur");
+  console.log("  3. Accueil ▸ « Diagramme de flux »");
+  console.log("\nÀ savoir : la page venant d'Internet, le complément ne charge pas hors ligne.");
+  console.log("Après une republication, ferme et rouvre le volet pour prendre la nouvelle version.");
+} else {
+  console.log("Ensuite :");
+  console.log("  1. npm run addin:certs         (UNE FOIS : certificat HTTPS de développement)");
+  console.log("  2. npm run build               (construit dist/addin)");
+  console.log("  3. npm run addin:serve         (dans un autre terminal, à laisser tourner)");
+  console.log("  4. Quitte Excel complètement, puis rouvre-le");
+  console.log("  5. Ouvre ton classeur" + (sonde ? " — une COPIE : la sonde réécrit les tableaux" : ""));
+  console.log(sonde
+    ? "  6. Insertion ▸ Mes compléments ▸ Compléments de développement ▸ « " + choix.titre + " »"
+    : "  6. Accueil ▸ « Diagramme de flux » (ou Insertion ▸ Mes compléments ▸ Compléments de développement)");
+}
 
 if (os_ === "win32") {
   console.log("\nSi le complément n'apparaît pas dans « Compléments de développement »,");

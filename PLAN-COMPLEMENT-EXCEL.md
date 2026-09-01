@@ -361,9 +361,13 @@ activer Pages, et téléverser au centre d'administration M365.
 sur <https://gaspardlebasic.github.io/sankey-studio/> — les deux pages, les bundles hachés, les
 polices, les icônes et le manifeste de production, tout en HTTPS sur une origine unique.
 
-**Reste** : téléverser le manifeste au centre d'administration M365, attribuer, et faire l'essai
-sur un poste tiers — la liste de contrôle est dans `DIFFUSION.md`. Ça demande un compte
-administrateur : le dépôt ne peut pas le faire.
+**Le centre d'administration M365 est fermé** : le compte de l'utilisatrice n'a pas le rôle
+d'administrateur dans son tenant. Le complément se pose donc **poste par poste**, avec le
+manifeste de production et sans serveur local — `npm run addin:install -- --enligne`
+(`DIFFUSION.md` §6). Fait sur le poste de développement le 2026-09-01.
+
+**Reste** : demander à l'informatique de la boîte de téléverser le manifeste (le lien suffit),
+et faire l'essai sur un poste tiers — liste de contrôle dans `DIFFUSION.md` §5.
 
 ### Phase 6 — validation Windows — **instrument prêt, mesures à faire**
 

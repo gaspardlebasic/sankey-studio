@@ -111,16 +111,38 @@ jamais servi au développement :
 Sur un poste **Windows**, ces cases ne suffisent pas : la phase 6 a sa propre campagne de
 mesures, avec la sonde — voir `RESULTATS-PHASE-6.md`. **La faire avant d'attribuer largement.**
 
-## 6. Si l'administration refuse, ou traîne
+## 6. Sans droits d'administration — **c'est le cas ici**
 
-Le chargement de côté reste possible, poste par poste, sans administrateur :
+`gaspard@basic.coop` n'a pas le rôle d'administrateur dans le tenant `basic.coop` : le centre
+d'administration refuse la page des applications intégrées. Le §3 est donc hors d'atteinte tant
+que l'informatique de la boîte n'ouvre pas le droit, ou ne téléverse pas le manifeste elle-même
+(c'est ce qu'il faudra lui demander : le lien du manifeste suffit).
+
+En attendant, le complément s'installe **poste par poste**, sans rien demander à personne :
 
 ```bash
-npm run addin:install          # macOS : conteneur d'Excel · Windows : Registre
+npm run addin:manifeste -- https://gaspardlebasic.github.io/sankey-studio
+npm run addin:install -- --enligne
 ```
 
-C'est le mode de développement, pas un mode de diffusion : il suppose le dépôt et un serveur
-HTTPS local sur la machine. Utilisable pour une démonstration, pas pour une équipe.
+Puis quitter Excel **complètement** et le rouvrir. `--enligne` pose le manifeste de
+**production** — celui qui vise le site publié — au lieu de celui de développement. Sur ce
+poste-là, il n'y a donc **ni serveur local, ni certificat, ni dépôt** : la page vient de
+l'hébergeur, exactement comme si elle avait été déployée par l'administration. Le script refuse
+d'installer un manifeste qui viserait encore `localhost` — sans ce garde-fou, l'installation
+« sans serveur » donnerait une page blanche qu'Excel n'expliquerait pas.
+
+Ce que ce mode ne donne pas, par rapport à un déploiement M365 :
+
+- il faut le faire **sur chaque poste**, et le refaire si le manifeste change (pas si le code
+  change : les bundles sont hachés, le volet reprend la nouvelle version au rechargement) ;
+- il faut Node et le dépôt **au moment de l'installation** — mais plus après ;
+- rien n'est centralisé : personne ne peut retirer le complément à distance.
+
+Pour l'enlever : `npm run addin:install -- --retirer`.
+
+Le mode **développement** (`npm run addin:install` sans `--enligne`) reste ce qu'il était : il
+vise `https://localhost:3000` et suppose `npm run addin:serve` en marche.
 
 ---
 
