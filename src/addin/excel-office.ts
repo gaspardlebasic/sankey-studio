@@ -23,7 +23,9 @@ import {
   NODE_COLS, LINK_COLS, NODE_START, LINK_START,
   buildModelRows, toInt, toNum, typeDepuisTexte
 } from "../shared/modele-excel.js";
-import type { Cellule, Modele, NodeKind } from "../shared/modele-excel.js";
+import type {
+  Cellule, FormulePreservee, Modele, NodeKind
+} from "../shared/modele-excel.js";
 
 /* ------------------------------ contrat ------------------------------ */
 /* Ces formes sont consommées telles quelles par le renderer (editor.ts).  */
@@ -52,7 +54,12 @@ export interface OptionsEcriture {
   save?: boolean;
 }
 
-export type Formules = Record<string, string>;
+/**
+ * Formules « Valeur du flux » retrouvées dans le classeur, indexées par
+ * `id:…` puis `name:…`. Les deux clés d'une même ligne portent le même
+ * `source` : buildModelRows s'en sert pour ne servir chaque formule qu'UNE fois.
+ */
+export type Formules = Map<string, FormulePreservee>;
 
 const FEUILLE_DEFAUT = "Diagramme";
 /** Un tableau Excel ne peut pas avoir zéro ligne : on en garde une, vide. */
@@ -367,7 +374,10 @@ export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel |
 function collecterFormules(
   liens: TableauTrouve, valeurs: unknown[][], formules: unknown[][]
 ): Formules {
-  const out: Formules = {};
+  const out: Formules = new Map();
+  const poser = (cle: string, e: FormulePreservee): void => {
+    if (!out.has(cle)) out.set(cle, e);      // la première ligne du classeur gagne
+  };
   const ix = liens.index;
   const iVal = ix.get("Valeur du flux");
   if (iVal === undefined) return out;
@@ -385,10 +395,146 @@ function collecterFormules(
     const dNom = iDn === undefined ? "" : texte(v[iDn]);
     const oId = iOi === undefined ? "" : texte(v[iOi]);
     const dId = iDi === undefined ? "" : texte(v[iDi]);
-    if (oId && dId) out["id:" + oId + " " + dId] = formule;
-    if (oNom && dNom) out["name:" + oNom + " " + dNom] = formule;
+    const e: FormulePreservee = { f: formule, source: i };
+    if (oId && dId) poser("id:" + oId + " " + dId, e);
+    if (oNom && dNom) poser("name:" + oNom + " " + dNom, e);
   }
   return out;
+}
+
+/* --------------------- colonnes de l'utilisatrice --------------------- */
+
+/**
+ * Les colonnes que nous ne connaissons pas — un « Commentaire », une quantité
+ * brute — appartiennent à l'utilisatrice. On ne les calcule pas : on les fait
+ * VOYAGER AVEC LEUR LIGNE.
+ *
+ * Ne pas y toucher du tout, comme on le faisait, ne les protégeait qu'en
+ * apparence : les lignes, elles, sont retriées à chaque écriture
+ * (buildModelRows range par filière, colonne, couloir, ordre). Dès la première
+ * édition qui change l'ordre, le commentaire se retrouvait en face d'un autre
+ * lien — et une formule qui pointait vers une de ces colonnes (« =Q3*1000 »)
+ * lisait la ligne du voisin. C'est le décalage signalé.
+ *
+ * Une ligne nouvelle n'a rien à reprendre : ses colonnes étrangères sont vidées.
+ */
+
+/** Ce qui identifie une ligne : une clé forte (les ID), une clé de repli (les noms). */
+interface Identite { fortes: string[]; replis: string[]; }
+
+const ID_NOEUD: Identite = { fortes: ["ID"], replis: ["Noeud"] };
+const ID_LIEN: Identite = {
+  fortes: ["ID origine", "ID destination"], replis: ["Origine", "Destination"]
+};
+
+/** Ce qu'on relit d'une cellule : sa formule s'il y en a une, sinon sa valeur. */
+type Contenu = string | number | boolean;
+
+function contenu(v: unknown, f: unknown): Contenu {
+  const s = texte(f);
+  if (s.charAt(0) === "=") return s;             // une formule reste une formule
+  if (v === null || v === undefined) return "";
+  return v as Contenu;
+}
+
+/** Indices, dans le classeur, des colonnes du tableau que nous n'écrivons pas. */
+function colonnesEtrangeres(t: TableauTrouve, nos: string[]): number[] {
+  const miennes = new Set<number>();
+  for (const nom of nos) {
+    const i = t.index.get(nom);
+    if (i !== undefined) miennes.add(i);
+  }
+  const out: number[] = [];
+  for (let i = 0; i < t.entetes.length; i++) if (!miennes.has(i)) out.push(i);
+  return out;
+}
+
+/**
+ * Pour chaque ligne à écrire, le contenu de la ligne du classeur qui lui
+ * correspond — par ID d'abord, par noms ensuite, et **jamais deux fois la
+ * même** : deux lignes homonymes (le même « Transport → Pertes » dans deux
+ * filières) ne peuvent pas revendiquer la même. Même discipline que les
+ * formules, et pour la même raison.
+ */
+function apparierLignes(
+  t: TableauTrouve, nos: string[], ident: Identite,
+  valeurs: unknown[][], formules: unknown[][], nouvelles: Cellule[][]
+): (Contenu[] | undefined)[] {
+  const lignesV = lignesDonnees(valeurs);
+  const lignesF = lignesDonnees(formules);
+
+  const cleAncienne = (ligne: unknown[], cols: string[]): string | null => {
+    const bouts: string[] = [];
+    for (const nom of cols) {
+      const i = t.index.get(nom);
+      const b = i === undefined ? "" : texte(ligne[i]).trim();
+      if (!b) return null;                       // clé incomplète : inutilisable
+      bouts.push(b);
+    }
+    return bouts.join(" ");
+  };
+  const cleNouvelle = (ligne: Cellule[], cols: string[]): string | null => {
+    const bouts: string[] = [];
+    for (const nom of cols) {
+      const i = nos.indexOf(nom);
+      const b = i < 0 ? "" : texte(ligne[i] && ligne[i].v).trim();
+      if (!b) return null;
+      bouts.push(b);
+    }
+    return bouts.join(" ");
+  };
+
+  const parId = new Map<string, number>();
+  const parNom = new Map<string, number>();
+  lignesV.forEach((ligne, i) => {
+    const id = cleAncienne(ligne, ident.fortes);
+    if (id !== null && !parId.has(id)) parId.set(id, i);
+    const nom = cleAncienne(ligne, ident.replis);
+    if (nom !== null && !parNom.has(nom)) parNom.set(nom, i);
+  });
+
+  const source: (number | undefined)[] = new Array(nouvelles.length).fill(undefined);
+  const prises = new Set<number>();
+  const passe = (cols: string[], table: Map<string, number>): void => {
+    nouvelles.forEach((ligne, r) => {
+      if (source[r] !== undefined) return;
+      const cle = cleNouvelle(ligne, cols);
+      if (cle === null) return;
+      const i = table.get(cle);
+      if (i === undefined || prises.has(i)) return;
+      prises.add(i);
+      source[r] = i;
+    });
+  };
+  passe(ident.fortes, parId);                    // les ID priment sur les noms
+  passe(ident.replis, parNom);
+
+  return source.map(i => {
+    if (i === undefined) return undefined;
+    const v = lignesV[i] || [], f = lignesF[i] || [];
+    const out: Contenu[] = [];
+    for (let c = 0; c < t.entetes.length; c++) out.push(contenu(v[c], f[c]));
+    return out;
+  });
+}
+
+/** Réécrit les colonnes étrangères, chacune sur la ligne de SON nœud / SON lien. */
+function reporterEtrangeres(
+  t: TableauTrouve, colonnes: number[], sources: (Contenu[] | undefined)[],
+  hauteur: number
+): void {
+  if (!colonnes.length) return;
+  const corps = t.table.getDataBodyRange();
+  for (const c of colonnes) {
+    const donnees: Contenu[][] = [];
+    for (let r = 0; r < hauteur; r++) {
+      const src = sources[r];
+      const cel = src ? src[c] : "";
+      donnees.push([cel === undefined ? "" : cel]);
+    }
+    // .formulas et non .values : une formule de l'utilisatrice reste une formule.
+    corps.getColumn(c).formulas = donnees;
+  }
 }
 
 /* ------------------------------ ÉCRITURE ------------------------------ */
@@ -445,8 +591,11 @@ export async function ecrireDiagramme(
       };
     }
 
-    // --- sync 3 : formules à préserver + hauteur actuelle des deux tableaux.
+    // --- sync 3 : contenu actuel des deux tableaux (formules à préserver,
+    // colonnes de l'utilisatrice à reporter) + leur hauteur.
+    const rNoeuds = corpsAvecEntete(t.noeuds);
     const rLiens = corpsAvecEntete(t.liens);
+    rNoeuds.load("values, formulas");
     rLiens.load("values, formulas");
     const nLignes = t.noeuds.table.rows;
     const lLignes = t.liens.table.rows;
@@ -454,12 +603,24 @@ export async function ecrireDiagramme(
     lLignes.load("count");
     await context.sync();                                          // sync 3
 
-    const formules = collecterFormules(t.liens, rLiens.values, rLiens.formulas);
-    const carte = new Map<string, string>(Object.entries(formules));
+    const carte = collecterFormules(t.liens, rLiens.values, rLiens.formulas);
 
     // Le tri des lignes et la réémission des formules viennent du module
     // partagé : identiques à l'écriture du .xlsx, par construction.
     const { nodeRows, linkRows } = buildModelRows(model, carte);
+
+    // Les lignes ayant été retriées, les colonnes que nous n'écrivons pas
+    // doivent suivre la leur — sinon elles se retrouvent en face d'un autre
+    // nœud, d'un autre lien. L'appariement se fait sur les VALEURS RELUES,
+    // donc avant tout ajustement de hauteur.
+    const etrNoeuds = colonnesEtrangeres(t.noeuds, NODE_COLS);
+    const etrLiens = colonnesEtrangeres(t.liens, LINK_COLS);
+    const srcNoeuds = etrNoeuds.length
+      ? apparierLignes(t.noeuds, NODE_COLS, ID_NOEUD, rNoeuds.values, rNoeuds.formulas, nodeRows)
+      : [];
+    const srcLiens = etrLiens.length
+      ? apparierLignes(t.liens, LINK_COLS, ID_LIEN, rLiens.values, rLiens.formulas, linkRows)
+      : [];
 
     // --- sync 4 : ajuster la hauteur avant d'écrire.
     ajusterLignes(t.noeuds, nLignes.count, nodeRows.length);
@@ -469,6 +630,8 @@ export async function ecrireDiagramme(
     // --- sync 5 : écrire, colonne par colonne, par nom d'en-tête.
     ecrireColonnes(t.noeuds, NODE_COLS, nodeRows);
     ecrireColonnes(t.liens, LINK_COLS, linkRows, "Valeur du flux");
+    reporterEtrangeres(t.noeuds, etrNoeuds, srcNoeuds, Math.max(MIN_LIGNES, nodeRows.length));
+    reporterEtrangeres(t.liens, etrLiens, srcLiens, Math.max(MIN_LIGNES, linkRows.length));
     await context.sync();                                          // sync 5
 
     let enregistre = false;

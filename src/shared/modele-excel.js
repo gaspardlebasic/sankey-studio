@@ -90,10 +90,69 @@ function typeDepuisTexte(v) {
   return /indus|etape|transform|commerc/.test(s) ? "industrie" : "produit";
 }
 
+/**
+ * Ancre les références A1 d'une formule : « Lentilles!C68 » -> « Lentilles!$C$68 ».
+ *
+ * POURQUOI. Les lignes sont retriées à chaque écriture, et une formule suit son
+ * lien : elle change donc de ligne. Une référence SANS `$` est celle qu'Excel
+ * recale dès qu'elle est recopiée ou qu'une colonne calculée se remplit toute
+ * seule — la formule se met alors à lire une autre ligne de l'onglet source.
+ * Ancrée, elle ne peut plus bouger, où qu'on la pose.
+ *
+ * Ce qu'on ne touche pas : les chaînes littérales ("A1"), les noms d'onglets
+ * (cités ou non : `Data2!A1` garde son `2`), les références structurées
+ * (`[@[Quantité]]`, qui sont DÉJÀ relatives à leur ligne et doivent le rester)
+ * et les appels de fonction (`LOG10(` n'est pas la cellule LOG10).
+ */
+const REF_A1 = /^(\$?)([A-Za-z]{1,3})(\$?)(\d{1,7})(?![!\w.(])/;
+/** Un caractère qui, devant une référence, empêche d'y voir une référence. */
+function colle(ch) {
+  return /[A-Za-z0-9_.]/.test(ch);
+}
+function ancrerFormule(f) {
+  const src = String(f === undefined || f === null ? "" : f);
+  let out = "", i = 0, profondeur = 0;
+  while (i < src.length) {
+    const ch = src.charAt(i);
+
+    if (ch === '"' || ch === "'") {              // chaîne littérale, onglet cité
+      const fin = src.indexOf(ch, i + 1);
+      const j = fin < 0 ? src.length : fin + 1;  // guillemet non refermé : on prend tout
+      out += src.slice(i, j);
+      i = j;
+      continue;
+    }
+    if (ch === "[") { profondeur++; out += ch; i++; continue; }
+    if (ch === "]") { if (profondeur) profondeur--; out += ch; i++; continue; }
+
+    const debut = profondeur === 0 && (i === 0 || !colle(src.charAt(i - 1)));
+    const m = debut ? REF_A1.exec(src.slice(i)) : null;
+    if (m) {
+      out += "$" + m[2] + "$" + m[4];
+      i += m[0].length;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
 /** Compare deux textes comme les lit une francophone : casse et accents ignorés. */
 function comparerTexte(a, b) {
   const t = v => String(v === undefined || v === null ? "" : v);
   return t(a).localeCompare(t(b), "fr", { sensitivity: "base" });
+}
+
+/**
+ * Compare deux filières. Une filière VIDE descend en bas du tableau : ce sont
+ * les lignes à reprendre, on les veut ensemble et au bout, pas en tête.
+ */
+function comparerFiliere(a, b) {
+  const va = String(a === undefined || a === null ? "" : a).trim();
+  const vb = String(b === undefined || b === null ? "" : b).trim();
+  if (!va !== !vb) return va ? -1 : 1;
+  return comparerTexte(va, vb);
 }
 
 /** Compare le placement de deux nœuds : colonne, puis couloir, puis ordre vertical. */
@@ -111,7 +170,9 @@ function filiereDuLien(sNode, tNode) {
 }
 
 /** Construit les données de nœuds/liens en lignes de cellules.
- *  formulaMap (facultatif) : préserve les formules « Valeur du flux » existantes. */
+ *  formulaMap (facultatif) : préserve les formules « Valeur du flux » existantes,
+ *  sous la forme clé -> { f, source } — `source` désigne la LIGNE du classeur
+ *  d'où vient la formule, pour qu'elle ne serve pas deux fois. */
 function buildModelRows(model, formulaMap) {
   const nodeById = new Map(model.nodes.map(n => [n.id, n]));
   const nameById = new Map(model.nodes.map(n => [n.id, n.name]));
@@ -122,7 +183,7 @@ function buildModelRows(model, formulaMap) {
   // destination. On trie des copies : le modèle de l'app n'est pas touché.
   const noeuds = model.nodes.slice().sort(
     (a, b) =>
-      comparerTexte(a.filiere, b.filiere) ||
+      comparerFiliere(a.filiere, b.filiere) ||
       comparerPlacement(a, b) ||
       comparerTexte(a.name, b.name)
   );
@@ -130,7 +191,7 @@ function buildModelRows(model, formulaMap) {
     const sa = nodeById.get(a.source), ta = nodeById.get(a.target);
     const sb = nodeById.get(b.source), tb = nodeById.get(b.target);
     return (
-      comparerTexte(filiereDuLien(sa, ta), filiereDuLien(sb, tb)) ||
+      comparerFiliere(filiereDuLien(sa, ta), filiereDuLien(sb, tb)) ||
       comparerPlacement(sa, sb) ||
       comparerPlacement(ta, tb) ||
       comparerTexte(nomDe(sa, a.source), nomDe(sb, b.source)) ||
@@ -148,19 +209,43 @@ function buildModelRows(model, formulaMap) {
     { t: "n", v: couloirDe(n) },
     { t: "s", v: typeDe(n) }
   ]);
-  const linkRows = liens.map(l => {
+  // Extrémités résolues une fois : l'appariement des formules s'en sert deux fois.
+  const bouts = liens.map(l => {
     const sNode = nodeById.get(l.source);
     const tNode = nodeById.get(l.target);
-    const filiere = filiereDuLien(sNode, tNode);
-    const sName = nomDe(sNode, l.source);
-    const tName = nomDe(tNode, l.target);
+    return {
+      filiere: filiereDuLien(sNode, tNode),
+      sName: nomDe(sNode, l.source),
+      tName: nomDe(tNode, l.target)
+    };
+  });
+
+  // Une formule appartient à UN lien, et à un seul. D'où deux passes, et un
+  // jeton de ligne consommé : sans cela, deux liens qui portent les mêmes NOMS
+  // d'extrémités (le même « Transport → Pertes » dans deux filières) se
+  // partageraient la formule du premier — elle serait recopiée sur le second,
+  // qui n'en avait pas. La passe par ID vient en premier pour que le lien
+  // vraiment désigné serve avant qu'un homonyme ne prenne sa place.
+  const formules = new Array(liens.length).fill(null);
+  if (formulaMap) {
+    const prises = new Set();
+    const prendre = (i, cle) => {
+      if (formules[i]) return;
+      const e = formulaMap.get(cle);
+      if (!e || prises.has(e.source)) return;
+      prises.add(e.source);
+      formules[i] = e.f;
+    };
+    liens.forEach((l, i) => prendre(i, "id:" + l.source + " " + l.target));
+    liens.forEach((l, i) => prendre(i, "name:" + bouts[i].sName + " " + bouts[i].tName));
+  }
+
+  const linkRows = liens.map((l, i) => {
+    const { filiere, sName, tName } = bouts[i];
     // Si la valeur était une formule, on la conserve (ne pas écraser un calcul).
-    const formula = formulaMap
-      ? formulaMap.get("id:" + l.source + " " + l.target) ||
-        formulaMap.get("name:" + sName + " " + tName)
-      : null;
+    const formula = formules[i];
     const valueCell = formula
-      ? { t: "f", f: formula, v: l.value }
+      ? { t: "f", f: ancrerFormule(formula), v: l.value }
       : { t: "n", v: l.value };
     return [
       { t: "s", v: filiere },
@@ -178,5 +263,6 @@ function buildModelRows(model, formulaMap) {
 module.exports = {
   NODE_COLS, LINK_COLS, NODE_START, GAP, LINK_START,
   toInt, toNum, couloirDe, TYPE_LABELS, typeDe, typeDepuisTexte,
-  comparerTexte, comparerPlacement, filiereDuLien, buildModelRows
+  comparerTexte, comparerFiliere, comparerPlacement, filiereDuLien,
+  ancrerFormule, buildModelRows
 };

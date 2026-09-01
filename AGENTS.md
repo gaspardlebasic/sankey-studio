@@ -573,6 +573,31 @@ disputer le fichier à Excel — verrou `~$`, `fs.watch`, AppleScript, JXA, COM/
   « Valeur du flux » qui commencent par `=`, les indexe par `(ID origine, ID destination)` puis
   les réémet. `range.formula` est en syntaxe **US** (`=SUM(...)`) dans les deux sens, quelle que
   soit la langue de l'interface — `formula local` donnerait `=SOMME(...)`.
+  Une formule appartient à **un seul** lien : l'appariement se fait par ID d'abord, par noms
+  ensuite, et la ligne d'origine est **consommée**. Sans ce jeton, deux liens portant les mêmes
+  noms d'extrémités (le même « Transport → Pertes » dans deux filières) se partageaient la
+  formule du premier — elle était recopiée sur le second, qui n'en avait pas.
+  **Les références sont ancrées** en réémettant (`Lentilles!C68` → `Lentilles!$C$68`,
+  `ancrerFormule`). Une formule suit son lien, donc elle change de ligne : sans `$`, c'est le
+  genre de référence qu'Excel recale (recopie, colonne calculée qui se remplit seule) et la
+  formule se met à lire une autre ligne de l'onglet source. Ne sont PAS touchés : les noms
+  d'onglets (`T2!B7` garde son `2`), les chaînes littérales, les références structurées
+  (`[@[Q4]]`, déjà relatives à leur ligne) et les appels de fonction (`LOG10(`). Contrepartie
+  assumée : un tirer-recopier de la ligne ne fera plus glisser la référence.
+- **Les identifiants sont posés dès qu'une ligne apparaît.** Une ligne saisie dans Excel n'a ni
+  `ID` (nœuds) ni `ID origine`/`ID destination` (liens) : `reconcileFromExcel` rend
+  `assigned = true` dans les deux cas, ce qui déclenche une réécriture qui les inscrit. Tant que
+  ces colonnes sont vides, la ligne ne se reconnaît que par les NOMS — le repli fragile, celui
+  qui confond deux homonymes.
+- **Les colonnes de l'utilisatrice voyagent avec leur ligne.** Une colonne que nous ne
+  connaissons pas (un « Commentaire », une quantité brute) n'est pas calculée, mais elle est
+  **déplacée** avec le nœud ou le lien de sa ligne. Ne pas y toucher du tout ne la protégeait
+  qu'en apparence : les lignes sont **retriées à chaque écriture** (`buildModelRows` range par
+  filière, colonne, couloir, ordre — **filière vide en dernier**), si bien qu'à la première
+  édition qui change l'ordre, le
+  repère se retrouvait en face d'un autre lien — et une formule qui le vise par son adresse
+  (`=Q3*1000`) lisait la ligne du voisin. Une ligne nouvelle arrive avec ces cellules **vides**,
+  jamais avec celles du voisin.
 - **Enregistrement** : seul un « Diagramme → Excel » explicite le demande (`options.save`). La
   synchro de fond ne le fait jamais — sinon OneDrive téléverserait à chaque frappe. Excel montre
   donc le classeur comme modifié : c'est dit dans l'interface.

@@ -301,3 +301,7 @@ button.linklike:hover { color: var(--dark); }
 /* Lien en cours de tracé */
 #canvas .link-preview { fill: none; stroke: var(--dark); stroke-width: 2;
     stroke-dasharray: 5 3; pointer-events: none; }
+
+/* Ruban : les exports poussés à droite */
+.toolbar-spacer { flex: 1 1 auto; }
+#toolbar button.export-btn { display: inline-flex; align-items: center; gap: 6px; }

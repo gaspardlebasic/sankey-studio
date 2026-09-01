@@ -1002,6 +1002,37 @@ test("types : Excel→App applique les types du classeur, et les garde sans la c
     "sans la colonne, les types de l'app sont conservés");
 });
 
+test("liens : une ligne saisie dans Excel sans identifiant fait réécrire le classeur", "complexe",
+  async p => {
+  // Tant que les colonnes « ID origine / ID destination » sont vides, ce lien ne
+  // se reconnaît que par les NOMS de ses extrémités — le repli qui confond deux
+  // homonymes et leur dispute leur formule. La réconciliation doit donc réclamer
+  // une réécriture, qui leur posera leurs identifiants.
+  const r = await p(`
+    const m = T.model();
+    const nom = id => (m.nodes.find(n => n.id === id) || {}).name;
+    const ligneN = n => ({ id: n.id, name: n.name, column: n.column, title: n.title,
+                           order: n.order, lane: n.lane, kind: n.kind,
+                           filiere: n.filiere, color: n.color });
+    const ligneL = (l, ids) => ({
+      sourceId: ids ? l.source : null, targetId: ids ? l.target : null,
+      sourceName: nom(l.source), targetName: nom(l.target),
+      value: l.value, unit: l.unit || ''
+    });
+    const lignesN = m.nodes.map(ligneN);
+    const classeur = l => ({ nodes: lignesN, links: l, hasLane: true, hasKind: true });
+
+    T.setSynced();
+    const complet = T.reconcile(classeur(m.links.map(l => ligneL(l, true))));
+    T.setSynced();
+    const nu = T.reconcile(classeur(m.links.map(l => ligneL(l, false))));
+    return { complet, nu, liens: T.model().links.length };
+  `);
+  egal(r.complet, false, "un classeur déjà complet ne déclenche aucune réécriture");
+  egal(r.nu, true, "des liens sans identifiant en réclament une");
+  attendu(r.liens > 0, "et les liens sont toujours là");
+});
+
 test("étiquettes (aperçu) : « Centré » pose le nom sur le nœud, calé aux colonnes de bord",
   "complexe", async p => {
   const r = await p(`

@@ -34,8 +34,19 @@ export function couloirDe(n: unknown): number;
 export function typeDe(n: unknown): string;
 export function typeDepuisTexte(v: unknown): NodeKind;
 export function comparerTexte(a: unknown, b: unknown): number;
+/** Compare deux filières : une filière vide descend en bas du tableau. */
+export function comparerFiliere(a: unknown, b: unknown): number;
+/** Ancre les références A1 d'une formule (« Lentilles!C68 » -> « Lentilles!$C$68 »). */
+export function ancrerFormule(f: unknown): string;
 export function comparerPlacement(a: unknown, b: unknown): number;
 export function filiereDuLien(sNode: unknown, tNode: unknown): string;
+
+/**
+ * Une formule « Valeur du flux » retrouvée dans le classeur.
+ * `source` est le rang de la ligne d'où elle vient : deux clés (celle par ID et
+ * celle par noms) désignent la même ligne, et une ligne ne sert qu'un lien.
+ */
+export interface FormulePreservee { f: string; source: number; }
 
 /**
  * formulaMap : formules « Valeur du flux » à préserver, indexées
@@ -44,5 +55,5 @@ export function filiereDuLien(sNode: unknown, tNode: unknown): string;
  */
 export function buildModelRows(
   model: Modele,
-  formulaMap?: Map<string, string> | null
+  formulaMap?: Map<string, FormulePreservee> | null
 ): { nodeRows: Cellule[][]; linkRows: Cellule[][] };

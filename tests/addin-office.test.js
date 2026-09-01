@@ -373,7 +373,8 @@ await test("écriture : la formule « Valeur du flux » est préservée", async 
   egal(r.formules, 1, "une formule réémise");
   const formules = c.formulesDe("Liens");
   const iVal = LINK_COLS.indexOf("Valeur du flux");
-  egal(formules[1][iVal], "=Lentilles!C68", "la formule est toujours là");
+  egal(formules[1][iVal], "=Lentilles!$C$68",
+       "la formule est toujours là — ancrée, pour qu'aucun recalage ne la décale");
   egal(c.lignesDe("Liens")[1][iVal], 95, "et sa valeur calculée n'a pas été écrasée");
 });
 
@@ -439,7 +440,7 @@ await test("écriture : rétrécir les nœuds ne remonte pas les lignes des lien
   egal(c.hauteurDe("Liens"), 2, "celui des liens garde ses deux lignes");
   egal(JSON.stringify(c.lignesDe("Liens")), liensAvant,
        "et son contenu n'a pas bougé d'une ligne");
-  egal(c.formulesDe("Liens")[1][LINK_COLS.indexOf("Valeur du flux")], "=Lentilles!C68",
+  egal(c.formulesDe("Liens")[1][LINK_COLS.indexOf("Valeur du flux")], "=Lentilles!$C$68",
        "la formule du second lien est toujours à sa place");
 });
 
@@ -467,6 +468,197 @@ await test("écriture : une colonne inconnue du classeur n'est pas écrasée", a
        "la colonne ajoutée par l'utilisatrice survit à l'écriture");
   const { nodeRows } = buildModelRows(MODELE, null);
   verifierTableau(c, "Noeuds", avecExtra, nodeRows, NODE_COLS, "colonne étrangère");
+});
+
+/* --- Le décalage : les lignes sont RETRIÉES à chaque écriture. Tout ce que le
+   complément n'écrit pas doit donc suivre sa ligne, sinon le repère de
+   l'utilisatrice se retrouve en face d'un autre nœud, d'un autre lien. --- */
+
+// Quatre nœuds d'une même filière, tous couloir 1 : seul le tri par colonne
+// joue, ce qui rend le réordonnancement lisible.
+const QUATRE = [
+  { id: "n1", name: "Production bio", column: 1, title: "Production", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: null },
+  { id: "n2", name: "Lait cru", column: 2, title: "Collecte", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: null },
+  { id: "n3", name: "Transformation", column: 3, title: "Industrie", order: 0, lane: 1, kind: "industrie", filiere: "Lait", color: null },
+  { id: "n4", name: "Beurre", column: 4, title: "Aval", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: null }
+];
+const LIENS_QUATRE = [
+  { source: "n1", target: "n2", value: 120, unit: "t" },
+  { source: "n2", target: "n3", value: 95, unit: "t" },
+  { source: "n3", target: "n4", value: 30, unit: "t" }
+];
+/** L'édition : « Transformation » passe en colonne 1 — l'ordre des lignes change. */
+function deplaceTransformation() {
+  return {
+    nodes: QUATRE.map(n => (n.id === "n3" ? Object.assign({}, n, { column: 1, order: 9 }) : n)),
+    links: LIENS_QUATRE.map(l => Object.assign({}, l))
+  };
+}
+const RANGS_QUATRE = [
+  ["Lait", "Production bio", 1, "Production", 0, "", "n1", 1, "Produit"],
+  ["Lait", "Lait cru", 2, "Collecte", 0, "", "n2", 1, "Produit"],
+  ["Lait", "Transformation", 3, "Industrie", 0, "", "n3", 1, "Industrie"],
+  ["Lait", "Beurre", 4, "Aval", 0, "", "n4", 1, "Produit"]
+];
+
+await test("écriture : une colonne de l'utilisatrice suit SA ligne quand l'ordre change", async () => {
+  // Le bug signalé. « Quantité brute » est à l'utilisatrice ; la formule de la
+  // colonne « Valeur du flux » la vise par son adresse (=Q3*1000). Si la
+  // colonne reste sur place pendant que les liens sont retriés, la formule lit
+  // la ligne du voisin — et toutes les valeurs du diagramme sont fausses.
+  const avecExtra = LINK_COLS.concat(["Quantité brute"]);
+  const c = classeurType({
+    noeuds: RANGS_QUATRE,
+    entetesLiens: avecExtra,
+    liens: [
+      ["Lait", "Production bio", "Lait cru", { f: "=Q2*1000", v: 120 }, "t", "n1", "n2", 0.12],
+      ["Lait", "Lait cru", "Transformation", { f: "=Q3*1000", v: 95 }, "t", "n2", "n3", 0.095],
+      ["Lait", "Transformation", "Beurre", { f: "=Q4*1000", v: 30 }, "t", "n3", "n4", 0.03]
+    ]
+  });
+  await office.ecrireDiagramme(deplaceTransformation());
+
+  const iBrute = avecExtra.indexOf("Quantité brute");
+  const iVal = avecExtra.indexOf("Valeur du flux");
+  const liens = c.lignesDe("Liens");
+  egal(liens.map(l => [l[1] + " -> " + l[2], l[iBrute]]), [
+    ["Production bio -> Lait cru", 0.12],
+    ["Transformation -> Beurre", 0.03],
+    ["Lait cru -> Transformation", 0.095]
+  ], "chaque quantité brute est restée avec SON lien");
+  egal(c.formulesDe("Liens").map(l => l[iVal]),
+       ["=$Q$2*1000", "=$Q$4*1000", "=$Q$3*1000"],
+       "et chaque formule aussi, ancrée au passage");
+});
+
+await test("écriture : la colonne de l'utilisatrice suit aussi les nœuds retriés", async () => {
+  const avecExtra = NODE_COLS.concat(["Commentaire"]);
+  const c = classeurType({
+    entetesNoeuds: avecExtra,
+    noeuds: RANGS_QUATRE.map((l, i) => l.concat([["un", "deux", "trois", "quatre"][i]])),
+    liens: [["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2"]]
+  });
+  await office.ecrireDiagramme(deplaceTransformation());
+
+  const iCom = avecExtra.indexOf("Commentaire");
+  egal(c.lignesDe("Noeuds").map(l => [l[1], l[iCom]]), [
+    ["Production bio", "un"],
+    ["Transformation", "trois"],
+    ["Lait cru", "deux"],
+    ["Beurre", "quatre"]
+  ], "le commentaire suit son nœud");
+});
+
+await test("écriture : une ligne nouvelle n'hérite pas de la colonne du voisin", async () => {
+  // Sans le report, la ligne insérée ramassait ce qui traînait à sa place.
+  const avecExtra = LINK_COLS.concat(["Quantité brute"]);
+  const c = classeurType({
+    noeuds: RANGS_QUATRE,
+    entetesLiens: avecExtra,
+    liens: [
+      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", 0.095],
+      ["Lait", "Transformation", "Beurre", 30, "t", "n3", "n4", 0.03]
+    ]
+  });
+  await office.ecrireDiagramme({ nodes: QUATRE, links: LIENS_QUATRE });
+
+  const iBrute = avecExtra.indexOf("Quantité brute");
+  egal(c.lignesDe("Liens").map(l => [l[1] + " -> " + l[2], l[iBrute]]), [
+    ["Production bio -> Lait cru", ""],
+    ["Lait cru -> Transformation", 0.095],
+    ["Transformation -> Beurre", 0.03]
+  ], "le lien ajouté arrive avec une cellule vide, pas celle du voisin");
+});
+
+await test("écriture : une formule n'est pas recopiée sur un lien homonyme", async () => {
+  // Deux filières, les mêmes noms de nœuds : le repli par noms servait la même
+  // formule à deux liens. Elle appartient à UN lien — celui de sa ligne.
+  const noeuds = [
+    ["Lait", "Ferme", 1, "Amont", 0, "", "n1", 1, "Produit"],
+    ["Lait", "Collecte", 2, "Aval", 0, "", "n2", 1, "Produit"],
+    ["Blé", "Ferme", 1, "Amont", 0, "", "n3", 1, "Produit"],
+    ["Blé", "Collecte", 2, "Aval", 0, "", "n4", 1, "Produit"]
+  ];
+  const c = classeurType({
+    noeuds,
+    liens: [
+      // Ligne saisie à la main dans Excel : pas d'ID, donc repli par les noms.
+      ["Lait", "Ferme", "Collecte", { f: "=Lentilles!C68", v: 120 }, "t", "", ""],
+      ["Blé", "Ferme", "Collecte", 42, "t", "n3", "n4"]
+    ]
+  });
+  const model = {
+    nodes: [
+      { id: "n1", name: "Ferme", column: 1, title: "Amont", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: null },
+      { id: "n2", name: "Collecte", column: 2, title: "Aval", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: null },
+      { id: "n3", name: "Ferme", column: 1, title: "Amont", order: 0, lane: 1, kind: "produit", filiere: "Blé", color: null },
+      { id: "n4", name: "Collecte", column: 2, title: "Aval", order: 0, lane: 1, kind: "produit", filiere: "Blé", color: null }
+    ],
+    links: [
+      { source: "n1", target: "n2", value: 120, unit: "t" },
+      { source: "n3", target: "n4", value: 42, unit: "t" }
+    ]
+  };
+  const r = await office.ecrireDiagramme(model);
+  egal(r.formules, 1, "une seule formule réémise — il n'y en avait qu'une");
+  const iVal = LINK_COLS.indexOf("Valeur du flux");
+  const formules = c.formulesDe("Liens").map(l => l[iVal]);
+  egal(formules.filter(f => f).length, 1, "le lien homonyme n'a pas hérité de la formule");
+});
+
+await test("écriture : les références d'une formule sont ancrées ($) en la réémettant", async () => {
+  // Le tri déplace une formule d'une ligne à l'autre. Sans « $ », c'est le
+  // genre de référence qu'Excel recale (recopie, colonne calculée) : la formule
+  // se mettrait à lire une AUTRE ligne de l'onglet source. Ancrée, elle ne peut
+  // plus bouger. Les onglets, les chaînes et les références structurées, elles,
+  // ne doivent pas être touchées.
+  const c = classeurType({
+    noeuds: RANGS_QUATRE,
+    liens: [
+      // « T2 » est un onglet, pas la cellule T2 ; « Q4 » est une colonne, pas la
+      // cellule Q4. Les deux pièges se ressemblent, et se paient cher.
+      ["Lait", "Production bio", "Lait cru", { f: "=T2!B7*'Coefs 2026'!C3", v: 120 }, "t", "n1", "n2"],
+      ["Lait", "Lait cru", "Transformation", { f: "=IFERROR(SUM(Lentilles!C68:C70),\"B12\")", v: 95 }, "t", "n2", "n3"],
+      ["Lait", "Transformation", "Beurre", { f: "=Liens[@[Q4]]*A3", v: 30 }, "t", "n3", "n4"]
+    ]
+  });
+  const r = await office.ecrireDiagramme({ nodes: QUATRE, links: LIENS_QUATRE });
+  egal(r.formules, 3, "les trois formules sont réémises");
+  const iVal = LINK_COLS.indexOf("Valeur du flux");
+  egal(c.formulesDe("Liens").map(l => l[iVal]), [
+    "=T2!$B$7*'Coefs 2026'!$C$3",      // « T2! » est un onglet, pas une cellule
+    "=IFERROR(SUM(Lentilles!$C$68:$C$70),\"B12\")",   // « B12 » entre guillemets : du texte
+    "=Liens[@[Q4]]*$A$3"               // structurée : déjà relative à SA ligne
+  ], "seules les références de cellules sont ancrées");
+});
+
+await test("écriture : les lignes sans filière descendent en bas des deux tableaux", async () => {
+  const c = classeurType({
+    noeuds: [
+      ["", "Sans filière", 1, "", 0, "", "n9", 1, "Produit"],
+      ["Lait", "Production bio", 1, "Production", 0, "", "n1", 1, "Produit"],
+      ["Lait", "Lait cru", 2, "Collecte", 0, "", "n2", 1, "Produit"]
+    ],
+    liens: [["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2"]]
+  });
+  const model = {
+    nodes: [
+      { id: "n9", name: "Sans filière", column: 1, title: "", order: 0, lane: 1, kind: "produit", filiere: "", color: null },
+      { id: "n1", name: "Production bio", column: 1, title: "Production", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: null },
+      { id: "n2", name: "Lait cru", column: 2, title: "Collecte", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: null }
+    ],
+    links: [
+      { source: "n9", target: "n2", value: 5, unit: "t" },
+      { source: "n1", target: "n2", value: 120, unit: "t" }
+    ]
+  };
+  await office.ecrireDiagramme(model);
+  egal(c.lignesDe("Noeuds").map(l => l[1]),
+       ["Production bio", "Lait cru", "Sans filière"],
+       "le nœud sans filière est en dernier, pas en tête");
+  egal(c.lignesDe("Liens").map(l => l[1]),
+       ["Production bio", "Sans filière"],
+       "le lien sans filière aussi");
 });
 
 await test("écriture : une colonne absente du classeur est simplement ignorée", async () => {

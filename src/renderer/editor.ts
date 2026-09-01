@@ -304,19 +304,18 @@ function buildToolbar(): void {
 
     toolbar.appendChild(viewToggle());
 
-    toolbar.appendChild(sep());
     // Ni « Enregistrer sous… » ni « Ouvrir » : il n'y a pas de fichier projet.
-    // Le diagramme vit dans les tableaux, l'apparence dans le classeur.
-    const saveBtn = btn("Enregistrer", () => saveProject());
-    saveBtn.title = "Ranger l'apparence dans le classeur (Cmd+S) — le diagramme, lui, "
-        + "vit déjà dans les tableaux";
-    toolbar.appendChild(saveBtn);
+    // Le diagramme vit dans les tableaux, l'apparence dans le classeur (Cmd+S).
 
-    toolbar.appendChild(sep());
-    const pngBtn = btn("⇩ PNG", () => exportImage("png"));
+    // Les exports se rangent à droite du ruban.
+    const spacer = document.createElement("span");
+    spacer.className = "toolbar-spacer";
+    toolbar.appendChild(spacer);
+
+    const pngBtn = exportBtn("PNG", () => exportImage("png"));
     pngBtn.title = "Exporter le Sankey en image PNG";
     toolbar.appendChild(pngBtn);
-    const svgBtn = btn("⇩ SVG", () => exportImage("svg"));
+    const svgBtn = exportBtn("SVG", () => exportImage("svg"));
     svgBtn.title = "Exporter le Sankey en SVG vectoriel";
     toolbar.appendChild(svgBtn);
 
@@ -1095,11 +1094,6 @@ function onGlobalKey(e: KeyboardEvent): void {
     if (meta && key === "y") {
         e.preventDefault();
         redo();
-        return;
-    }
-    if (meta && key === "s") {
-        e.preventDefault();
-        saveProject();
         return;
     }
     if (e.key === "Delete" || e.key === "Backspace") {
@@ -1952,6 +1946,28 @@ function btn(label: string, onClick: () => void): HTMLButtonElement {
     b.addEventListener("click", onClick);
     return b;
 }
+/** Bouton d'export : icône « flèche vers un plateau » + format. */
+function exportBtn(label: string, onClick: () => void): HTMLButtonElement {
+    const b = document.createElement("button");
+    b.className = "export-btn";
+    const icon = document.createElementNS(SVGNS, "svg");
+    icon.setAttribute("viewBox", "0 0 16 16");
+    icon.setAttribute("width", "14");
+    icon.setAttribute("height", "14");
+    icon.setAttribute("aria-hidden", "true");
+    const p = document.createElementNS(SVGNS, "path");
+    p.setAttribute("d", "M8 1.5v7.5m0 0L5 6.2M8 9l3-2.8M2.5 11v2.2a1.3 1.3 0 0 0 1.3 1.3h8.4a1.3 1.3 0 0 0 1.3-1.3V11");
+    p.setAttribute("fill", "none");
+    p.setAttribute("stroke", "currentColor");
+    p.setAttribute("stroke-width", "1.6");
+    p.setAttribute("stroke-linecap", "round");
+    p.setAttribute("stroke-linejoin", "round");
+    icon.appendChild(p);
+    b.appendChild(icon);
+    b.appendChild(document.createTextNode(label));
+    b.addEventListener("click", onClick);
+    return b;
+}
 function sep(): HTMLElement {
     const d = document.createElement("span");
     d.className = "toolbar-sep";
@@ -2367,21 +2383,6 @@ function planifierEnvoiExcel(): void {
         pushToExcel({ silencieux: true });
     }, DELAI_ENVOI_EXCEL) as unknown as number;
 }
-/** Range l'apparence dans le classeur, à la demande (bouton « Enregistrer »). */
-async function saveProject(): Promise<void> {
-    const d = desktop();
-    if (!d || typeof d.ecrireApparence !== "function") {
-        setStatus("Aucun classeur : l'apparence n'a nulle part où aller.");
-        return;
-    }
-    // Le modèle est déjà dans les tableaux : il ne reste que l'apparence.
-    const r = await d.ecrireApparence(serialiserApparence());
-    setStatus(r && r.ok === false
-        ? "L'apparence n'a pas pu être rangée dans le classeur."
-        : "Apparence enregistrée dans le classeur — enregistre-le dans Excel "
-          + "pour qu'elle suive le fichier.");
-}
-
 /* ------------------------------ Export ----------------------------- */
 
 async function exportImage(format: "png" | "svg"): Promise<void> {
@@ -2710,6 +2711,11 @@ function reconcileFromExcel(data: ExcelData): boolean {
         const s = E.sourceId && idSet.has(E.sourceId) ? E.sourceId : nameToId.get(E.sourceName);
         const t = E.targetId && idSet.has(E.targetId) ? E.targetId : nameToId.get(E.targetName);
         if (!s || !t || s === t) return; // extrémités inconnues ou identiques
+        // Une ligne de lien saisie dans Excel n'a pas ses colonnes ID : il faut
+        // les lui rendre TOUT DE SUITE. Tant qu'elles sont vides, ce lien ne se
+        // reconnaît que par les NOMS de ses extrémités — le repli fragile, celui
+        // qui confond deux homonymes et leur dispute leur formule.
+        if (E.sourceId !== s || E.targetId !== t) assigned = true;
         const key = pairKey(s, t);
         if (excelPairs.has(key)) return; // pas de doublon de lien
         excelPairs.add(key);
