@@ -65,11 +65,35 @@ repérage** — éprouvés par mutation : **0/4** sur l'ancien code, dont l'écr
 
 ---
 
+## Le tunnel, mesuré à la sonde — **la question ouverte nº 1 du plan est close (sur macOS)**
+
+Essai H, même poste, même classeur (122 nœuds, 129 liens).
+
+| | Mesuré | Critère du plan | |
+|---|---|---|---|
+| Ouverture de la fenêtre | joignable en **169 ms** | — | ✅ |
+| Montant (fenêtre → volet, `messageParent`) | **tous les paliers passent jusqu'à 4 096 Ko**, 25 ms au plus gros | — | ✅ |
+| Descendant (volet → fenêtre, `messageChild`) | **tous les paliers passent jusqu'à 4 096 Ko**, 12 ms au plus gros | — | ✅ |
+| Modèle réel sérialisé | **46,7 Ko** (47 800 o) | — | |
+| Aller-retour du modèle réel | **1 ms** | < **200 ms** | ✅ |
+| Marge (plafond ÷ modèle) | **≥ 87,7×** | ≥ **10×** | ✅ |
+
+**Aucun palier n'a échoué** : 4 096 Ko est le dernier barreau de l'échelle de la sonde, pas un
+plafond mesuré. Le vrai plafond d'Office est donc **au-dessus de 4 Mo** sur ce poste — on sait
+seulement qu'il est hors de portée d'un usage réaliste.
+
+**Conséquence directe sur le plan** : ni fragmentation des messages, ni envoi de différences
+(PLAN §7). Les deux parades envisagées n'ont pas lieu d'être — sur macOS. Windows garde la
+question entière (`RESULTATS-PHASE-6.md`).
+
+L'essai **C+D2** (aller-retour neutre) a été rejoué au passage, cette fois contre le classeur
+d'essai : **2 001 cellules écrites en 15 ms**, lecture en 3 ms, **18 formules avant, 18 après**,
+aucun écart sur les 2 001 cellules. Cohérent avec les 12 ms de la phase 0.
+
+---
+
 ## Ce que cet essai ne dit pas
 
-- **Le poids des messages du tunnel** (`PLAN` §7, question ouverte nº 1) : la sonde le mesure
-  (`npm run addin:install -- --sonde`, essai H), ça n'a pas été fait ici. Le complément a
-  fonctionné avec un modèle réel, ce qui est déjà un signal — mais pas un plafond.
 - **Windows** : rien n'a changé, la campagne de `RESULTATS-PHASE-6.md` reste entière.
 - **Un classeur ouvert depuis OneDrive/SharePoint** : l'essai portait sur une copie locale du
   Bureau. La phase 0 avait, elle, sondé le classeur SharePoint ouvert.

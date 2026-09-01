@@ -5,7 +5,14 @@ c'est le seul chemin du chantier qui n'a jamais tourné. Tout le reste — phase
 mesuré sur Mac (`RESULTATS-PHASE-0.md`).
 
 > **Statut : instrument prêt, mesures non faites.** La sonde porte les deux questions qui
-> décident ; personne ne les a encore posées à un Excel pour Windows.
+> décident ; personne ne les a encore posées à un Excel pour **Windows**.
+>
+> Elles ont en revanche été posées à un Excel pour **Mac**, le 2026-09-01
+> (`RESULTATS-ESSAI-MAC.md`) — d'où des **valeurs de comparaison** pour qui mènera la campagne :
+> `DialogApi 1.2` présent, aucun palier du tunnel en échec jusqu'à **4 Mo** dans les deux sens,
+> modèle réel de **46,7 Ko** passant en **1 ms**, écriture de **2 001 cellules en 15 ms**,
+> **18 formules** préservées. Un écart franc avec ces chiffres sous Windows est en soi une
+> information : c'est la plateforme qui diffère, pas le code.
 
 ---
 

@@ -21,7 +21,9 @@ Ces trois-là demandent Excel, des droits d'administration ou un poste Windows :
 l'outillage, pas les résultats.
 Mesures : **`RESULTATS-PHASE-0.md`**. Écriture mesurée à **12 ms pour 2 001 cellules**
 (contre ~1 350 ms pour 500 en JXA). Questions ouvertes, toutes deux à trancher dans Excel :
-le **poids des messages** du tunnel et la présence de **`DialogApi 1.2` sous Windows** (§7).
+le **poids des messages** du tunnel et la présence de **`DialogApi 1.2` sous Windows** (§7) —
+**toutes deux tranchées sur macOS le 2026-09-01** (`RESULTATS-ESSAI-MAC.md`), et ouvertes
+seulement sous Windows.
 Ce document remplace la discussion ; le suivi d'avancement se fait en cochant les phases.
 
 ---
@@ -324,9 +326,10 @@ amorçage **1,1 Ko** en 4 allers-retours, puis **~6 Ko par modification** (lectu
 `.sankey`), une modification pèsera **~70 Ko** d'aller-retour.
 
 **Éprouvé dans Excel pour Mac le 2026-09-01** : `DialogApi 1.2` est présent, la fenêtre s'ouvre
-seule et l'aller-retour complet passe sur un classeur de 122 nœuds et 129 liens
-(`RESULTATS-ESSAI-MAC.md`). **Reste** : mesurer le poids des messages avec la sonde (§7), et
-confirmer `DialogApi 1.2` sur un poste Windows (phase 6).
+seule, l'aller-retour complet passe sur un classeur de 122 nœuds et 129 liens, et la sonde a
+mesuré le tunnel — **4 Mo passent dans les deux sens**, le modèle réel (46,7 Ko) en **1 ms**
+(`RESULTATS-ESSAI-MAC.md`). L'extrapolation de ~70 Ko par modification était donc du bon ordre,
+et sans conséquence. **Reste** : confirmer tout cela sur un poste Windows (phase 6).
 
 ### Phase 5 — diffusion — **le site est en ligne ; reste le centre d'administration M365**
 
@@ -398,7 +401,7 @@ rendu du SVG à l'œil dans le complément lui-même — ça, aucune sonde ne le
 | Risque | Gravité | Parade |
 |---|---|---|
 | ~~Le volet est trop étroit~~ | — | **Survenu**, mesuré en phase 0 §G. L'éditeur est parti dans une fenêtre séparée (§5.4) |
-| **Le poids des messages** du tunnel — aucune limite documentée par Microsoft, et ~70 Ko par modification sur un vrai classeur | élevée | À mesurer dans Excel par paliers (10 Ko / 100 Ko / 1 Mo), comme la phase 0 l'a fait pour `document.settings`. Si ça plafonne : fragmenter, ou n'envoyer que des différences |
+| ~~**Le poids des messages** du tunnel~~ | — | **Mesuré le 2026-09-01 sur macOS** (`RESULTATS-ESSAI-MAC.md`) : aucun palier n'échoue jusqu'à **4 Mo** dans les deux sens, le modèle réel pèse **46,7 Ko** et passe en **1 ms** — une marge d'au moins **87×**. Ni fragmentation ni envoi de différences. **Reste ouvert sous Windows** |
 | **`DialogApi 1.2` absent sous Windows** — jamais vérifié là-bas, et sans `messageChild` le tunnel est à sens unique | moyenne | Sondé à l'exécution, jamais déclaré dans le manifeste ; le repli de compatibilité garde l'éditeur dans le volet. À vérifier en phase 6 **avant** la diffusion |
 | **Dérive de version** entre les deux pages — deux caches, deux webviews | faible | Numéro de protocole dans la poignée de main, message de désaccord explicite, et les deux bundles reconstruits ensemble |
 | **Hors ligne** : la page vient d'Internet. Contrairement à l'app Electron, un complément peut ne pas charger sans réseau | moyenne | Pas de bonne parade. À assumer et à dire |
