@@ -25,7 +25,12 @@
  * est le **catalogue de confiance** — un dossier PARTAGÉ (chemin UNC) déclaré
  * dans le Centre de gestion de la confidentialité ; le script l'explique.
  *
- * Le chemin Windows n'a **jamais été exécuté** : c'est l'objet de la phase 6.
+ * ÉTAT DU CHEMIN WINDOWS, au 2026-09-01 : le MÉCANISME est prouvé — la clé
+ * `WEF\\Developer` pointant sur un manifeste de production a bien fait
+ * apparaître le complément dans Excel 365 (ARM64, Windows 11). Le script
+ * lui-même n'y a pas encore tourné : l'inscription avait été faite à la main,
+ * faute de pouvoir exécuter Node dans la session de l'utilisatrice. Ce qui
+ * reste à vérifier ici est donc mince (l'appel à `reg`), mais il reste.
  */
 
 import { copyFileSync, mkdirSync, existsSync, rmSync, readFileSync } from "fs";

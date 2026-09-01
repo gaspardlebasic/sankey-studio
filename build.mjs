@@ -4,10 +4,14 @@ import { cpSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } fr
 const watch = process.argv.includes("--watch");
 
 /*
- * Deux cibles, un seul renderer (PLAN-COMPLEMENT-EXCEL §2) :
- *   dist/renderer  application Electron   — entrée src/renderer/index.ts
- *   dist/addin     volet Excel            — entrée src/addin/index.ts
- * La seconde ajoute le pont Office.js autour du MÊME code d'édition.
+ * Deux cibles, un seul code d'édition :
+ *   dist/addin     LE PRODUIT — les deux pages du complément Excel ;
+ *   dist/renderer  l'éditeur nu, sans Office.js — entrée src/renderer/index.ts.
+ *
+ * `dist/renderer` n'est plus livré à personne : c'est le banc d'essai. Il est
+ * servi par `npm run serve` et chargé par les bancs Electron (tests/run.js,
+ * scripts/smoke.js), qui posent devant lui un faux pont (tests/pont-essai.js).
+ * C'est le seul moyen d'éprouver l'éditeur par de vraies frappes, hors d'Excel.
  */
 
 mkdirSync("dist/renderer", { recursive: true });

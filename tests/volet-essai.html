@@ -69,14 +69,9 @@
   function copie(o) { return JSON.parse(JSON.stringify(o)); }
 
   window.desktop = {
-    isElectron: false,
     // Les mêmes capacités que src/addin/pont.ts.
-    capacites: {
-      fichiers: false, excel: true, classeurImpose: true,
-      classeurVerrouillable: false, envoiAutomatique: true, apparenceDansClasseur: true
-    },
+    capacites: { excel: true, envoiAutomatique: true },
     nomClasseur: "flux lait essai.xlsx",
-    canControlExcel: false,
     readExcel: function () {
       journal.push({ quoi: "read", t: Date.now() });
       return Promise.resolve({ ok: true, live: true, data: copie(classeur) });
@@ -88,12 +83,7 @@
         sheetName: "Diagramme", enregistre: false, formules: 0, ms: 12
       });
     },
-    excelFormulas: function () { return Promise.resolve({ ok: true, formules: {} }); },
-    isExcelLocked: function () { return Promise.resolve({ locked: false, live: true, mode: "complement" }); },
-    watchExcel: function () { return Promise.resolve({ locked: false, live: true, mode: "complement" }); },
-    closeExcelWorkbook: function () { return Promise.resolve({ locked: false, state: "closed" }); },
     onExcelChanged: function (cb) { rappel = cb; },
-    copyToClipboard: function (t) { journal.push({ quoi: "presse-papier", taille: t.length }); return Promise.resolve({ ok: true }); },
     lireApparence: function () { return Promise.resolve(apparence); },
     ecrireApparence: function (json) {
       apparence = json;

@@ -1,31 +1,27 @@
 /**
- * Pont Office.js — la seconde implémentation de `window.desktop`.
- *
- * L'équivalent de src/main/preload.js, mais au-dessus du classeur OUVERT plutôt
- * que d'Electron. Le renderer (src/renderer/editor.ts) ne connaît que ce
- * contrat : il ignore complètement dans laquelle des deux coquilles il tourne.
+ * Pont Office.js — `window.desktop` tel que le VOLET le pose, au-dessus du
+ * classeur ouvert. Le renderer (src/renderer/editor.ts) ne connaît que ce
+ * contrat.
  *
  * Ce que le complément ne fait PAS, et pourquoi (PLAN §4) :
  *   - pas de verrou : le classeur est forcément ouvert, c'est la prémisse ;
  *   - pas de pilotage d'Excel : nous sommes DANS Excel ;
  *   - pas de choix de classeur : c'est celui qui est ouvert ;
- *   - pas de fichier .sankey : l'apparence vit dans le classeur (§5.2).
- * Ces méthodes-là sont soit des constantes triviales, soit absentes — le
- * renderer les évite par ses capacités, jamais par un test de plateforme.
+ *   - pas de fichier projet : l'apparence vit dans le classeur (§5.2).
+ * Rien de tout cela n'a de méthode ici — le renderer ne les demande pas.
  */
 
 import {
-  lireDiagramme, ecrireDiagramme, lireFormules, ecouterTableaux,
+  lireDiagramme, ecrireDiagramme, ecouterTableaux,
   type DonneesExcel, type EvenementTableau
 } from "./excel-office.js";
 import type { Modele } from "../shared/modele-excel.js";
 import { FiltreEcho, AntiRebond } from "./synchro.js";
-import { copierPressePapier } from "./navigateur.js";
 
 /** Clé de l'apparence dans le classeur (`document.settings`). */
 const CLE_APPARENCE = "sankey-studio-apparence";
 
-/** Anti-rebond de la synchro descendante — même ordre que `main.js:62`. */
+/** Anti-rebond de la synchro descendante : une salve de frappes = une relecture. */
 const DELAI_RELECTURE = 300;
 
 /** Le jeu d'exigences d'`onChanged`. Sondé, JAMAIS déclaré dans le manifeste. */
@@ -109,21 +105,16 @@ function ecrireApparence(json: string): Promise<{ ok: boolean; error?: string }>
 
 function construirePont(nomClasseur: string, evenements: boolean) {
   return {
-    isElectron: false,
     /**
-     * Ce que cette coquille sait faire. Le renderer s'y réfère au lieu de
-     * tester la plateforme (PLAN §2).
+     * Ce que cette coquille sait faire. `envoiAutomatique` est la seule
+     * variation qui reste, et elle se SONDE (ExcelApi 1.7) : le renderer
+     * demande la capacité, jamais la version d'Excel.
      */
     capacites: {
-      fichiers: false,               // ni dialogue natif ni .sankey
       excel: true,
-      classeurImpose: true,          // c'est le classeur ouvert, pas un choix
-      classeurVerrouillable: false,  // il est ouvert : c'est la prémisse
-      envoiAutomatique: evenements,  // 12 ms l'écriture : à chaque modification
-      apparenceDansClasseur: true
+      envoiAutomatique: evenements   // 12 ms l'écriture : à chaque modification
     },
     nomClasseur,
-    canControlExcel: false,
 
     async readExcel(): Promise<{ ok: boolean; live: boolean; data?: DonneesExcel; error?: string }> {
       try {
@@ -147,24 +138,9 @@ function construirePont(nomClasseur: string, evenements: boolean) {
       }
     },
 
-    async excelFormulas() {
-      try {
-        return { ok: true, formules: await lireFormules() };
-      } catch (e) {
-        return { ok: false, formules: {}, error: (e as Error).message };
-      }
-    },
-
-    // Le classeur est ouvert par construction : rien à verrouiller, rien à
-    // surveiller, rien à fermer. Constantes, pas d'aller-retour.
-    async isExcelLocked() { return { locked: false, live: true, mode: "complement" }; },
-    async watchExcel() { return { locked: false, live: true, mode: "complement" }; },
-    async closeExcelWorkbook() { return { locked: false, state: "closed" }; },
-
-    /** Modifications faites DANS Excel — remplace le sondage de 4 s. */
+    /** Modifications faites DANS Excel. */
     onExcelChanged(cb: () => void) { rappelChangement = cb; },
 
-    copyToClipboard: copierPressePapier,
     lireApparence,
     ecrireApparence
   };

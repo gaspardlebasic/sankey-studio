@@ -9,20 +9,24 @@ On développe **deux livrables** dans `/Users/gaspardbenoit/Documents/sankey-stu
 
 1. **`powerbi-visual/`** — un **visuel personnalisé Power BI** (Sankey par colonnes),
    packagé en `.pbiviz` dans `dist/`. **Terminé** (v3.2.0). TypeScript + d3-sankey, API 5.11.
-2. **la racine du dépôt** — une **application de bureau Electron « Sankey Studio »** : éditeur graphique
-   de diagrammes de flux synchronisé avec Excel. **C'est le projet actif.** Les 6 phases prévues
-   sont faites + fonctionnalités supplémentaires (filière, export image).
+2. **la racine du dépôt** — le **complément Excel « Sankey Studio »** : éditeur graphique de
+   diagrammes de flux, dans le classeur ouvert. **C'est le projet actif.**
+   L'application de bureau Electron qui l'a précédé **a été retirée** : le complément est
+   désormais le produit, et il l'est seul (plus de `src/main/`, plus de `.dmg`/`.exe`, plus de
+   fichiers `.sankey`, plus de pilotage d'Excel). Electron ne sert plus que de banc d'essai.
 
 Fichier source de données de référence : `flux lait essai.xlsx` (flux de production laitière).
 
 ## Comment travailler (contraintes de vérification)
 
-- Je ne peux pas piloter la fenêtre Electron ni les boîtes de dialogue natives via l'automatisation.
-- Donc je vérifie le **renderer** via `npm run serve` (sert `dist/renderer` sur http://localhost:8811)
-  ouvert dans le navigateur intégré, avec le crochet de test `window.__sankeyTest`
-  (`reconcile`, `setSynced`, `model`, `refresh`).
-- Je vérifie **`excel.js`** en **Node + openpyxl** (openpyxl est installé, c'est un validateur fiable).
-- Je vérifie le **démarrage Electron** avec `npx electron .` en cherchant les erreurs dans les logs.
+- Je ne peux pas cliquer dans le ruban d'Excel via l'automatisation.
+- `npm test` (128 tests) et `npm run smoke` conduisent l'éditeur par de **vrais** évènements
+  souris/clavier dans une fenêtre Electron masquée — Electron n'est là que comme navigateur
+  pilotable ; le faux pont est `tests/pont-essai.js`, aux mêmes capacités que le volet.
+- Je vérifie le **renderer** via `npm run serve` (http://localhost:8811) dans le navigateur
+  intégré, avec le crochet `window.__sankeyTest` (`caps`, `reconcile`, `setSynced`, `model`,
+  `amorce`, `refresh`), et les bancs `/volet-essai.html`, `/fenetre-essai.html`,
+  `/sonde-essai.html`.
 - Pour le **complément Office**, je ne peux pas cliquer dans le ruban d'Excel, mais je vois tout le
   reste : le **journal du serveur** (`npm run addin:serve` écrit une ligne par requête — c'est là
   qu'un 404 de la webview se voit), **AppleScript** pour lire le classeur *ouvert* (valeurs et
@@ -32,22 +36,24 @@ Fichier source de données de référence : `flux lait essai.xlsx` (flux de prod
   colonnes **numériques**, ou cellule par cellule.
 - Toujours : `npx tsc --noEmit -p tsconfig.json` puis `node build.mjs`.
 
-## Application de bureau (racine) — architecture
+## Le complément (racine) — architecture
 
-- **Stack** : Electron + TypeScript ; renderer bundlé par **esbuild** (`build.mjs`) ; process
-  principal en `src/main/*.js` ; renderer en `src/renderer/*.ts`. Dépendances : `jszip` (Excel),
-  `d3-sankey`, `d3-selection` (bundlées).
-- **Scripts** : `npm start` (build + electron), `npm run serve` (dev navigateur), `npm run dist`
-  (.dmg), `npm run dist:dir` (dossier .app non compressé).
+- **Stack** : TypeScript bundlé par **esbuild** (`build.mjs`), sans processus natif. Dépendances
+  bundlées : `d3-sankey`, `d3-selection`.
+- **Scripts** : `npm run build`, `npm test`, `npm run smoke`, `npm run serve`,
+  `npm run addin:install -- --enligne`, `npm run addin:serve`, `npm run addin:manifeste`.
 - **Fichiers clés** :
   - `src/renderer/engine.ts` — moteur de rendu Sankey (fond blanc, colonnes, dégradés, courbes,
     étiquettes, centrage vertical…). Porté depuis le visuel Power BI.
   - `src/renderer/editor.ts` — éditeur (état, grille, panneau latéral, synchro Excel, export, undo).
   - `src/renderer/types.ts` — `FlowModel/FlowNode/FlowLink` + `SankeyOptions`.
-  - `src/main/main.js` — IPC : projet (save/open), Excel (choose/openExisting/read/write/watch),
-    `export:save`.
-  - `src/main/excel.js` — écriture/lecture `.xlsx` par **manipulation ciblée du zip** (JSZip),
-    en préservant les autres onglets.
+  - `src/addin/index.ts` / `index.html` — le **volet** : Office.js, le classeur, le courtier
+    qui ouvre la fenêtre d'édition, et « Préparer le classeur ».
+  - `src/addin/fenetre.ts` / `fenetre.html` — la **fenêtre d'édition** (98 % de l'écran).
+  - `src/addin/pont.ts` / `pont-fenetre.ts` — les deux implémentations de `window.desktop`.
+  - `src/addin/protocole.ts` — le tunnel volet ↔ fenêtre (sans Office ni DOM, donc éprouvable).
+  - `src/addin/excel-office.ts` — l'adaptateur Office.js : lecture/écriture du classeur ouvert.
+  - `src/shared/modele-excel.js` — le **schéma du classeur**, source de vérité unique.
 
 ## Modèle de données
 
@@ -67,23 +73,19 @@ Fichier source de données de référence : `flux lait essai.xlsx` (flux de prod
     si un lien l'exige (flux gauche→droite valide ; évite un plantage d'affichage de d3-sankey).
   - La **Filière** filtre l'affichage (voir `viewNodes/viewLinks/viewModel` + `hiddenFilieres`).
 
-## Fonctionnalités faites (application de bureau)
+## Fonctionnalités faites
 
-Éditeur graphique **aimanté sur grille** (colonnes × ordre, glisser pour réordonner) ; aperçu Sankey
-live ; **panneau d'apparence complet** (cartes repliables : Liens, Nœuds, Étiquettes, Titres,
-Valeurs des liens) + couleur par lien ; **synchro Excel bidirectionnelle** (pull/push, surveillance
-du fichier, écriture différée si Excel a le verrou `~$…`, **préservation des formules** de « Valeur
-du flux ») ; réconciliation par ID ; **filtre par filière** ; **export PNG/SVG** ; fond blanc en
-aperçu + barre de statut sous le canevas ; undo/redo (Cmd+Z) ; « Enregistrer » qui réécrit sans
-redemander ; ouverture d'un classeur existant ; **packaging `.dmg` macOS** (arm64, non signé) via
-electron-builder.
+Éditeur graphique **aimanté sur grille** (colonnes × couloirs × ordre, glisser pour réordonner) ;
+aperçu Sankey live, éventuellement **par filière** à échelle commune ; **panneau d'apparence
+complet** (cartes repliables : Liens, Nœuds, Étiquettes, Titres, Valeurs des liens) + couleur par
+lien ; **types de nœuds** (produit / industrie) avec largeur, police et contour propres ;
+**synchro Excel bidirectionnelle et automatique** depuis le classeur ouvert, avec
+**préservation des formules** de « Valeur du flux » ; réconciliation par ID ; **filtre par
+filière** ; **export PNG/SVG** ; undo/redo (Cmd+Z) ; apparence rangée dans le classeur ;
+**préparation d'un classeur nu** (« Préparer le classeur », qui refuse plutôt que d'écraser).
 
 ## Pièges rencontrés (à connaître)
 
-- **electron-builder** épinglé à **24.13.3** (la 26.x plante : `ERR_REQUIRE_ESM` sur
-  `@noble/hashes/blake2.js`).
-- **Icône** : PNG brut → `sips` (redimension) → `iconutil` (.icns). Attention : **zsh ne découpe
-  pas `$var` en mots** → une boucle `for … set -- $pair` échoue ; appeler `sips` taille par taille.
 - **Octets NULL** : des éditions ont parfois transformé des séparateurs `" "` en octet `0x00`
   (le fichier devient « binary » pour `file`/`grep`, et les correspondances de clés échouent).
   Déjà arrivé 2×. En cas de bug de correspondance de clés inexpliqué : scanner les `\x00` et
@@ -91,12 +93,11 @@ electron-builder.
 
 ## À faire (prochaines étapes)
 
-- **Complément Excel** : il a tourné dans Excel pour Mac le 2026-09-01 (`RESULTATS-ESSAI-MAC.md`).
-  Restent la **mesure du tunnel avec la sonde**, la **publication** (`DIFFUSION.md` : activer
-  GitHub Pages, téléverser au centre d'administration M365) et la **campagne Windows**
-  (`RESULTATS-PHASE-6.md`).
-- **Signature + notarisation** macOS (compte Apple Developer ; actuellement `identity: null` →
-  clic droit → Ouvrir au 1er lancement). Puis builds **Windows (.exe)** et **Linux (AppImage/deb)**.
+- **Campagne Windows** (`RESULTATS-PHASE-6.md`) : le complément **tourne** sous Windows (installé
+  et vérifié le 2026-09-01, VM Parallels + Excel 365 ARM64), mais la grille de mesures — poids du
+  tunnel, délais, polices — est vide.
+- **Téléversement M365** (`DIFFUSION.md` §3) : demande un administrateur du tenant. En attendant,
+  l'installation se fait poste par poste (`npm run addin:install -- --enligne`).
 - Visuel Power BI : dédoubler l'« Ordre d'affichage des liens » en **ordre de départ / d'arrivée**
   (discuté, non implémenté ; l'app le contourne via l'ordre par nœud).
 

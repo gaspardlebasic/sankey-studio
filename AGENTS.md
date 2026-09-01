@@ -6,11 +6,16 @@ Réponds en **français** (l'utilisateur travaille en français).
 
 ## Démarrage rapide
 
+**Sankey Studio est un complément Excel, et rien d'autre.** Il n'y a plus d'application de
+bureau : la coquille Electron, le format `.sankey`, l'écriture du `.xlsx` fermé et le pilotage
+d'Excel ont été retirés. Electron ne subsiste que comme **banc d'essai** (cf. plus bas).
+
 ```bash
 npm install          # une seule fois
-npm start            # build du renderer + lancement d'Electron
+npm run build        # construit dist/addin (le complément) et dist/renderer (le banc)
+npm test             # 128 tests
 npm run smoke        # test de fumée de bout en bout (16 vérifications)
-npm run install:app  # reconstruit et remplace /Applications/Sankey Studio.app (macOS)
+npm run addin:install -- --enligne   # installe le complément publié sur ce poste
 ```
 
 Avant de proposer un changement : `npx tsc --noEmit -p tsconfig.json`, puis `npm test` et
@@ -18,8 +23,8 @@ Avant de proposer un changement : `npx tsc --noEmit -p tsconfig.json`, puis `npm
 
 ## Vérifier une fonctionnalité
 
-La fenêtre Electron et les dialogues natifs **ne sont pas pilotables** par automatisation.
-Trois moyens, du plus au moins pratique :
+On ne peut pas cliquer dans le ruban d'Excel depuis un agent. Tout le reste s'éprouve, et
+plutôt bien — du plus au moins pratique :
 
 1. **`npm test`** — suite des fonctionnalités d'édition (`tests/run.js`), sur un diagramme
    complexe : deux filières dont une masquée, ordres qui se télescopent entre filières, noms
@@ -34,22 +39,20 @@ Trois moyens, du plus au moins pratique :
      détecte un gestionnaire qui reconstruit le panneau et fait perdre le focus.
    - Piège : un accent grave mal échappé dans `tests/helpers.js` casse le code injecté et
      laisse Electron bloqué sur une boîte d'erreur. Le runner en garde le contrôle au démarrage.
-2. **`npm run smoke`** — test de fumée plus large (barre d'outils, bascule Aperçu, titre de la
-   fenêtre, garde-fou Excel), même technique, via le crochet `window.__sankeyTest`
-   (`model`, `nodeCount`, `loadProject`, `links`, `selection`, `hidden`, `setExcelLocked`,
-   `setExcelPath`, `prefs`, `reconcile`, `setSynced`, `refresh`).
-3. **`npm run verifier -- "fichier.sankey"`** — diagnostic statique d'un projet : identifiants
-   en double, compteur périmé, liens orphelins ou dupliqués.
-4. **`npm run serve`** — sert `dist/renderer` sur <http://localhost:8811> ; un navigateur
+   - **Electron n'est PAS le produit ici** : c'est un navigateur pilotable, le seul qui accepte
+     de vraies frappes et de vrais glissers. Le pont posé devant l'éditeur est
+     `tests/pont-essai.js`, qui déclare **les mêmes capacités que le volet**. S'il diverge de
+     `src/addin/pont.ts`, la suite éprouve un contrat qui n'existe pas : le tenir à jour.
+2. **`npm run smoke`** — test de fumée plus large (barre d'outils, bascule Aperçu, palette,
+   panneau), même technique, via le crochet `window.__sankeyTest` (`caps`, `model`, `nodeCount`,
+   `loadProject`, `links`, `selection`, `hidden`, `setExcelPath`, `amorce`, `reconcile`,
+   `setSynced`, `refresh`). Son bouchon `excel:read` rend un **vrai classeur** : le scénario
+   passe donc par l'amorçage réel du complément (`amorcerDepuisClasseur` → `reconcileFromExcel`),
+   et non par un modèle posé en dur.
+3. **`npm run serve`** — sert `dist/renderer` sur <http://localhost:8811> ; un navigateur
    (ou un MCP de navigateur, cf. plus bas) permet d'inspecter et de piloter la page.
-5. **`src/main/excel.js`** — se teste en Node, avec **openpyxl** comme validateur de
-   round-trip sur un `.xlsx` réel.
 
-6. **`npm run test:live`** — tests unitaires de `src/main/excel-live.js` : forme du message
-   envoyé à Excel, relecture de sa réponse, invariants des scripts embarqués. Ne parle pas à
-   Excel. L'aller-retour réel se mesure avec `npm run proto:excel -- "<classeur ouvert>"`.
-
-7. **`npm run test:addin`** — tests de l'adaptateur Office.js, sur un **faux classeur en
+4. **`npm run test:addin`** — tests de l'adaptateur Office.js, sur un **faux classeur en
    mémoire** (`tests/faux-office.js`) qui reproduit le différé `load`/`sync` et le décalage
    limité aux colonnes du tableau. Ne parle pas à Excel.
    - Le faux **interdit** une suppression de lignes plus large que les colonnes du tableau :
@@ -68,14 +71,14 @@ Trois moyens, du plus au moins pratique :
      garde ne se mesure pas en temps réel. Deux vrais défauts trouvés par ces tests (le
      « bonjour » qui se reprogrammait après avoir abouti).
 
-8. **`tests/volet-essai.html`** — le renderer **sous les capacités du complément**, sans Excel :
+5. **`tests/volet-essai.html`** — le renderer **sous les capacités du complément**, sans Excel :
    `npm run serve` puis <http://localhost:8811/volet-essai.html>. La page pose un faux
    `window.desktop` (mêmes capacités que `src/addin/pont.ts`) au-dessus d'un classeur en mémoire.
    `window.__volet` donne le journal des appels, l'apparence rangée et `modifierDansExcel()`
    pour jouer une saisie faite dans Excel. C'est là qu'on éprouve l'amorce, la synchro
    automatique et le panneau.
 
-9. **`tests/fenetre-essai.html`** — le couple **volet courtier + fenêtre d'édition** de la
+6. **`tests/fenetre-essai.html`** — le couple **volet courtier + fenêtre d'édition** de la
    phase 4, sans Excel : `npm run serve` puis <http://localhost:8811/fenetre-essai.html>.
    La page parente joue le volet et tient le classeur ; un iframe charge le **vrai** code de la
    fenêtre (`tests/fenetre-cadre.html`, qui pose un faux Office.js réduit à `messageParent`).
@@ -84,7 +87,7 @@ Trois moyens, du plus au moins pratique :
    documente pas. Ce qu'il ne prouve pas : `displayDialogAsync` et les limites réelles du canal,
    qui ne s'éprouvent que dans Excel.
 
-10. **`/sonde-essai.html`** — **la sonde elle-même**, hors d'Excel : `npm run serve` puis
+7. **`/sonde-essai.html`** — **la sonde elle-même**, hors d'Excel : `npm run serve` puis
     <http://localhost:8811/sonde-essai.html>. Le serveur sert les **vraies** pages de
     `src/addin` en n'y remplaçant qu'Office.js par `tests/faux-office-sonde.js` — les dupliquer
     ici les laisserait diverger sans qu'on le voie. Le faux impose un plafond de 1 Mo
@@ -94,7 +97,7 @@ Trois moyens, du plus au moins pratique :
     **Pourquoi ce banc existe** : la sonde part sur un poste Windows pour répondre aux questions
     qui décident du chantier (phase 6). Un instrument faux ferait perdre le déplacement.
 
-11. **`node tests/addin-manifeste.test.js`** (dans `npm run test:addin`) — les **manifestes**.
+8. **`node tests/addin-manifeste.test.js`** (dans `npm run test:addin`) — les **manifestes**.
     Un manifeste invalide ne se découvre qu'au pire moment : Excel refuse de charger, sans
     motif, sur le poste de quelqu'un d'autre. Contrôle les pièges connus (les deux tirets d'un
     commentaire, les balises non refermées) **et les règles propres au projet** qu'aucun
@@ -102,10 +105,9 @@ Trois moyens, du plus au moins pratique :
     `ExcelApi 1.1` et rien de plus, `AppDomains` cohérent avec `SourceLocation`.
     Trois mutations vérifiées.
 
-Le pilotage d'Excel (`src/main/excel-control.js`) se valide sans envoyer d'Apple event :
-`osacompile -o /dev/null script.applescript` vérifie la syntaxe *et* le dictionnaire Excel.
-Le dictionnaire lui-même se lit dans `/Applications/Microsoft Excel.app/Contents/Resources/Excel.sdef`
-(`sdef` en ligne de commande exige Xcode complet, absent ici).
+Ce qu'aucun de ces bancs ne prouve : `displayDialogAsync`, les limites réelles du canal du
+tunnel, et le comportement du ruban. Ceux-là ne s'éprouvent que **dans Excel** — sur macOS
+(`RESULTATS-ESSAI-MAC.md`) et sur Windows (`RESULTATS-PHASE-6.md`).
 
 ## Piloter le navigateur depuis l'agent (MCP)
 
@@ -171,7 +173,7 @@ Réponds en **français** (l'utilisateur travaille en français).
 | Dossier | Quoi | État |
 |---|---|---|
 | `powerbi-visual/` | **Visuel personnalisé Power BI** (Sankey par colonnes), packagé en `.pbiviz` dans `dist/`. TypeScript + d3-sankey, API pbiviz 5.11. | Terminé (v3.2.0) |
-| _racine du dépôt_ | **Application de bureau Electron « Sankey Studio »** : éditeur graphique de diagrammes de flux synchronisé avec Excel. Réutilise le moteur du visuel Power BI. | **Projet actif** — phases 1–6 faites |
+| _racine du dépôt_ | **Complément Excel « Sankey Studio »** : éditeur graphique de diagrammes de flux, dans le classeur ouvert. Réutilise le moteur du visuel Power BI. | **Projet actif** |
 
 Jeu de données de référence : `flux lait essai.xlsx` (flux de production laitière).
 Un prompt de reprise détaillé existe dans `CONTEXTE-REPRISE.md`.
@@ -184,25 +186,35 @@ dans `RESULTATS-PHASE-6.md`. Ces deux-là demandent des droits d'administration 
 Windows : le dépôt porte l'outillage, pas les résultats.
 La forme retenue est **volet courtier + fenêtre d'édition séparée** (PLAN §5.4) : le volet est
 trop étroit pour le canevas, l'éditeur vit donc dans une fenêtre à 98 % de l'écran.
-Mesures de la phase 0 dans `RESULTATS-PHASE-0.md`, fonctionnement dans « Les deux coquilles ».
-L'app Electron n'est **pas** touchée par ce chantier (PLAN §5.1).
+Mesures de la phase 0 dans `RESULTATS-PHASE-0.md`, fonctionnement dans « La coquille ».
+
+> **L'application de bureau Electron a été retirée.** Le complément est devenu le produit, et
+> il l'est seul : plus de `src/main/`, plus de `.dmg`/`.exe`, plus de fichiers `.sankey`, plus
+> d'écriture du `.xlsx` fermé, plus de pilotage d'Excel. `PLAN-COMPLEMENT-EXCEL.md` et les
+> `RESULTATS-*.md` restent tels quels : ce sont des archives de décision, elles décrivent
+> l'époque où les deux coexistaient. Electron n'est plus qu'un banc d'essai.
 
 ---
 
-## L'application de bureau (projet actif, à la racine)
+## Le complément Excel (projet actif, à la racine)
 
 ### Stack & structure
-- **Electron + TypeScript**. Process principal en `src/main/*.js`, renderer en `src/renderer/*.ts`.
-- Renderer bundlé par **esbuild** (`build.mjs`). Dépendances bundlées : `jszip`, `d3-sankey`, `d3-selection`.
+- **TypeScript**, bundlé par **esbuild** (`build.mjs`). Dépendances bundlées : `d3-sankey`,
+  `d3-selection`. Aucun code de serveur, aucun processus natif : le complément est **deux pages
+  web** qu'Excel héberge.
+- `build.mjs` produit **deux** cibles : `dist/addin` (le produit — deux pages, deux bundles
+  hachés, construits ensemble) et `dist/renderer` (l'éditeur nu, **le banc d'essai**, servi par
+  `npm run serve` et chargé par les bancs Electron).
+- `src/renderer/` garde son nom : c'est le code d'édition, celui que la fenêtre du complément
+  fait tourner. Il ne connaît d'Excel que le contrat `window.desktop`.
 - Fichiers clés :
   - `src/renderer/engine.ts` — moteur de rendu Sankey (porté du visuel Power BI) : fond blanc, colonnes, dégradés, courbes, étiquettes, centrage vertical.
   - `src/renderer/editor.ts` — éditeur : état, grille aimantée, panneau latéral, synchro Excel, export, undo/redo.
   - `src/renderer/types.ts` — `FlowModel/FlowNode/FlowLink` + `SankeyOptions`.
-  - `src/main/main.js` — IPC : projet (save/open), Excel (choose/openExisting/read/write/watch), `export:save`.
   - `src/shared/modele-excel.js` — **schéma du classeur, source de vérité unique** : ordre des
     colonnes (`NODE_COLS`/`LINK_COLS`), ordre de tri des lignes, types, `buildModelRows`.
-    Partagé par l'écriture du `.xlsx` **et** par le complément Office. Ne jamais dupliquer
-    ces règles ailleurs : les deux chemins produiraient des classeurs différents.
+    C'est la **seule** description du classeur que le complément écrit : ne jamais la dupliquer
+    ailleurs. Pur, sans Office.js — donc éprouvable en Node.
   - `src/addin/excel-office.ts` — **adaptateur Office.js** : `initialiserClasseur()` prépare un
     classeur nu (feuille + deux tableaux vides) et **refuse** plutôt que d'écraser — diagramme
     déjà là, feuille du même nom non vide, demi-diagramme. C'est la seule fonction qui écrive
@@ -213,19 +225,17 @@ L'app Electron n'est **pas** touchée par ce chantier (PLAN §5.1).
     feuille**, celle qu'on demande d'abord (« Diagramme ») : un classeur réel en porte d'autres,
     et le premier essai dans Excel a montré qu'un tableau sans rapport, sur une autre feuille,
     peut lui aussi avoir une colonne « Origine ». Voir `PLAN-COMPLEMENT-EXCEL.md`.
-  - `src/addin/pont.ts` — **la seconde implémentation de `window.desktop`**, au-dessus d'Office.js
-    (cf. « Les deux coquilles »). Apparence dans `document.settings`, écoute du classeur,
+  - `src/addin/pont.ts` — **`window.desktop` tel que le volet le pose**, au-dessus d'Office.js
+    (cf. « La coquille »). Apparence dans `document.settings`, écoute du classeur,
     largeur du volet. C'est aussi la cible du courtier : la fenêtre d'édition l'appelle à distance.
   - `src/addin/protocole.ts` — **le tunnel** volet ↔ fenêtre d'édition : `Mandataire` (fenêtre) et
     `Courtier` (volet), corrélation des appels, délai de garde, poignée de main, version du
     protocole. Ne connaît ni Office ni le DOM — donc éprouvable sans Excel.
-  - `src/addin/pont-fenetre.ts` — **la troisième implémentation de `window.desktop`**, côté
-    fenêtre : cinq méthodes passent par le tunnel, le reste est local. **Aucune ne lève** — un
-    tunnel peut expirer, ce qu'Office.js ne fait jamais.
+  - `src/addin/pont-fenetre.ts` — **`window.desktop` côté fenêtre d'édition** : quatre méthodes
+    passent par le tunnel, le reste est local. **Aucune ne lève** — un tunnel peut expirer, ce
+    qu'Office.js ne fait jamais.
   - `src/addin/courtier-volet.ts` — cycle de vie de la fenêtre d'édition (`displayDialogAsync`,
     relais, fermeture) et traduction des codes d'erreur d'Office.
-  - `src/addin/navigateur.ts` — ce que les deux coquilles du complément font sans Excel
-    (presse-papier) : partagé, donc jamais transmis par le tunnel.
   - `src/addin/fenetre.ts` / `fenetre.html` — la fenêtre d'édition : `Office.onReady` → écoute du
     volet → poignée de main → `createApp`.
   - `src/addin/synchro.ts` — rythme de la synchro descendante : filtre d'auto-écho et anti-rebond.
@@ -250,25 +260,17 @@ L'app Electron n'est **pas** touchée par ce chantier (PLAN §5.1).
     phase 6 (H · poids et délai des messages du tunnel, I · polices dans la webview).
     `sonde-fenetre.html` est la fenêtre qu'ouvre H — elle n'utilise pas `protocole.ts`, dont les
     délais de garde masqueraient justement ce qu'on mesure.
-  - `src/main/excel.js` — lecture/écriture `.xlsx` par **manipulation ciblée du zip** (JSZip), en préservant les autres onglets et les formules.
-  - `src/main/excel-control.js` — pilotage d'Excel (enregistrer + fermer un classeur) :
-    AppleScript sur macOS, COM/PowerShell sur Windows.
-  - `src/main/excel-live.js` — **écriture/lecture « à chaud »** dans le classeur *déjà ouvert*
-    dans Excel : JXA sur macOS, COM/PowerShell sur Windows. Chemin par défaut dès qu'Excel
-    tient le classeur (cf. « Écrire dans le classeur ouvert »).
-  - `src/renderer/ui.ts` — modales et sélecteur de couleurs en surcouche (grille teintes × nuances).
-  - `src/main/preload.js` — pont `contextBridge` (`window.desktop`).
+  - `src/renderer/ui.ts` — sélecteur de couleurs en surcouche (grille teintes × nuances).
+  - `tests/pont-essai.js` — `window.desktop` **pour les bancs Electron**, aux mêmes capacités
+    que le volet. Ce n'est pas une coquille du produit : c'est un décor de test.
 
 ### Scripts
 ```bash
-npm start           # build le renderer + lance Electron
-npm test            # tests des fonctionnalités d'édition (diagramme complexe)
-npm test -- liaison # filtre les tests par nom
-npm run smoke       # test de fumée (barre d'outils, aperçu, titre, garde-fou Excel)
-npm run verifier -- "Fichier.sankey"   # diagnostic d'un projet
-npm run test:live   # tests unitaires de l'écriture à chaud (sans Excel)
-npm run proto:excel -- "/chemin/Classeur.xlsx"   # aller-retour réel dans Excel (classeur ouvert)
-npm run serve       # sert dist/renderer sur http://localhost:8811 (dev navigateur)
+npm run build       # construit dist/addin (le produit) et dist/renderer (le banc)
+npm test            # tout : Office.js, synchro, tunnel, manifestes, puis l'édition (128 tests)
+npm test -- liaison # filtre les tests d'édition par nom
+npm run smoke       # test de fumée (amorçage depuis le classeur, barre d'outils, aperçu, panneau)
+npm run serve       # sert dist/renderer sur http://localhost:8811 (banc navigateur)
                     # + /volet-essai.html   : le renderer sous les capacités du complément
                     # + /fenetre-essai.html : volet courtier + fenêtre d'édition (phase 4)
                     # + /sonde-essai.html   : la sonde elle-même, hors d'Excel (phase 6)
@@ -280,13 +282,12 @@ npm run addin:install -- --enligne  # pose le manifeste PUBLIÉ : ni serveur loc
                     # macOS : conteneur d'Excel · Windows : clé WEF\Developer du Registre
 npm run addin:serve   # sert dist/addin en HTTPS sur https://localhost:3000
 npm run addin:manifeste -- https://hote/chemin   # manifeste de production (voir DIFFUSION.md)
-npm run install:app # build + remplace /Applications/Sankey Studio.app
-npm run dist        # -> release/Sankey Studio-<version>-arm64.dmg
-npm run dist:dir    # dossier .app non compressé (test rapide)
-npm run dist:win    # -> installeur NSIS + portable Windows
 ```
-`install:app` ferme Sankey Studio si elle tourne (autorisé par l'utilisateur) puis installe.
-Avant de builder : `npx tsc --noEmit -p tsconfig.json` puis `node build.mjs`.
+Avant de proposer un changement : `npx tsc --noEmit -p tsconfig.json`, `npm test`, `npm run smoke`.
+
+**Il n'y a plus de commande d'empaquetage.** Livrer, c'est publier le site du complément :
+pousser sur `main` déclenche `.github/workflows/complement.yml` (DIFFUSION.md). Installer sur
+un poste, c'est `npm run addin:install -- --enligne`.
 
 ### Modèle de données
 - **FlowNode** : `id, name, column, title, order, lane, kind, filiere, color, x, y`.
@@ -300,10 +301,9 @@ Avant de builder : `npx tsc --noEmit -p tsconfig.json` puis `node build.mjs`.
   - **Rangement imposé à l'écriture** : les nœuds descendent par **filière**, puis **colonne**,
     **couloir** et **ordre vertical** ; les liens suivent leur **origine**, puis leur
     **destination**. Le classeur se lit ainsi dans l'ordre où on voit le diagramme. Le tri vit
-    dans `buildModelRows` (`src/main/excel.js`) — donc valable pour le fichier **et** pour
-    l'écriture à chaud — et il est repris à l'identique par `formatExcelClipboard`
-    (`src/renderer/editor.ts`) pour que le collage donne exactement les mêmes lignes. Le tri
-    porte sur des **copies** : le modèle de l'app n'est jamais réordonné.
+    dans `buildModelRows` (`src/shared/modele-excel.js`) et **nulle part ailleurs** — une copie
+    de cette règle divergerait sans qu'on le voie. Il porte sur des **copies** : le modèle de
+    l'éditeur n'est jamais réordonné.
   - Lecture **et** écriture sont indexées par **nom d'entête**, jamais par position : un
     classeur écrit avant l'arrivée d'une colonne n'a pas la même largeur de tableau, et les
     deux tableaux ne sont pas forcément aux mêmes adresses qu'aujourd'hui. « Couloir » puis
@@ -432,10 +432,10 @@ Avant de builder : `npx tsc --noEmit -p tsconfig.json` puis `node build.mjs`.
   Le layout est aussi enveloppé dans un try/catch → message clair au lieu d'un écran blanc.
 - La **Filière** filtre l'affichage : `viewNodes/viewLinks/viewModel` + `hiddenFilieres`.
 - **Barre d'outils** : `＋ Nœud` · bascule segmentée Édition/Aperçu (`.segmented`, cadre unique,
-  segment actif en noir) · Enregistrer / Enregistrer sous… / Ouvrir · export PNG/SVG. Le titre de
-  la fenêtre porte le nom du projet ouvert (`updateWindowTitle` → `document.title`, qu'Electron
-  reprend), « Sankey Studio » si aucun. `loadExample()` reste appelée au 1er démarrage mais
-  n'a plus de bouton.
+  segment actif en noir) · **Enregistrer** · export PNG/SVG. « Enregistrer » range l'**apparence**
+  dans le classeur, rien d'autre : le diagramme, lui, vit déjà dans les tableaux. Ni « Enregistrer
+  sous… » ni « Ouvrir » : il n'y a pas de fichier projet. Ni diagramme d'exemple : un modèle qui
+  ne viendrait pas du classeur finirait par l'écraser.
 - **Hauteur des nœuds variable** : en édition, le nom passe à la ligne (`wrapText`, 18 caractères,
   4 lignes max) et la boîte grandit — `nodeH(n)` fait autorité, il n'y a plus de pas vertical
   régulier. Toute mesure verticale passe par `nodeH()` et `rankAtY()`, jamais par `NODE_H`/`ROW_H`.
@@ -463,67 +463,47 @@ Avant de builder : `npx tsc --noEmit -p tsconfig.json` puis `node build.mjs`.
 - **L'intitulé appartient à la COLONNE** : `setColumnTitle()` l'applique à tous ses nœuds, et
   `moveNodeToCell` fait adopter au nœud déplacé l'intitulé de sa nouvelle colonne. Ne jamais écrire
   `n.title` sur un seul nœud.
-- **Enregistrement automatique, mais PLUS de synchro Excel automatique DANS L'APP** : `persist()`
-  ne déclenche que la réécriture du `.sankey` ouvert (800 ms). `planifierEnvoiExcel()` ne fait
-  rien quand la capacité `envoiAutomatique` est fausse — le cas d'Electron, où une écriture à
-  chaud coûte ~1 s et ferait téléverser OneDrive à chaque frappe. L'envoi y reste explicite :
-  « App → Excel » (`pushToExcel`) ou **« 📋 Copier les données Excel »**. Ne pas activer cette
-  capacité pour Electron sans demande. Dans le volet Excel, elle est vraie (écriture : 12 ms).
-- **Copie presse-papier (`formatExcelClipboard`)** : produit le TSV des deux tableaux tels qu'ils
-  vivent dans l'onglet `Diagramme` — 8 colonnes Nœuds, **une colonne vide** (le `GAP`), 7 colonnes
-  Liens, en-têtes compris — à coller en **A1**. La colonne « Valeur du flux » recopie la **formule**
-  du classeur (`excel:formulas` → `readValueFormulas()` → `extractValueFormulas()`, indexée
-  `id:<src> <tgt>` puis repli `name:<Origine> <Destination>`), préfixée de `=` ; sans formule connue,
-  la valeur calculée est collée. Même règle que l'écriture : **ne jamais écraser un calcul** qui
-  pointe vers les autres onglets.
-- **Excel pour Mac ouvre les fichiers OneDrive depuis SharePoint** (`full name` d'un classeur ouvert
-  renvoie une URL `https://…sharepoint.com/…`), pas la copie locale. Une écriture de l'app sur le
-  disque n'est donc visible dans Excel qu'une fois **téléversée par OneDrive** ; ouvrir avant fait
-  apparaître l'ancienne version, et l'enregistrer la redescend. L'app le signale dans le statut
-  quand le chemin est sous `CloudStorage`/OneDrive.
+- **Enregistrement automatique** : `persist()` range l'apparence dans le classeur (800 ms) et
+  programme l'envoi du modèle (`planifierEnvoiExcel`, 300 ms). Ce dernier ne part que si la
+  capacité `envoiAutomatique` est vraie — elle l'est dès qu'Excel offre `ExcelApi 1.7`, parce
+  qu'écrire coûte 12 ms et ne déclenche aucun enregistrement. Sans 1.7, ce sont les deux boutons
+  du panneau qui font le travail.
 - **Interaction du canevas (plus de modes)** : un seul mode d'édition. Glisser un nœud le déplace ;
   sélectionner un nœud fait apparaître un **point de liaison sur chaque bord** (`linkDot`) — tirer
   depuis le point droit crée un lien *sortant*, depuis le gauche un lien *entrant* (`linkDrag`,
   aperçu `.link-preview`, cible surlignée `.drop-target`). Échap ou relâchement dans le vide
   annule. Le bouton « + » à droite reste le raccourci « nouveau nœud déjà relié ».
 - Les **valeurs de flux** vivent **uniquement dans Excel** (formules préservées à l'écriture) ;
-  l'apparence vit dans l'app (projet `.sankey` JSON).
+  l'**apparence** vit dans le classeur (`document.settings`).
 
-### Les deux coquilles (Electron / complément Excel)
+### La coquille (le complément) et son contrat
 
-Le **même renderer** (`src/renderer/`) tourne dans deux coquilles : l'app Electron et un
-**complément Office**. Chantier décrit dans `PLAN-COMPLEMENT-EXCEL.md` (phases 0 à 4 faites ;
-mesures dans `RESULTATS-PHASE-0.md`).
+Le complément a **deux contextes** (phase 4) : le **volet**, qui tient Office.js et le classeur,
+et une **fenêtre d'édition** séparée (Dialog API, 98 % de l'écran), qui tient l'éditeur. Le volet
+plafonne à 755 px alors qu'un diagramme réel en fait 1 362 — d'où la fenêtre. Voir « Le tunnel
+volet ↔ fenêtre » plus bas.
 
-La coquille complément a **deux contextes** depuis la phase 4 : le **volet**, qui tient Office.js
-et le classeur, et une **fenêtre d'édition** séparée (Dialog API, 98 % de l'écran), qui tient
-l'éditeur. Le volet plafonne à 755 px alors qu'un diagramme réel en fait 1 362 — d'où la fenêtre.
-Voir « Le tunnel volet ↔ fenêtre » plus bas.
-
-- Toute la surface native passe par **un seul accesseur**, `window.desktop`, implémenté **trois**
-  fois : `src/main/preload.js` (IPC Electron), `src/addin/pont.ts` (Office.js) et
-  `src/addin/pont-fenetre.ts` (le tunnel). Aucune fuite d'Electron ailleurs dans le renderer —
-  **ne pas en introduire**.
+- Toute la surface Excel passe par **un seul accesseur**, `window.desktop`, implémenté
+  `src/addin/pont.ts` (le volet, sur Office.js) et `src/addin/pont-fenetre.ts` (la fenêtre, par
+  le tunnel). Les bancs en posent de faux : `tests/pont-essai.js` et les pages de `tests/`.
+  Aucun appel à Office.js ailleurs dans `src/renderer/` — **ne pas en introduire**.
 - **Le renderer ne teste jamais la plateforme : il demande une CAPACITÉ** (`caps()` dans
-  `editor.ts`). Six, chacune avec un consommateur réel :
+  `editor.ts`). Il n'en reste que **deux**, et c'est voulu :
 
-  | Capacité | Electron | Volet Excel | Ce qu'elle commande |
-  |---|:--:|:--:|---|
-  | `fichiers` | ✓ | — | dialogues natifs, projets `.sankey`, classeur choisi sur le disque |
-  | `excel` | ✓ | ✓ | panneau de synchro, lecture/écriture |
-  | `classeurImpose` | — | ✓ | pas de « connecter » / « dissocier » : c'est le classeur ouvert |
-  | `classeurVerrouillable` | ✓ | — | garde-fou `beginEdit()`, modales de verrou, pilotage d'Excel |
-  | `envoiAutomatique` | — | ✓ | écrire vers Excel à chaque modification |
-  | `apparenceDansClasseur` | — | ✓ | l'apparence est rangée dans le classeur, pas dans un `.sankey` |
+  | Capacité | Ce qu'elle commande |
+  |---|---|
+  | `excel` | un classeur est joignable en lecture/écriture |
+  | `envoiAutomatique` | écrire à chaque modification, au lieu des deux boutons du panneau |
 
-  Ajouter une capacité **seulement** quand un point d'appel en a besoin ; `d.isElectron` ne
-  subsiste que comme repli de `caps()` pour un pont qui n'en déclarerait aucune.
-- **Dans le volet, le modèle vient du classeur et de lui seul** : `amorcerDepuisClasseur()` lit
+  La seconde est la seule variation qui subsiste, et elle ne dépend pas de la plateforme : elle
+  se **sonde** (`ExcelApi 1.7`, `isSetSupported`). C'est pour ça que la seam reste — pas par
+  nostalgie d'Electron. Ajouter une capacité **seulement** quand un point d'appel en a besoin.
+- **Le modèle vient du classeur et de lui seul** : `amorcerDepuisClasseur()` lit
   les tableaux au démarrage — ni exemple, ni cache `localStorage`, qui écraseraient les tableaux
   de l'utilisatrice dès la première écriture automatique. Rien ne part vers Excel tant que cette
   lecture n'a pas réussi (`amorceFaite`).
 - **L'apparence voyage dans le classeur** (`document.settings`, ~1,9 Ko) : `ProjectAppearance` =
-  `ProjectFile` moins le modèle, plus les `colorOverride` des liens indexés par le couple d'IDs
+  tout sauf le modèle, plus les `colorOverride` des liens indexés par le couple d'IDs
   (ils n'existent pas dans Excel et ne survivraient pas à une relecture). Les couleurs sont
   rendues aux liens **après** la lecture du classeur : avant, les liens n'existent pas.
 - **Synchro descendante** : `Table.onChanged` sur les **deux tableaux du diagramme seulement**
@@ -532,17 +512,22 @@ Voir « Le tunnel volet ↔ fenêtre » plus bas.
   de 1,2 s après notre écriture. Sans lui, notre propre écriture nous revient et la synchro boucle.
 - **Piège de la boucle montante** : une écriture réussie appelle `persist()`, qui reprogramme
   l'envoi. `planifierEnvoiExcel()` ne part donc que si `dirtySinceSync` — ne pas retirer ce test.
-- `pushEnCours` est **conservé** dans les deux coquilles : c'est le garde-fou de réentrance
-  (deux écritures concurrentes), pas une optimisation du coût.
+- `pushEnCours` est le garde-fou de **réentrance** (deux écritures concurrentes), pas une
+  optimisation du coût : le retirer ferait se marcher dessus deux écritures d'une même salve.
 - **Manifeste** : n'y déclarer que `ExcelApi 1.1`. Un jeu d'exigences plus élevé empêche le
   complément de **se charger du tout** sur un Excel plus ancien ; ce dont on a besoin
   (`onChanged` = 1.7, `setWidth`, réglages) se sonde à l'exécution avec `isSetSupported`.
 - **Servir le complément** : HTTPS obligatoire, **même origine pour ses deux pages**, bundles au
   nom **haché** (les webviews Office cachent durement). `npm run addin:serve` refuse de démarrer
   si le port 3000 est déjà pris — `SANKEY_PORT=3100` pour un essai.
-- Ce qui reste vrai dans le complément : `Ctrl-Z` d'Excel ne défait pas nos écritures, et Excel
-  montre le classeur comme modifié tant que l'utilisatrice ne l'enregistre pas (seul un
-  « App → Excel » explicite demande l'enregistrement).
+- `Ctrl-Z` d'Excel ne défait pas nos écritures, et Excel montre le classeur comme modifié tant
+  que l'utilisatrice ne l'enregistre pas (seul un « Diagramme → Excel » explicite demande
+  l'enregistrement).
+- **Le panneau n'a plus de section « Synchronisation Excel »** : classeur imposé, synchro
+  automatique — il n'y avait plus rien à y décider. `buildExcelPanel()` ne rend une section
+  (« Synchronisation manuelle », deux boutons) **que** si `envoiAutomatique` est faux ; c'est
+  alors le seul moyen d'échanger avec le classeur, pas un confort. Ne pas la supprimer sans
+  d'abord donner une autre issue aux Excel sans `ExcelApi 1.7`.
 
 ### Le tunnel volet ↔ fenêtre (complément, phase 4)
 
@@ -572,131 +557,36 @@ le reste.
   démarrage.
 
 ### Synchro Excel
-- **Détection du classeur ouvert : deux signaux obligatoires.** Excel ne crée un fichier verrou
-  `~$<base>` que pour un fichier **local** ; pour un classeur ouvert depuis **OneDrive**, il n'en
-  crée aucun. `workbookState()` (`src/main/excel-control.js`) combine donc le fichier verrou et
-  l'interrogation d'Excel (`isOpenInExcel`, AppleScript / COM, résultat mis en cache 1,2 s) ;
-  `mode` indique lequel a répondu (`verrou`, `excel`, `refuse`, `indetermine`) et l'app affiche un
-  avertissement quand la détection est dégradée. `excel:write` refait la vérification avant
-  d'écrire, et un `setInterval` de 4 s interroge Excel car `fs.watch` ne voit rien sur OneDrive.
-- **Piège AppleScript Excel Mac** : `full name of wb` dans un `repeat with wb in workbooks` lève
-  une erreur `-50`. Passer par `name of every workbook` puis agir par index (`workbook idx`).
-- **Ne jamais écrire le `.xlsx` pendant qu'Excel tient le classeur** : sur macOS l'écriture
-  réussit sur le disque mais Excel écrase tout à sa prochaine sauvegarde (c'était la cause de la
-  « perte des couleurs »). Deux issues : écrire **dans** le classeur ouvert (`excel-live.js`,
-  chemin normal) ou **différer** (`pendingExcelWrite`) si le pilotage d'Excel est impossible.
-  L'app re-lit à la sauvegarde Excel (fs.watch, self-write supprimé via `lastWriteTs`).
-- Bidirectionnelle : `⬆︎ App→Excel` (préserve les valeurs Excel), `⬇︎ Excel→App` (avertit si des
-  modifs locales seraient écrasées). Réconciliation **par ID** avec `syncedNodeIds/syncedLinkIds`.
-- **Quand l'écriture à chaud n'est pas possible, le verrou prévient par une modale**, jamais par
-  un simple message de statut :
-  `resolveExcelLock(contexte)` sert aussi bien l'édition d'un nœud que le bouton
-  « ⬆︎ App → Excel » (`pushToExcel` la consulte **avant** d'écrire, et retente une fois si le
-  classeur a été rouvert entre-temps). `pushEnCours` empêche la récursion, `closeWorkbookInExcel`
-  relançant l'écriture en attente.
-- **Garde-fou d'édition** : toute modification de structure passe par `beginEdit()` dans
-  `editor.ts` (ajout/suppression de nœud ou de lien, déplacement, champs du panneau, couleur d'un
-  nœud). Si le classeur est ouvert dans Excel (`excelLocked`) **et** que l'app ne sait pas y écrire
-  (`!excelLive`), l'édition est **refusée** et une modale explique qu'il faut enregistrer et fermer
-  le classeur. Avec `excelLive`, l'édition continue normalement. Option `prefs.autoCloseExcel`
-  (localStorage `sankey-prefs`, propre au poste) : l'app demande elle-même à Excel d'enregistrer
-  puis de fermer, via `excel:closeInExcel`. L'apparence (options du diagramme) n'est **pas**
-  bloquée : elle ne part jamais dans Excel.
-- macOS exige l'autorisation « Automatisation » ; `NSAppleEventsUsageDescription` est déclaré dans
-  `package.json` (`mac.extendInfo`). Refus → état `denied`, message explicite dans l'app.
-- `extractValueFormulas` relit les cellules « Valeur du flux » contenant `<f>` et `buildModelRows`
-  les ré-émet comme cellules formule.
 
-#### Écrire dans le classeur ouvert (`excel-live.js`)
+Le complément écrit **dans le classeur ouvert**, par Office.js. Tout ce qui servait autrefois à
+disputer le fichier à Excel — verrou `~$`, `fs.watch`, AppleScript, JXA, COM/PowerShell,
+écriture du `.xlsx` fermé par JSZip — a disparu avec la coquille Electron. Ce qui reste :
 
-Renversement du rapport de force : quand Excel tient le classeur, ne pas lui disputer le
-fichier, mais **lui demander d'écrire**. C'est la seule voie qui marche pour un fichier
-SharePoint, qu'Excel pour Mac ouvre depuis son **URL** et non depuis la copie locale — écrire le
-`.xlsx` sur le disque est alors sans effet visible, et la sauvegarde d'Excel l'écrase.
-
-- **Le coût n'est pas le nombre de cellules, c'est le nombre d'évènements envoyés à Excel.**
-  Mesuré ici : **425 ms par cellule** une par une, contre **~0,05 ms** en affectant un tableau 2D
-  à une plage entière. Facteur ~8 000. Ne **jamais** boucler sur les cellules.
-- Coût quasi **constant** quelle que soit la taille (mesures macOS, Excel 16.112, M-series) :
-
-  | nœuds | liens | cellules | dans Excel | total (dont ~500 ms de démarrage d'`osascript`) |
-  |------:|------:|---------:|-----------:|------:|
-  |    50 |    44 |      614 |    1 038 ms | 1 573 ms |
-  |   200 |   194 |    2 564 |    1 052 ms | 1 585 ms |
-  |   500 |   494 |    6 464 |    1 309 ms | 1 853 ms |
-  | 1 000 |   994 |   12 964 |    1 302 ms | 1 826 ms |
-  | 2 000 | 1 994 |   25 964 |    1 365 ms | 1 887 ms |
-
-  « Plusieurs centaines de lignes » n'est donc pas un problème.
-- **macOS : JXA (`osascript -l JavaScript`), pas AppleScript** — UTF-8 et JSON natifs, or les
-  noms de nœuds sont accentués. Le script est passé par stdin (il ne peut pas vivre dans un
-  fichier : l'asar n'est pas lisible par `osascript`) et reçoit le chemin d'un JSON en `argv`.
-- **Ajouter une colonne manquante** : écrire l'en-tête dans la colonne qui suit le tableau l'y
-  étend (auto-extension, ~50 ms), à condition que cette colonne soit libre — sinon l'état
-  `no-column` et l'app retombe sur l'écriture du fichier. C'est ainsi qu'un classeur d'avant les
-  couloirs gagne sa colonne « Couloir » sans être fermé.
-- **Redimensionner les tableaux**, toujours **limité aux colonnes du tableau** — sinon le tableau
-  voisin (Liens, colonne I) se décale avec. À la hausse : `insert into range … shift shift down`
-  **dans** le tableau. Écrire *sous* le tableau l'étend aussi tout seul, mais Excel le reconstruit
-  entièrement — mesuré **1 500 ms contre 260 ms**, soit l'essentiel du coût d'une écriture avec
-  ajout de nœud. À la baisse : `delete range … shift shift up`. Un tableau Excel ne peut pas avoir
-  zéro ligne : on en garde une, vide.
-- Figer l'écran et passer le calcul en manuel **n'aide pas** : les quatre évènements Apple
-  supplémentaires coûtent plus que ce qu'ils économisent (562 ms contre 231 ms). Ne pas le faire —
-  et surtout ne pas laisser Excel en calcul manuel si le script échoue en cours de route.
-  Sur Windows, COM expose `ListObject.Resize`, plus direct — mais **Resize ne vide pas** les
-  cellules sorties du tableau, il faut les effacer soi-même.
-- **Formules** : relire la colonne « Valeur du flux » **avant** d'écrire, réassocier par
-  `(ID origine, ID destination)` puis réémettre. `range.formula` est en syntaxe **US**
-  (`=SUM(...)`) dans les deux sens, quelle que soit la langue de l'interface — `formula local`
-  donne `=SOMME(...)`. C'est la même syntaxe que le `<f>` du XML, donc les deux chemins
-  d'écriture sont cohérents.
-- **PowerShell** : script en **ASCII pur** (stdin est décodé avec la page de code de la console,
-  pas en UTF-8 ; le JSON, lui, passe par un fichier lu en UTF-8) et `To-Grid` doit rendre
-  `,$a` — sans la virgule, PowerShell déplie le tableau 2D. Non testé faute de machine Windows.
-- **Contrepartie** : `Ctrl-Z` dans Excel ne défait pas une écriture par automatisation.
-- Essai sur le vrai fichier (`Flux légumineuses.xlsx`, ouvert depuis SharePoint) : 500 cellules
-  réécrites à l'identique, **21 formules `'Données de flux'!B…` conservées**, 1,35 s.
-  `npm run proto:excel -- "<chemin>"` refait la mesure et compare cellule à cellule.
-
-**Branchement dans l'app.** `excel:write` choisit son chemin selon l'état du classeur : ouvert
-dans Excel → écriture à chaud ; fermé → écriture du `.xlsx` (`excel.js`). `excel:read` fait de
-même : quand Excel tient le classeur, le fichier sur le disque est en retard sur ce qui est à
-l'écran. Conséquences côté renderer :
-
-- `workbookState()` est renvoyé au renderer avec un drapeau **`live`** (`avecPilotage` dans
-  `main.js`) : vrai dès que le classeur est ouvert **et** que la plateforme sait piloter Excel.
-  Optimiste à dessein — on ne dépense pas un aller-retour de plus pour le vérifier ; si
-  l'autorisation manque, l'écriture rend `denied` et l'app repasse par l'avertissement.
-- `beginEdit()` **n'interdit plus** l'édition quand `excelLive` : le garde-fou ne vaut que si
-  l'app ne sait pas écrire dans le classeur ouvert. Idem pour le sélecteur de couleurs.
-- `pushToExcel` ne demande de fermer Excel que si l'écriture à chaud a échoué (`res.liveState`
-  remet `excelLive` à faux avant la seconde tentative).
-- **Enregistrement** : seul un « App → Excel » explicite demande à Excel d'enregistrer
-  (`options.save`). La synchro de fond ne le fait pas — sinon OneDrive téléverserait à chaque
-  frappe. Excel montre donc le classeur comme modifié : c'est dit dans le panneau.
-- Une écriture à chaud dure ~1 s, pendant laquelle l'utilisatrice continue d'éditer :
-  `pushEnCours` **reprogramme** l'écriture suivante au lieu de la jeter (sinon le dernier
-  changement d'une salve n'arrive jamais dans Excel).
-- `prefs.autoCloseExcel` devient un **repli**, plus le mode normal.
+- **Montante** (diagramme → classeur) : `pushToExcel()`. Elle relit d'abord le classeur pour
+  **conserver les valeurs déjà saisies** dans les liens existants, puis écrit. Automatique
+  (300 ms d'apaisement) quand `envoiAutomatique` est vrai, par bouton sinon.
+- **Descendante** (classeur → diagramme) : `Table.onChanged` sur les **deux tableaux du
+  diagramme seulement**, anti-rebond de 300 ms, filtre d'auto-écho (cf. « La coquille »).
+- Réconciliation **par ID**, avec `syncedNodeIds`/`syncedLinkIds` : c'est ce qui distingue une
+  ligne supprimée dans Excel d'une ligne jamais synchronisée.
+- **Les formules sont préservées** : avant d'écrire, `ecrireDiagramme` relit les cellules
+  « Valeur du flux » qui commencent par `=`, les indexe par `(ID origine, ID destination)` puis
+  les réémet. `range.formula` est en syntaxe **US** (`=SUM(...)`) dans les deux sens, quelle que
+  soit la langue de l'interface — `formula local` donnerait `=SOMME(...)`.
+- **Enregistrement** : seul un « Diagramme → Excel » explicite le demande (`options.save`). La
+  synchro de fond ne le fait jamais — sinon OneDrive téléverserait à chaque frappe. Excel montre
+  donc le classeur comme modifié : c'est dit dans l'interface.
+- **Contrepartie** : `Ctrl-Z` dans Excel ne défait pas une écriture du complément.
 
 ### Vérification
-Voir « Vérifier une fonctionnalité » en tête de fichier. En complément : `npx electron .`
-démarre l'app en cherchant les erreurs dans les logs.
+Voir « Vérifier une fonctionnalité » en tête de fichier.
 
 ### Pièges à connaître
-- **electron-builder épinglé à 24.13.3** — la 26.x plante (`ERR_REQUIRE_ESM` sur
-  `@noble/hashes/blake2.js`).
 - **Icône** : source = `build/icon.svg` (glyphe Sankey au style du dictionnaire BASIC :
   viewBox 50, trait 2.5, `fill none`, onglets, bouts francs — tuile noire / glyphe blanc).
-  **macOS ne rogne pas les icônes** : la tuile doit dessiner elle-même la forme attendue,
-  sinon elle déborde des bords arrondis du Dock. Grille Apple (macOS 11+) : corps de
-  **824×824 centré dans 1024, rayon 185,4**, glyphe à ~519 px pour laisser respirer.
-  C'est la seule entorse assumée au « rayon 0 » de la charte : la convention système prime.
-  Pipeline : `npx electron scripts/render-icon.js` (Chromium rend le SVG en PNG ; **qlmanage
-  rastérise en escalier**, ne pas l'utiliser) puis `node scripts/make-icons.mjs` → `.icns`
-  (sips + iconutil) et `.ico` (empaqueté à la main : en-tête + PNG bruts, pas d'ImageMagick ici).
-  **zsh ne découpe pas `$var` en mots** → appeler `sips` taille par taille.
+  Les icônes du ruban (`build/addin/icon-*.png`, 16/32/64/80 px) en sont tirées ; c'est le seul
+  usage qui reste depuis le retrait du `.icns`/`.ico`. `npx electron scripts/render-icon.js`
+  rend le SVG en PNG 1024 avec Chromium (**qlmanage rastérise en escalier**, ne pas l'utiliser).
   Les angles des bandes doivent être des **tracés fermés** (`Z`), sinon les segments juxtaposés
   laissent des marches aux jonctions.
 - **Octets NULL** : des éditions ont déjà transformé des séparateurs `" "` en `0x00` (le fichier
@@ -704,10 +594,12 @@ démarre l'app en cherchant les erreurs dans les logs.
   En cas de bug de clés inexpliqué : scanner les `\x00`, remplacer par un espace.
 
 ### À faire
-- **Éprouver le chemin Windows de `excel-live.js`** : écrit, jamais exécuté (ni machine Windows ni
-  `pwsh` ici). Les tests n'en gardent que les invariants.
-- **Signature + notarisation** macOS (actuellement `identity: null` → clic droit → Ouvrir au
-  1er lancement). Puis builds **Windows (.exe)** et **Linux (AppImage/deb)**.
+- **La campagne de mesures Windows** (phase 6) : la grille de `RESULTATS-PHASE-6.md` est vide.
+  Le complément lui-même **tourne** sous Windows (installé et vérifié le 2026-09-01, VM
+  Parallels, Excel 365 ARM64) ; ce sont les mesures — poids du tunnel, délais, polices — qui
+  restent à prendre.
+- **Le téléversement M365** (DIFFUSION.md §3) demande un administrateur du tenant. En attendant,
+  l'installation se fait poste par poste (`--enligne`, §6).
 
 ---
 

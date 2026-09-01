@@ -1,15 +1,15 @@
 /**
  * Test de fumée de l'éditeur, sans automatisation de fenêtre.
  *
- * Charge le renderer construit dans une fenêtre Electron masquée et exerce les
- * fonctionnalités par évènements souris/clavier, via le crochet `window.__sankeyTest`.
- * C'est le moyen de vérifier une fonctionnalité de bout en bout ici : ni la fenêtre
- * Electron ni les dialogues natifs ne sont pilotables autrement.
+ * Charge l'éditeur du complément dans une fenêtre Electron masquée et exerce
+ * ses fonctionnalités par évènements souris/clavier, via `window.__sankeyTest`.
+ * Electron n'est pas le produit : c'est un navigateur pilotable, le seul qui
+ * accepte de vraies frappes et de vrais glissers (cf. tests/pont-essai.js).
  *
  * Usage : npm run smoke   (sortie non nulle si un test échoue)
  */
 "use strict";
-const { app, BrowserWindow, ipcMain, clipboard } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 
 const ROOT = path.join(__dirname, "..");
@@ -131,18 +131,14 @@ const SCENARIO = `(async () => {
   out.bascules_gras_italique = gi.length >= 2
       && gi[0].classList.contains('bold') && gi[1].classList.contains('italic');
 
-  // --- garde-fou : édition refusée quand Excel tient le classeur ET que
-  // l'app ne sait pas y écrire ; autorisée quand elle le sait.
-  T.setExcelPath('/tmp/inexistant.xlsx');
-  T.setExcelLocked(true);
-  T.setExcelLive(false);
-  const avantGarde = T.nodeCount();
+  // --- le panneau ne montre plus de section « Synchronisation Excel »
+  out.pas_de_section_synchro = ![...document.querySelectorAll('#sidebar h3, #sidebar h2')]
+      .some(h => /Synchronisation Excel/i.test(h.textContent));
+
+  // --- l'éditeur reste éditable : plus aucun garde-fou de classeur ouvert
+  const avantAjout = T.nodeCount();
   document.querySelector('#toolbar button').click(); // ＋ Nœud
-  out.garde_fou_excel = T.nodeCount() === avantGarde;
-  T.setExcelLive(true);
-  document.querySelector('#toolbar button').click();
-  out.edition_pendant_ecriture_a_chaud = T.nodeCount() === avantGarde + 1;
-  T.setExcelLocked(false); T.setExcelLive(false); T.setExcelPath(null);
+  out.edition_toujours_possible = T.nodeCount() === avantAjout + 1;
 
   return out;
 })()`;
@@ -152,23 +148,51 @@ function record(obj) {
   for (const [name, ok] of Object.entries(obj)) results.push({ name, ok: !!ok });
 }
 
-// La fenêtre du test est autonome : on remplace les canaux Excel de main.js par
-// des bouchons, sinon chaque appel IPC du renderer échoue bruyamment.
+/**
+ * Le classeur que le complément est censé lire au démarrage.
+ *
+ * Il remplace le « diagramme d'exemple » d'autrefois, et c'est mieux ainsi :
+ * le scénario passe désormais par le VRAI chemin d'amorçage du complément
+ * (`amorcerDepuisClasseur` → `reconcileFromExcel`), au lieu d'un modèle posé en
+ * dur dans le renderer. Si l'amorçage casse, le test de fumée le voit.
+ */
+const CLASSEUR = (() => {
+  const n = (id, name, column, title, order, filiere, kind) =>
+    ({ id, name, column, title, order, lane: 1, kind, filiere, color: "#e79a3c" });
+  const nodes = [
+    n("n1", "Production", 1, "Production", 0, "", "industrie"),
+    n("n2", "Lait", 2, "", 0, "", "produit"),
+    n("n3", "Transformation", 3, "Transformation", 0, "", "industrie"),
+    n("n4", "Beurre", 4, "", 0, "Matières grasses", "produit"),
+    n("n5", "Crème", 4, "", 1, "Matières grasses", "produit"),
+    n("n6", "Fromage", 4, "", 2, "Fromagerie", "produit"),
+    n("n7", "Distribution", 5, "Distribution", 0, "", "industrie"),
+    n("n8", "Exportation de produits transformés", 6, "", 0, "", "produit"),
+    n("n9", "Consommation de produits laitiers", 6, "", 1, "", "produit")
+  ];
+  const nom = id => nodes.find(x => x.id === id).name;
+  const l = (s2, t, value) =>
+    ({ sourceId: s2, targetId: t, sourceName: nom(s2), targetName: nom(t), value, unit: "t" });
+  return {
+    nodes,
+    links: [
+      l("n1", "n2", 5500000), l("n2", "n3", 5500000),
+      l("n3", "n4", 92000), l("n3", "n5", 497000), l("n3", "n6", 652000),
+      l("n4", "n7", 92000), l("n5", "n7", 497000), l("n6", "n7", 652000),
+      l("n7", "n8", 500000), l("n7", "n9", 741000)
+    ],
+    hasLane: true,
+    hasKind: true
+  };
+})();
+
+// La fenêtre du test n'a pas d'Excel : on répond à sa place, sinon chaque appel
+// du pont d'essai échouerait bruyamment.
 function stubExcelIpc() {
-  ipcMain.handle("excel:isLocked", () => ({ locked: false, exists: false, mode: "absent", live: false }));
-  ipcMain.handle("excel:watch", () => ({ ok: true, locked: false }));
-  ipcMain.handle("excel:read", () => ({ ok: false, error: "bouchon" }));
-  ipcMain.handle("excel:write", () => ({ ok: false, error: "bouchon" }));
-  ipcMain.handle("excel:closeInExcel", () => ({ ok: true, state: "not-running", locked: false }));
-  ipcMain.handle("excel:formulas", () => ({ ok: true, formules: {} }));
-  ipcMain.handle("clipboard:write", (_e, text) => {
-    try {
-      clipboard.writeText(text);
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, error: String(e) };
-    }
-  });
+  ipcMain.handle("excel:read", () => ({ ok: true, live: true, data: CLASSEUR }));
+  ipcMain.handle("excel:write", () => ({ ok: true, live: true, path: "Classeur d'essai.xlsx" }));
+  ipcMain.handle("apparence:lire", () => null);
+  ipcMain.handle("apparence:ecrire", () => ({ ok: true }));
 }
 
 app.whenReady().then(async () => {
@@ -176,7 +200,7 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1400, height: 900, show: false,
     webPreferences: {
-      preload: path.join(ROOT, "src/main/preload.js"),
+      preload: path.join(ROOT, "tests/pont-essai.js"),
       contextIsolation: true,
       nodeIntegration: false
     }
@@ -184,22 +208,16 @@ app.whenReady().then(async () => {
 
   try {
     await win.loadFile(path.join(ROOT, "dist/renderer/index.html"));
-    // Repart d'un projet vierge : l'app recharge alors le diagramme d'exemple.
-    await win.webContents.executeJavaScript('localStorage.clear()');
-    win.reload();
     await new Promise(r => setTimeout(r, 1200));
 
-    record(await win.webContents.executeJavaScript(SCENARIO));
+    // Le diagramme doit venir du classeur, et de lui seul.
+    record({
+      amorce_depuis_le_classeur: await win.webContents.executeJavaScript(
+        'window.__sankeyTest.model().nodes.length === ' + CLASSEUR.nodes.length
+      )
+    });
 
-    // --- titre de la fenêtre = projet ouvert
-    record({ titre_sans_projet: win.getTitle() === "Sankey Studio" });
-    await win.webContents.executeJavaScript(
-      'localStorage.setItem("sankey-project-path", "/Users/x/mon-diagramme.sankey")'
-    );
-    win.reload();
-    await new Promise(r => setTimeout(r, 1000));
-    record({ titre_avec_projet: win.getTitle() === "mon-diagramme.sankey" });
-    await win.webContents.executeJavaScript('localStorage.clear()');
+    record(await win.webContents.executeJavaScript(SCENARIO));
   } catch (e) {
     results.push({ name: "exécution du scénario", ok: false, err: String((e && e.message) || e) });
   }

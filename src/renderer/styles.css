@@ -155,11 +155,6 @@ button.danger { font: inherit; font-size: 13px; font-weight: 600; width: 100%; p
     transition: background .25s var(--ease), color .25s var(--ease); }
 button.danger:hover { background: var(--alert); color: var(--bright); }
 
-.excel-file { font-size: 13px; padding: 9px 10px; border-radius: var(--radius); margin-bottom: 8px;
-    background: var(--light); border: var(--hairline) solid var(--dark); }
-.excel-file.none { background: var(--paper); border-color: var(--grey); color: var(--muted); }
-.excel-name { font-weight: 600; color: var(--dark); word-break: break-all; }
-.excel-sub { font-size: 11px; font-weight: 600; color: var(--muted); margin-top: 2px; }
 button.wide { font: inherit; font-size: 13px; font-weight: 600; width: 100%; padding: 9px 10px;
     margin-bottom: 6px; border: var(--hairline) solid var(--dark); background: none;
     color: var(--dark); border-radius: var(--radius); cursor: pointer; text-align: left;
@@ -243,37 +238,13 @@ button.linklike:hover { color: var(--dark); }
 #canvas .plus-handle:hover .plus-circle { r: 13; fill: var(--dark); }
 #canvas .plus-handle:hover .plus-sign { stroke: var(--bright); }
 
-/* ======================= surcouches (modale + palette) =================== */
+/* =========================== surcouche (palette) ========================= */
 
-.ov-backdrop, .cp-backdrop {
+.cp-backdrop {
     position: fixed; inset: 0; z-index: 60;
     display: flex; align-items: center; justify-content: center;
+    background: none;
 }
-.ov-backdrop { background: rgba(0, 0, 0, 0.45); }
-.cp-backdrop { background: none; }
-
-.ov-modal {
-    width: min(460px, calc(100vw - 32px));
-    background: var(--bright); color: var(--dark);
-    border: 2px solid var(--dark); border-radius: var(--radius);
-    padding: 20px; box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.15);
-}
-.ov-title { margin: 0 0 12px; font-size: 15px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: .06em; }
-.ov-text { margin: 0 0 10px; font-size: 13px; font-weight: 300; line-height: 1.5; }
-.ov-check { display: flex; align-items: flex-start; gap: 8px; margin: 14px 0 4px;
-    font-size: 12px; font-weight: 600; cursor: pointer; }
-.ov-check input { accent-color: var(--dark); margin: 2px 0 0; }
-.ov-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-.ov-btn { font: inherit; font-size: 13px; font-weight: 600; line-height: 1; padding: 10px 14px;
-    border: var(--hairline) solid var(--dark); border-radius: var(--radius);
-    background: none; color: var(--dark); cursor: pointer;
-    transition: background .25s var(--ease), color .25s var(--ease); }
-.ov-btn:hover { background: var(--dark); color: var(--bright); }
-.ov-btn.primary { background: var(--dark); color: var(--bright); }
-.ov-btn.primary:hover { background: var(--bright); color: var(--dark); }
-.ov-btn.ghost { border-color: var(--grey); color: var(--muted); }
-.ov-btn.ghost:hover { background: var(--muted); border-color: var(--muted); color: var(--bright); }
 
 /* Palette : une teinte par colonne, les nuances en lignes */
 .cp-pop {
@@ -308,9 +279,6 @@ button.linklike:hover { color: var(--dark); }
     background: none; color: var(--dark); cursor: pointer;
     transition: background .25s var(--ease), color .25s var(--ease); }
 .cp-close:hover { background: var(--dark); color: var(--bright); }
-
-/* Classeur verrouillé par Excel */
-.excel-file.locked { background: var(--bright); border-left: 4px solid var(--dark); }
 
 /* Gras / italique compactés en bascules, comme dans Word */
 .style-toggles { display: flex; gap: 4px; }

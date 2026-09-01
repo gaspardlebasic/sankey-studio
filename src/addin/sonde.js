@@ -11,7 +11,7 @@
  *   I les polices du diagramme dans la webview d'Office
  *
  * Rien n'est jamais enregistré : le classeur reste « modifié » dans Excel, à
- * l'utilisatrice de décider. Même règle que scripts/proto-excel-live.mjs.
+ * l'utilisatrice de décider.
  */
 
 /* ----------------------------- journal ----------------------------- */
@@ -45,7 +45,7 @@ var attendre = function (ms) { return new Promise(function (r) { setTimeout(r, m
 
 /**
  * Retrouve les deux tableaux par leurs EN-TÊTES, jamais par leur adresse —
- * même règle que readDiagram() dans src/main/excel.js. Un classeur écrit par
+ * même règle que lireDiagramme(). Un classeur écrit par
  * une ancienne version n'a pas la colonne vide entre les deux tableaux.
  */
 async function trouverTableaux(context) {

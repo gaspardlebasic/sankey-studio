@@ -2,21 +2,15 @@
 /**
  * Schéma du classeur Sankey — SOURCE DE VÉRITÉ UNIQUE.
  *
- * Extrait de src/main/excel.js SANS modification de comportement, pour que les
- * deux chemins d'écriture partagent exactement le même code :
- *   - src/main/excel.js        écriture du .xlsx (JSZip, XML), Excel fermé
- *   - src/addin/excel-office   écriture dans le classeur ouvert (Office.js)
- *
  * Y vit tout ce qui est PUR : ordre des colonnes, ordre de tri des lignes,
- * lecture/écriture des types, et buildModelRows. Rien qui touche au disque, au
- * XML ou à Office.js — c'est ce qui permet de le charger des deux côtés.
+ * lecture/écriture des types, et buildModelRows. Rien qui touche à Office.js —
+ * c'est ce qui permet de l'éprouver en Node, sans Excel.
  *
- * CommonJS : Node le charge tel quel (process principal), esbuild le regroupe
- * dans le paquet du complément. Types dans modele-excel.d.ts.
+ * CommonJS : Node le charge tel quel pour les tests, esbuild le regroupe dans
+ * le paquet du complément. Types dans modele-excel.d.ts.
  *
- * NE PAS dupliquer ces règles ailleurs : toute divergence entre les deux
- * chemins d'écriture produit des classeurs différents selon qu'Excel est
- * ouvert ou fermé.
+ * NE PAS dupliquer ces règles ailleurs : c'est la seule description du classeur
+ * que le complément écrit, et elle doit rester unique.
  */
 
 // Voir GAP plus bas : l'écriture « à chaud » ajoute cette colonne dans le
