@@ -13,9 +13,10 @@ d'Excel ont été retirés. Electron ne subsiste que comme **banc d'essai** (cf.
 ```bash
 npm install          # une seule fois
 npm run build        # construit dist/addin (le complément) et dist/renderer (le banc)
-npm test             # 139 tests
+npm test             # 140 tests
 npm run smoke        # test de fumée de bout en bout (16 vérifications)
 npm run addin:install -- --enligne   # installe le complément publié sur ce poste
+npm run excel:cache  # vide le cache d'Excel pour Mac après une publication
 ```
 
 Avant de proposer un changement : `npx tsc --noEmit -p tsconfig.json`, puis `npm test` et
@@ -267,7 +268,7 @@ Mesures de la phase 0 dans `RESULTATS-PHASE-0.md`, fonctionnement dans « La coq
 ### Scripts
 ```bash
 npm run build       # construit dist/addin (le produit) et dist/renderer (le banc)
-npm test            # tout : Office.js, synchro, tunnel, manifestes, puis l'édition (139 tests)
+npm test            # tout : Office.js, synchro, tunnel, manifestes, puis l'édition (140 tests)
 npm test -- liaison # filtre les tests d'édition par nom
 npm run smoke       # test de fumée (amorçage depuis le classeur, barre d'outils, aperçu, panneau)
 npm run serve       # sert dist/renderer sur http://localhost:8811 (banc navigateur)
@@ -282,7 +283,23 @@ npm run addin:install -- --enligne  # pose le manifeste PUBLIÉ : ni serveur loc
                     # macOS : conteneur d'Excel · Windows : clé WEF\Developer du Registre
 npm run addin:serve   # sert dist/addin en HTTPS sur https://localhost:3000
 npm run addin:manifeste -- https://hote/chemin   # manifeste de production (voir DIFFUSION.md)
+npm run excel:cache   # vide le cache d'Excel pour Mac (-- --strict : refuse si Excel est ouvert)
 ```
+
+**Après avoir publié, vider le cache d'Excel** (`scripts/vider-cache-excel.mjs`). Les bundles JS
+portent une empreinte dans leur nom et se rechargent seuls ; **les pages HTML, les styles et le
+manifeste, non** — Excel peut servir l'ancienne page longtemps. Le script vide le cache HTTP du
+conteneur d'Excel, ceux de WebKit et le cache des compléments d'Office.
+- **Il ne touche jamais `Data/Documents/wef/`**, qui porte le manifeste chargé de côté :
+  l'effacer désinstallerait le complément du poste. C'est le seul dossier « wef » qui ne soit pas
+  un cache, et rien ne l'en distingue que son chemin — d'où le garde-fou `estUnCache()` et
+  `tests/cache-excel.test.js`, qui l'éprouve (mutation vérifiée : un `startsWith` trop large fait
+  échouer le test).
+- Le module s'importe **sans rien effacer** : `main()` n'est appelée que si le script est lancé
+  directement. Un module qui agirait au chargement viderait le cache rien qu'à être éprouvé.
+- Excel ouvert : le cache est vidé quand même, mais il faut **quitter et rouvrir** Excel pour que
+  ça compte. Et GitHub Pages garde les pages HTML ~10 min : vider dans la minute qui suit une
+  publication peut ramener l'ancienne page.
 Avant de proposer un changement : `npx tsc --noEmit -p tsconfig.json`, `npm test`, `npm run smoke`.
 
 **Il n'y a plus de commande d'empaquetage.** Livrer, c'est publier le site du complément :

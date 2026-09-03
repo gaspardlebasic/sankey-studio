@@ -86,6 +86,10 @@ Deux cas, et la différence compte :
 | Le **code** (renderer, pont, styles) | Pousser sur `main`. Le workflow republie ; les bundles sont hachés, Excel prend la nouvelle version au rechargement du volet. Rien à refaire côté administration |
 | Le **manifeste** (nom, icônes, bouton de ruban, adresse) | Monter `version` dans `package.json`, pousser, puis **re-téléverser** au centre d'administration. Office ne recharge un manifeste déployé que si `<Version>` a changé — publier sans monter la version, c'est publier pour personne |
 
+**Voir la nouvelle version sur son propre poste** : `npm run excel:cache` vide le cache d'Excel
+pour Mac (cache HTTP du conteneur, WebKit, cache des compléments d'Office ; jamais le manifeste
+chargé de côté). Quitter puis rouvrir Excel ensuite — un Excel ouvert garde sa page en mémoire.
+
 **Un délai à connaître** : GitHub Pages sert les pages HTML avec un cache de ~10 minutes. Juste
 après une publication, le volet et la fenêtre d'édition peuvent donc être momentanément de deux
 versions différentes. Ce cas est prévu : la fenêtre affiche « Le volet et cette fenêtre ne sont
