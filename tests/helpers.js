@@ -200,6 +200,14 @@ const cocher = async (nomCarte, label) => {
     f.querySelector('input').click();
     await sleep(140);
 };
+/** Presse une bascule du groupe « Style » d'une carte ([G], [i], [AA]). */
+const basculer = async (nomCarte, titre) => {
+  const c = await carteDuPanneau(nomCarte);
+  const b = [...c.querySelectorAll('.style-toggle')].find(x => x.title === titre);
+  if (!b) throw new Error('bascule introuvable : ' + titre);
+  b.click();
+  await sleep(140);
+};
 /** Renseigne un champ (nombre, texte ou liste) d'une carte. */
 const reglerCarte = async (nomCarte, label, valeur) => {
     const c = await carteDuPanneau(nomCarte);

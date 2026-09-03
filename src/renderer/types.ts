@@ -65,13 +65,35 @@ export interface NodeOutline {
     intensity: number;
 }
 
-/** Police propre à un type de nœud. `weight` : 300 fine … 700 grasse. */
-export interface NodeTypeFont {
+/**
+ * Réglages de police d'un texte du diagramme — **les mêmes partout** où le
+ * choix se pose : étiquettes des nœuds, polices propres aux types, titres de
+ * colonnes, noms de couloirs, noms de filières, valeurs des liens. Un seul jeu
+ * de champs, donc un seul bloc de contrôles dans le panneau.
+ *
+ * `weight` remplace l'ancien booléen `bold` : la graisse se choisit de « fine »
+ * à « grasse » (300 … 700), et la bascule [G] du panneau n'en est qu'un
+ * raccourci. `uppercase` n'affecte que l'**affichage** : le nom du nœud, le
+ * titre de la colonne et le classeur gardent leur casse d'origine.
+ */
+export interface TextStyle {
     fontFamily: string;
     fontSize: number;
     fontColor: string;
-    weight: number;
+    weight: number; // 300 fine … 700 grasse
     italic: boolean;
+    uppercase: boolean; // affiché tout en capitales (les données ne changent pas)
+}
+
+/** Police propre à un type de nœud : le même jeu de réglages que partout. */
+export type NodeTypeFont = TextStyle;
+
+/** Texte tel qu'il doit s'afficher, mis en capitales si le style le demande. */
+export function texteAffiche(texte: string, s: { uppercase?: boolean } | null | undefined): string {
+    const t = texte == null ? "" : String(texte);
+    // Locale explicite : sans elle, un « i » turc remonterait en « İ » sur un
+    // poste réglé en turc, et le titre d'une colonne changerait de forme.
+    return s && s.uppercase ? t.toLocaleUpperCase("fr") : t;
 }
 
 /**
@@ -150,8 +172,9 @@ export interface SankeyOptions {
         fontColor: string;
         fontFamily: string;
         fontSize: number;
-        bold: boolean;
+        weight: number;
         italic: boolean;
+        uppercase: boolean;
         showValue: boolean;
         position: NodeLabelPosition;
         showBackground: boolean;
@@ -166,8 +189,9 @@ export interface SankeyOptions {
         backgroundColor: string;
         fontFamily: string;
         fontSize: number;
-        bold: boolean;
+        weight: number;
         italic: boolean;
+        uppercase: boolean;
         marginTop: number;
         marginBottom: number;
     };
@@ -177,8 +201,9 @@ export interface SankeyOptions {
         fontColor: string;
         fontFamily: string;
         fontSize: number;
-        bold: boolean;
+        weight: number;
         italic: boolean;
+        uppercase: boolean;
     };
     /** Marges extérieures du graphique (aperçu et export). */
     chart: {
@@ -199,8 +224,9 @@ export interface SankeyOptions {
         fontColor: string;
         fontFamily: string;
         fontSize: number;
-        bold: boolean;
+        weight: number;
         italic: boolean;
+        uppercase: boolean;
     };
     /** Empilement d'un Sankey par filière, avec le nom de la filière en titre. */
     filieres: {
@@ -214,8 +240,9 @@ export interface SankeyOptions {
         fontColor: string;
         fontFamily: string;
         fontSize: number;
-        bold: boolean;
+        weight: number;
         italic: boolean;
+        uppercase: boolean;
     };
 }
 
@@ -248,8 +275,9 @@ export function defaultOptions(): SankeyOptions {
             fontColor: "#000000",
             fontFamily: FONT,
             fontSize: 12,
-            bold: false,
+            weight: 400,
             italic: false,
+            uppercase: false,
             showValue: false,
             position: "cote",
             showBackground: false,
@@ -264,8 +292,9 @@ export function defaultOptions(): SankeyOptions {
             backgroundColor: "#000000",
             fontFamily: FONT,
             fontSize: 13,
-            bold: true,
+            weight: 700,
             italic: false,
+            uppercase: false,
             marginTop: 4,
             marginBottom: 10
         },
@@ -275,8 +304,9 @@ export function defaultOptions(): SankeyOptions {
             fontColor: "#000000",
             fontFamily: FONT,
             fontSize: 10,
-            bold: false,
-            italic: false
+            weight: 400,
+            italic: false,
+            uppercase: false
         },
         chart: {
             marginTop: 0,
@@ -289,8 +319,9 @@ export function defaultOptions(): SankeyOptions {
             fontColor: "#6b6b6b",
             fontFamily: FONT,
             fontSize: 12,
-            bold: false,
-            italic: false
+            weight: 400,
+            italic: false,
+            uppercase: false
         },
         filieres: {
             split: false,
@@ -302,8 +333,9 @@ export function defaultOptions(): SankeyOptions {
             fontColor: "#000000",
             fontFamily: FONT,
             fontSize: 16,
-            bold: true,
-            italic: false
+            weight: 700,
+            italic: false,
+            uppercase: false
         }
     };
 }

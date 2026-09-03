@@ -5,7 +5,7 @@ import { select } from "d3-selection";
 import { sankey } from "d3-sankey";
 import {
     FlowModel, SankeyOptions, NodeKind, NodeTypeStyle, NodeTypeFont, NodeOutline,
-    NodeLabelPosition, NODE_LABEL_POSITIONS, kindOf, defaultTypeStyle
+    NodeLabelPosition, NODE_LABEL_POSITIONS, kindOf, defaultTypeStyle, texteAffiche
 } from "./types";
 
 interface ENode {
@@ -97,8 +97,9 @@ export function policeDuType(opt: SankeyOptions, kind: NodeKind): NodeTypeFont {
         fontFamily: NL.fontFamily,
         fontSize: NL.fontSize,
         fontColor: NL.fontColor,
-        weight: NL.bold ? 700 : 400,
-        italic: NL.italic
+        weight: typeof NL.weight === "number" ? NL.weight : 400,
+        italic: NL.italic,
+        uppercase: !!NL.uppercase
     };
 }
 
@@ -314,9 +315,9 @@ export function renderSankeyGroups(
                 .attr("fill", F.fontColor)
                 .style("font-family", F.fontFamily)
                 .style("font-size", taille + "px")
-                .style("font-weight", F.bold ? "700" : "400")
+                .style("font-weight", String(F.weight))
                 .style("font-style", F.italic ? "italic" : "normal")
-                .text(g.nom || "(sans filière)");
+                .text(texteAffiche(g.nom || "(sans filière)", F));
             y += hauteurTitre;
         }
         const bloc = svg.append("g").attr("transform", `translate(0,${y})`);
@@ -860,14 +861,21 @@ function drawSankey(
        chevaucher le premier nœud et la barre des entêtes de colonnes. */
     const couloirsModele = Array.from(new Set(model.nodes.map(n => laneOf(n))))
         .sort((a, b) => a - b);
+    /* Le nom d'un couloir sert deux fois — à mesurer la gouttière et à la
+       peindre : la casse s'applique ici, à la source, pour que la mesure porte
+       sur le texte réellement affiché. */
     const nomCouloir = (l: number) =>
-        (opt.lanes.showTitles && opt.lanes.titles && opt.lanes.titles[String(l)]) || "";
+        texteAffiche(
+            (opt.lanes.showTitles && opt.lanes.titles && opt.lanes.titles[String(l)]) || "",
+            opt.lanes
+        );
     const tailleCouloir = clamp(opt.lanes.fontSize, 4, 60);
     const gouttiere =
         couloirsModele.length > 1
             ? couloirsModele.reduce(
                 (m, l) => Math.max(m, nomCouloir(l)
-                    ? estimateTextWidth(nomCouloir(l), tailleCouloir, opt.lanes.bold) + 14
+                    ? estimateTextWidth(nomCouloir(l), tailleCouloir,
+                        opt.lanes.weight >= 600, opt.lanes.uppercase) + 14
                     : 0),
                 0
             )
@@ -951,7 +959,7 @@ function drawSankey(
                 .attr("fill", C.fontColor)
                 .style("font-family", C.fontFamily)
                 .style("font-size", tailleCouloir + "px")
-                .style("font-weight", C.bold ? "700" : "400")
+                .style("font-weight", String(C.weight))
                 .style("font-style", C.italic ? "italic" : "normal")
                 .text(nom);
         });
@@ -1101,13 +1109,13 @@ function drawSankey(
             .attr("fill", V.fontColor)
             .style("font-family", V.fontFamily)
             .style("font-size", vfs + "px")
-            .style("font-weight", V.bold ? "bold" : "normal")
+            .style("font-weight", String(V.weight))
             .style("font-style", V.italic ? "italic" : "normal")
             .style("pointer-events", "none")
             .text((d: ELink) => {
                 const unit = (d.unit || fallbackUnit).trim();
                 const v = formatNumber(d.value);
-                return unit ? `${v} ${unit}` : v;
+                return texteAffiche(unit ? `${v} ${unit}` : v, V);
             });
     }
 
@@ -1133,12 +1141,14 @@ function drawSankey(
             const position = positionParType[d.kind];
             const fs = clamp(police.fontSize, 4, 60);
             const lineHeight = fs * 1.2;
-            const labelText = NL.showValue
-                ? `${d.name} (${formatNumber(d.value ?? 0)})`
-                : d.name;
+            const labelText = texteAffiche(
+                NL.showValue ? `${d.name} (${formatNumber(d.value ?? 0)})` : d.name,
+                police
+            );
             const lines = NL.wrap ? wrapText(labelText, maxChars) : [labelText];
             const maxLineW = Math.max(
-                ...lines.map(ln => estimateTextWidth(ln, fs, police.weight >= 600))
+                ...lines.map(ln =>
+                    estimateTextWidth(ln, fs, police.weight >= 600, police.uppercase))
             );
             const centerY = ((d.y0 ?? 0) + (d.y1 ?? 0)) / 2;
             const nodeCenterX = ((d.x0 ?? 0) + (d.x1 ?? 0)) / 2;
@@ -1225,7 +1235,9 @@ function drawSankey(
         const padX = 8;
         titleByLayer.forEach((title, layer) => {
             const nodeCenterX = axeColonne(layer);
-            const textW = estimateTextWidth(title, headerFontSize, H.bold);
+            const titre = texteAffiche(title, H);
+            const textW = estimateTextWidth(titre, headerFontSize,
+                H.weight >= 600, H.uppercase);
             const rectW = textW + padX * 2;
             const rectX = clamp(nodeCenterX - rectW / 2, 0, Math.max(0, width - rectW));
             const g = gHeaders.append("g");
@@ -1244,9 +1256,9 @@ function drawSankey(
                 .attr("fill", H.fontColor)
                 .style("font-family", H.fontFamily)
                 .style("font-size", headerFontSize + "px")
-                .style("font-weight", H.bold ? "bold" : "normal")
+                .style("font-weight", String(H.weight))
                 .style("font-style", H.italic ? "italic" : "normal")
-                .text(title);
+                .text(titre);
         });
     }
     return echelleObtenue;
@@ -1357,8 +1369,16 @@ function formatNumber(v: number): string {
     return v.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
 }
 
-function estimateTextWidth(text: string, fontSize: number, bold: boolean): number {
-    return text.length * fontSize * (bold ? 0.62 : 0.55);
+/**
+ * Largeur approchée d'un texte DÉJÀ mis en forme : on lui passe la chaîne telle
+ * qu'elle sera peinte (capitales comprises). `majuscules` ne dit donc pas quoi
+ * transformer, mais que ces glyphes-là sont des capitales — plus larges d'environ
+ * un dixième que les bas-de-casse à nombre de signes égal.
+ */
+function estimateTextWidth(
+    text: string, fontSize: number, gras: boolean, majuscules = false
+): number {
+    return text.length * fontSize * (gras ? 0.62 : 0.55) * (majuscules ? 1.08 : 1);
 }
 
 export function wrapText(text: string, maxChars: number): string[] {

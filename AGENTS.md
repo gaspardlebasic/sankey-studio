@@ -13,7 +13,7 @@ d'Excel ont été retirés. Electron ne subsiste que comme **banc d'essai** (cf.
 ```bash
 npm install          # une seule fois
 npm run build        # construit dist/addin (le complément) et dist/renderer (le banc)
-npm test             # 128 tests
+npm test             # 139 tests
 npm run smoke        # test de fumée de bout en bout (16 vérifications)
 npm run addin:install -- --enligne   # installe le complément publié sur ce poste
 ```
@@ -267,7 +267,7 @@ Mesures de la phase 0 dans `RESULTATS-PHASE-0.md`, fonctionnement dans « La coq
 ### Scripts
 ```bash
 npm run build       # construit dist/addin (le produit) et dist/renderer (le banc)
-npm test            # tout : Office.js, synchro, tunnel, manifestes, puis l'édition (128 tests)
+npm test            # tout : Office.js, synchro, tunnel, manifestes, puis l'édition (139 tests)
 npm test -- liaison # filtre les tests d'édition par nom
 npm run smoke       # test de fumée (amorçage depuis le classeur, barre d'outils, aperçu, panneau)
 npm run serve       # sert dist/renderer sur http://localhost:8811 (banc navigateur)
@@ -378,8 +378,30 @@ un poste, c'est `npm run addin:install -- --enligne`.
   - **Deux cartes d'apparence, une par type** (`TITRES_TYPES`) et non une seule : une carte
     unique porterait deux fois « Largeur », « Contour »… — indistinguables pour l'utilisatrice
     comme pour les tests, qui repèrent les champs par leur intitulé.
-  - La vue d'édition reprend la **graisse et l'italique** du type, pas sa taille : les boîtes y
-    sont de gabarit fixe (`nodeH`, `wrapText` à 18 caractères).
+  - La vue d'édition reprend la **graisse, l'italique et la casse** du type, pas sa taille :
+    les boîtes y sont de gabarit fixe (`nodeH`, `wrapText` à 18 caractères). Les capitales ne
+    changent pas la découpe des lignes — elle se compte en signes — ni le nom du nœud, que le
+    double-clic rouvre tel qu'il est écrit dans le classeur.
+- **Un seul bloc de police, partout** (`TextStyle`, `fontControls`). Partout où le choix d'une
+  police se pose — étiquettes des nœuds, polices propres aux types, titres de colonnes, noms de
+  couloirs, noms de filières, valeurs des liens — ce sont les **mêmes** champs : police, graisse,
+  taille, couleur, puis les bascules **[G] [i] [AA]**. Avant, les cartes des types offraient la
+  graisse fine que les autres n'avaient pas et les autres offraient les bascules que les types
+  n'avaient pas.
+  - **`weight` (300…700) a remplacé le booléen `bold`** : la bascule [G] n'en est qu'un
+    raccourci (700 / 400), et les deux commandes se remettent mutuellement en accord **sans
+    reconstruire le panneau** — un panneau rebâti ferait perdre le focus et replierait les
+    cartes ouvertes. D'où le `sync()` porté par chaque bascule.
+  - **Un projet écrit avant** arrive avec `bold` et sans `weight` ni `uppercase` :
+    `normaliserPolice` traduit l'un en l'autre à la relecture (`Object.assign` ne fusionne que
+    le premier niveau, une carte relue arrive donc telle qu'elle a été écrite). Sans cette
+    traduction, un titre gras reviendrait maigre et `String(undefined)` atterrirait dans le SVG.
+  - **`uppercase` n'est qu'un affichage** : le nom du nœud, l'intitulé de colonne et le classeur
+    gardent leur casse. La mise en capitales est faite **en JavaScript** (`texteAffiche`), pas
+    par `text-transform` : le moteur mesure lui-même la largeur des textes (`estimateTextWidth`)
+    pour dimensionner la barre d'un titre de colonne et la gouttière des couloirs, et une
+    transformation faite par le navigateur seul lui échapperait. Une capitale étant plus large,
+    l'estimation prend un facteur 1,08.
 - **Filières empilées : grille de colonnes commune.** `renderSankeyGroups` calcule UNE
   correspondance colonne -> couche (`denseColonnes`) et UN nombre de couches pour l'ensemble des
   diagrammes, puis la passe à chaque `drawSankey`. Sans cela chacun étale ses propres colonnes sur

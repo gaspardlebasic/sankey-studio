@@ -288,6 +288,8 @@ button.linklike:hover { color: var(--dark); }
     transition: background .25s var(--ease), color .25s var(--ease), border-color .25s var(--ease); }
 .style-toggle.bold { font-weight: 700; }
 .style-toggle.italic { font-style: italic; font-weight: 600; }
+/* [AA] : deux capitales dans la même largeur de bouton que [G] et [i] */
+.style-toggle.upper { font-size: 11px; font-weight: 700; letter-spacing: .04em; }
 .style-toggle:hover { border-color: var(--dark); }
 .style-toggle.active { background: var(--dark); border-color: var(--dark); color: var(--bright); }
 

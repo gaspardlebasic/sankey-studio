@@ -91,7 +91,7 @@ c'est alors le seul chemin.
 
 ```bash
 npm run build   # dist/addin (le produit) + dist/renderer (le banc d'essai)
-npm test        # 128 tests
+npm test        # 139 tests
 npm run smoke   # test de fumée de bout en bout
 npm run serve   # bancs d'essai dans un navigateur, sur http://localhost:8811
 ```

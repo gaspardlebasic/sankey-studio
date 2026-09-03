@@ -126,10 +126,11 @@ const SCENARIO = `(async () => {
   nuance.click(); await sleep(80);
   out.couleur_appliquee = nodeByName('Lait').color === hex && !document.querySelector('.cp-pop');
 
-  // --- bascules gras / italique
+  // --- bascules gras / italique / majuscules, dans cet ordre
   const gi = [...document.querySelectorAll('.style-toggle')];
-  out.bascules_gras_italique = gi.length >= 2
-      && gi[0].classList.contains('bold') && gi[1].classList.contains('italic');
+  out.bascules_style = gi.length >= 3
+      && gi[0].classList.contains('bold') && gi[1].classList.contains('italic')
+      && gi[2].classList.contains('upper');
 
   // --- le panneau ne montre plus de section « Synchronisation Excel »
   out.pas_de_section_synchro = ![...document.querySelectorAll('#sidebar h3, #sidebar h2')]

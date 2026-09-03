@@ -4,7 +4,7 @@
 import {
     FlowModel, FlowNode, FlowLink, SankeyOptions, defaultOptions,
     NodeKind, NodeTypeStyle, NodeLabelPosition, NODE_KINDS, NODE_LABEL_POSITIONS,
-    kindOf, defaultTypeStyle
+    kindOf, defaultTypeStyle, TextStyle, texteAffiche
 } from "./types";
 import {
     renderSankey, renderSankeyGroups, wrapText, policeDuType, positionDuType
@@ -687,9 +687,12 @@ function renderEditor(): void {
         label.setAttribute("class", "node-label");
         label.setAttribute("x", String(NODE_W / 2));
         label.setAttribute("text-anchor", "middle");
-        /* La vue d'édition reprend la GRAISSE et l'ITALIQUE du type, pas sa
-           taille : les boîtes sont ici de gabarit fixe (nodeH, wrapText à 18
-           caractères) et une autre taille ferait déborder le texte. */
+        /* La vue d'édition reprend la GRAISSE, l'ITALIQUE et la CASSE du type,
+           pas sa taille : les boîtes sont ici de gabarit fixe (nodeH, wrapText à
+           18 caractères) et une autre taille ferait déborder le texte. Les
+           capitales, elles, ne changent rien à la découpe des lignes — elle se
+           compte en signes — ni au nom du nœud, que le double-clic rouvre tel
+           qu'il est écrit dans le classeur. */
         const policeType = policeDuType(options, kindOf(n));
         label.style.fontWeight = String(policeType.weight);
         label.style.fontStyle = policeType.italic ? "italic" : "normal";
@@ -700,7 +703,7 @@ function renderEditor(): void {
             const ts = document.createElementNS(SVGNS, "tspan");
             ts.setAttribute("x", String(NODE_W / 2));
             ts.setAttribute("y", String(hautTexte + i * LABEL_LINE_H + 11));
-            ts.textContent = ligne;
+            ts.textContent = texteAffiche(ligne, policeType);
             label.appendChild(ts);
         });
         g.appendChild(label);
@@ -1577,51 +1580,81 @@ const FONT_WEIGHTS: [string, string][] = [
     ["700", "Grasse"]
 ];
 
-/** Ajoute les contrôles de police (police, taille, couleur, gras, italique). */
-function fontControls(
-    parent: HTMLElement,
-    o: { fontFamily: string; fontSize: number; fontColor: string; bold: boolean; italic: boolean },
-    rr: () => void
-): void {
+/**
+ * Bloc de choix de police — **le même partout** où le choix se pose : police,
+ * graisse, taille, couleur, puis les bascules de style [G] [i] [AA].
+ *
+ * Un seul bloc, donc un seul jeu d'options : les cartes des types de nœuds
+ * offraient la graisse fine que les autres n'avaient pas, les autres offraient
+ * les bascules que les types n'avaient pas. Tout le monde a maintenant les deux
+ * — et les capitales, qui n'existaient nulle part.
+ */
+function fontControls(parent: HTMLElement, o: TextStyle, rr: () => void): void {
     parent.appendChild(selectField("Police", o.fontFamily, FONT_FAMILIES,
         v => { o.fontFamily = v; rr(); }));
+
+    /* La graisse se règle de deux façons — la liste (quatre paliers) et la
+       bascule [G] (le raccourci de Word). Ce sont deux vues du MÊME `weight` :
+       chacune remet l'autre en accord, sinon la liste afficherait « Normale »
+       sur un texte que [G] vient de mettre en gras. */
+    let sel: HTMLSelectElement | null = null;
+    const gras = toggleBtn("G", "Gras", "bold",
+        () => o.weight >= 600,
+        v => { o.weight = v ? 700 : 400; if (sel) sel.value = String(o.weight); },
+        rr);
+    const champGraisse = selectField("Graisse", String(o.weight), FONT_WEIGHTS, v => {
+        o.weight = parseInt(v, 10);
+        gras.sync();
+        rr();
+    });
+    sel = champGraisse.querySelector("select");
+    parent.appendChild(champGraisse);
+
     parent.appendChild(numberField("Taille", o.fontSize, v => { o.fontSize = v; rr(); }));
     parent.appendChild(colorField("Couleur du texte", o.fontColor, v => { o.fontColor = v; rr(); }));
-    parent.appendChild(styleToggles(o, rr));
-}
 
-/** Gras / italique compactés en deux bascules [G] [i], comme dans Word. */
-function styleToggles(
-    o: { bold: boolean; italic: boolean },
-    rr: () => void
-): HTMLElement {
     const group = document.createElement("div");
     group.className = "style-toggles";
-    const mk = (
-        label: string,
-        title: string,
-        cls: string,
-        get: () => boolean,
-        set: (v: boolean) => void
-    ) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "style-toggle " + cls;
-        b.textContent = label;
-        b.title = title;
-        b.setAttribute("aria-pressed", String(get()));
+    group.appendChild(gras);
+    group.appendChild(toggleBtn("i", "Italique", "italic",
+        () => o.italic, v => { o.italic = v; }, rr));
+    group.appendChild(toggleBtn("AA", "Majuscules", "upper",
+        () => o.uppercase, v => { o.uppercase = v; }, rr));
+    parent.appendChild(field("Style", group));
+}
+
+/**
+ * Bascule compacte du groupe « Style », comme dans Word. Elle porte son propre
+ * `sync()` : la graisse ayant deux commandes, l'une doit pouvoir remettre
+ * l'autre en accord sans reconstruire le panneau — ce qui ferait perdre le
+ * focus et replier ce que l'utilisatrice vient d'ouvrir.
+ */
+type BasculeStyle = HTMLButtonElement & { sync: () => void };
+
+function toggleBtn(
+    label: string,
+    title: string,
+    cls: string,
+    get: () => boolean,
+    set: (v: boolean) => void,
+    rr: () => void
+): BasculeStyle {
+    const b = document.createElement("button") as BasculeStyle;
+    b.type = "button";
+    b.className = "style-toggle " + cls;
+    b.textContent = label;
+    b.title = title;
+    b.sync = () => {
         b.classList.toggle("active", get());
-        b.addEventListener("click", () => {
-            set(!get());
-            b.classList.toggle("active", get());
-            b.setAttribute("aria-pressed", String(get()));
-            rr();
-        });
-        group.appendChild(b);
+        b.setAttribute("aria-pressed", String(get()));
     };
-    mk("G", "Gras", "bold", () => o.bold, v => { o.bold = v; });
-    mk("i", "Italique", "italic", () => o.italic, v => { o.italic = v; });
-    return field("Style", group);
+    b.sync();
+    b.addEventListener("click", () => {
+        set(!get());
+        b.sync();
+        rr();
+    });
+    return b;
 }
 
 function buildAppearance(): DocumentFragment {
@@ -1795,17 +1828,7 @@ function buildAppearance(): DocumentFragment {
             rr();
             buildSidebar();
         }));
-        if (t.font) {
-            const f = t.font;
-            b.appendChild(selectField("Police", f.fontFamily, FONT_FAMILIES,
-                v => { f.fontFamily = v; rr(); }));
-            b.appendChild(selectField("Graisse", String(f.weight), FONT_WEIGHTS,
-                v => { f.weight = parseInt(v, 10); rr(); }));
-            b.appendChild(numberField("Taille", f.fontSize, v => { f.fontSize = v; rr(); }));
-            b.appendChild(colorField("Couleur du texte", f.fontColor,
-                v => { f.fontColor = v; rr(); }));
-            b.appendChild(checkField("Italique", f.italic, v => { f.italic = v; rr(); }));
-        }
+        if (t.font) fontControls(b, t.font, rr);
 
         /* Position de l'étiquette : un type peut décoller ses noms des boîtes
            (« En dessous ») pendant que l'autre les garde dessus (« Centré »). */
@@ -2204,6 +2227,7 @@ function applyProject(p: ProjectFile): void {
     });
     options = Object.assign(defaultOptions(), p.options);
     normaliserTypesDeNoeuds();
+    normaliserPolices();
     normaliserLiens();
     // Le compteur du fichier n'est jamais cru sur parole : on prend le plus grand
     // entre lui et le maximum réellement utilisé.
@@ -2229,6 +2253,44 @@ function normaliserLiens(): void {
         L.traversee = defaultOptions().links.traversee;
     }
 }
+/**
+ * Complète les réglages de police d'un projet écrit avant la graisse fine et
+ * les capitales. `Object.assign` ne fusionne que le premier niveau : une carte
+ * relue arrive telle qu'elle a été écrite, avec l'ancien booléen `bold` et sans
+ * `weight` ni `uppercase`. Sans cette traduction, un titre écrit en gras
+ * reviendrait maigre et `String(undefined)` atterrirait dans le SVG.
+ */
+function normaliserPolice(o: Record<string, unknown> | null | undefined, defaut: TextStyle): void {
+    if (!o) return;
+    if (typeof o.weight !== "number") {
+        o.weight = typeof o.bold === "boolean" ? (o.bold ? 700 : 400) : defaut.weight;
+    }
+    delete o.bold; // une seule source de vérité pour la graisse
+    if (typeof o.uppercase !== "boolean") o.uppercase = false;
+    if (typeof o.italic !== "boolean") o.italic = defaut.italic;
+    if (typeof o.fontFamily !== "string") o.fontFamily = defaut.fontFamily;
+    if (typeof o.fontSize !== "number") o.fontSize = defaut.fontSize;
+    if (typeof o.fontColor !== "string") o.fontColor = defaut.fontColor;
+}
+
+/** Toutes les polices du document, celles des types de nœuds comprises. */
+function normaliserPolices(): void {
+    const d = defaultOptions();
+    (["nodeLabels", "columnHeaders", "linkValueLabels", "lanes", "filieres"] as const)
+        .forEach(cle => {
+            normaliserPolice(
+                options[cle] as unknown as Record<string, unknown>,
+                d[cle] as unknown as TextStyle
+            );
+        });
+    NODE_KINDS.forEach(([kind]) => {
+        normaliserPolice(
+            options.nodeTypes[kind].font as unknown as Record<string, unknown>,
+            options.nodeLabels as unknown as TextStyle
+        );
+    });
+}
+
 /**
  * Complète les réglages par type de nœud : `Object.assign` ne fusionne que le
  * premier niveau, un projet écrit avant (ou pendant) l'arrivée des types peut
@@ -2328,6 +2390,7 @@ function appliquerApparence(json: string): void {
     const a = JSON.parse(json) as ProjectAppearance;
     options = Object.assign(defaultOptions(), a.options);
     normaliserTypesDeNoeuds();
+    normaliserPolices();
     normaliserLiens();
     idCounter = Math.max(a.idCounter || 0, idCounter);
     hiddenFilieres = new Set(a.hiddenFilieres || []);

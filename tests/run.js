@@ -944,7 +944,7 @@ test("types : une police propre au type s'applique à l'aperçu et à l'édition
     await sleep(120);
     await cocher('Industries / étapes', 'Police propre à ce type');
     await reglerCarte('Industries / étapes', 'Graisse', '300');
-    await cocher('Industries / étapes', 'Italique');
+    await basculer('Industries / étapes', 'Italique');
     await cocher('Produits / commodités', 'Police propre à ce type');
     await reglerCarte('Produits / commodités', 'Graisse', '700');
     // Vue d'édition : la graisse et l'italique du type habillent le nom du nœud.
@@ -972,6 +972,151 @@ test("types : une police propre au type s'applique à l'aperçu et à l'édition
     "la vue d'édition montre la même distinction");
   egal(r.edition.produit, { poids: "700", italique: "normal" },
     "idem pour les produits");
+});
+
+test("majuscules : la bascule [AA] met en capitales l'affichage, pas les données", "complexe", async p => {
+  const r = await p(`
+    const m = T.model();
+    const vis = m.nodes.filter(n => !T.hidden().includes(n.filiere));
+    const cible = vis[0];
+    // Un intitulé de colonne connu, en minuscules, pour toute la colonne visée.
+    vis.filter(n => n.column === cible.column).forEach(n => { n.title = 'amont agricole'; });
+    T.refresh();
+    await sleep(140);
+
+    const titreApercu = () => [...document.querySelectorAll('#canvas text')]
+      .map(t => t.textContent).find(t => /amont agricole/i.test(t)) || null;
+    const etiquetteApercu = () => {
+      const t = document.querySelector('#canvas text[data-label-for="' + cible.id + '"]');
+      return t ? t.textContent : null;
+    };
+
+    // Le nom est découpé en lignes dans la boîte d'édition : on compare donc
+    // l'étiquette d'édition à elle-même, avant et après la bascule.
+    const etiquetteEdition = () => elOf(cible.id).querySelector('.node-label').textContent;
+    const editionAvant = etiquetteEdition();
+
+    await versApercu();
+    const avant = { titre: titreApercu(), etiquette: etiquetteApercu() };
+    await versEdition();
+
+    await basculer('Titres de colonnes', 'Majuscules');
+    await basculer('Étiquettes des nœuds', 'Majuscules');
+    // La vue d'édition suit elle aussi la casse des étiquettes.
+    const edition = { avant: editionAvant, apres: etiquetteEdition() };
+
+    await versApercu();
+    const apres = { titre: titreApercu(), etiquette: etiquetteApercu() };
+    await versEdition();
+
+    return { avant, apres, edition,
+             nomModele: byId(cible.id).name, titreModele: byId(cible.id).title };
+  `);
+  egal(r.avant.titre, "amont agricole", "au départ, le titre de colonne garde sa casse");
+  egal(r.apres.titre, "AMONT AGRICOLE", "la bascule met le titre de colonne en capitales");
+  egal(r.apres.etiquette, r.avant.etiquette.toLocaleUpperCase("fr"),
+    "l'étiquette du nœud passe elle aussi en capitales");
+  egal(r.edition.apres, r.edition.avant.toLocaleUpperCase("fr"),
+    "la vue d'édition passe elle aussi en capitales");
+  egal(r.titreModele, "amont agricole", "le modèle garde le titre tel qu'il est écrit");
+  egal(r.nomModele, r.avant.etiquette, "le nom du nœud n'est pas réécrit dans le modèle");
+});
+
+test("police : un projet d'avant la graisse revient tel qu'il a été écrit", "complexe", async p => {
+  const r = await p(`
+    /* Apparence « d'avant » : l'ancien booléen bold, ni weight ni uppercase.
+       Les deux valeurs sont prises À L'ENVERS des défauts (titres NON gras,
+       étiquettes grasses) : une traduction qui se contenterait de retomber sur
+       le défaut passerait inaperçue autrement. */
+    T.loadProject({
+      version: 1, idCounter: 999, hiddenFilieres: [],
+      model: T.model(),
+      options: {
+        columnHeaders: { show: true, fontColor: '#ffffff', backgroundColor: '#000000',
+                         fontFamily: 'Arial, sans-serif', fontSize: 13, bold: false,
+                         italic: false, marginTop: 4, marginBottom: 10 },
+        nodeLabels: { show: true, fontColor: '#000000', fontFamily: 'Arial, sans-serif',
+                      fontSize: 12, bold: true, italic: true, showValue: false,
+                      position: 'cote', showBackground: false, backgroundColor: '#ffffff',
+                      backgroundOpacity: 80, wrap: false, maxChars: 18 }
+      }
+    });
+    await sleep(200);
+    await versApercu();
+    const etiquette = document.querySelector('#canvas text[data-label-for]');
+    const styleEtiquette = { poids: getComputedStyle(etiquette).fontWeight,
+                             italique: getComputedStyle(etiquette).fontStyle,
+                             texte: etiquette.textContent };
+    await versEdition();
+    const c = await carteDuPanneau('Titres de colonnes');
+    const graisse = [...c.querySelectorAll('.field')]
+      .find(x => x.querySelector('span') && x.querySelector('span').textContent.trim() === 'Graisse')
+      .querySelector('select').value;
+    const gras = [...c.querySelectorAll('.style-toggle')]
+      .find(x => x.title === 'Gras').classList.contains('active');
+    const maj = [...c.querySelectorAll('.style-toggle')]
+      .find(x => x.title === 'Majuscules').classList.contains('active');
+    return { styleEtiquette, graisse, gras, maj };
+  `);
+  egal(r.graisse, "400", "un titre écrit sans gras revient en « Normale », pas au défaut");
+  attendu(!r.gras, "la bascule [G] doit être éteinte");
+  attendu(!r.maj, "les capitales sont éteintes sur un projet qui les ignore");
+  egal(r.styleEtiquette.poids, "700", "une étiquette écrite en gras revient grasse");
+  egal(r.styleEtiquette.italique, "italic", "l'italique d'origine est conservé");
+  attendu(r.styleEtiquette.texte === r.styleEtiquette.texte.toLocaleLowerCase("fr")
+    || /[a-zà-ÿ]/.test(r.styleEtiquette.texte),
+    "l'étiquette n'est pas passée en capitales toute seule");
+});
+
+test("majuscules : chaque type de nœud a la sienne", "complexe", async p => {
+  const r = await p(`
+    const m = T.model();
+    const vis = m.nodes.filter(n => !T.hidden().includes(n.filiere));
+    vis.forEach((n, i) => { n.kind = i % 2 ? 'industrie' : 'produit'; });
+    T.refresh();
+    await sleep(140);
+    await cocher('Industries / étapes', 'Police propre à ce type');
+    await basculer('Industries / étapes', 'Majuscules');
+    await versApercu();
+    const texteDe = k => {
+      const t = [...document.querySelectorAll('#canvas text[data-kind="' + k + '"]')][0];
+      return t ? t.textContent : null;
+    };
+    const rendu = { produit: texteDe('produit'), industrie: texteDe('industrie') };
+    await versEdition();
+    const noms = {
+      produit: vis.find(n => n.kind === 'produit').name,
+      industrie: vis.find(n => n.kind === 'industrie').name
+    };
+    return { rendu, noms };
+  `);
+  egal(r.rendu.industrie, r.noms.industrie.toLocaleUpperCase("fr"),
+    "les industries passent en capitales");
+  egal(r.rendu.produit, r.noms.produit,
+    "les produits, qui n'ont pas de police propre, gardent leur casse");
+});
+
+test("police : la bascule [G] et la liste « Graisse » disent la même chose", "complexe", async p => {
+  const r = await p(`
+    const etat = async () => {
+      const c = await carteDuPanneau('Titres de colonnes');
+      const b = [...c.querySelectorAll('.style-toggle')].find(x => x.title === 'Gras');
+      const f = [...c.querySelectorAll('.field')]
+        .find(x => x.querySelector('span') && x.querySelector('span').textContent.trim() === 'Graisse');
+      return { gras: b.classList.contains('active'), graisse: f.querySelector('select').value };
+    };
+    const depart = await etat();
+    await basculer('Titres de colonnes', 'Gras');       // la bascule mène
+    const apresBascule = await etat();
+    await reglerCarte('Titres de colonnes', 'Graisse', '300');  // la liste mène
+    const apresListe = await etat();
+    return { depart, apresBascule, apresListe };
+  `);
+  egal(r.depart, { gras: true, graisse: "700" }, "les titres de colonnes partent en grasse");
+  egal(r.apresBascule, { gras: false, graisse: "400" },
+    "éteindre [G] ramène la liste sur « Normale »");
+  egal(r.apresListe, { gras: false, graisse: "300" },
+    "choisir « Fine » dans la liste laisse [G] éteint");
 });
 
 test("types : Excel→App applique les types du classeur, et les garde sans la colonne", "complexe", async p => {
