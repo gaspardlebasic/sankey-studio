@@ -13,7 +13,7 @@ d'Excel ont été retirés. Electron ne subsiste que comme **banc d'essai** (cf.
 ```bash
 npm install          # une seule fois
 npm run build        # construit dist/addin (le complément) et dist/renderer (le banc)
-npm test             # 140 tests
+npm test             # toutes les suites
 npm run smoke        # test de fumée de bout en bout (16 vérifications)
 npm run addin:install -- --enligne   # installe le complément publié sur ce poste
 npm run excel:cache  # vide le cache d'Excel pour Mac après une publication
@@ -268,7 +268,7 @@ Mesures de la phase 0 dans `RESULTATS-PHASE-0.md`, fonctionnement dans « La coq
 ### Scripts
 ```bash
 npm run build       # construit dist/addin (le produit) et dist/renderer (le banc)
-npm test            # tout : Office.js, synchro, tunnel, manifestes, puis l'édition (140 tests)
+npm test            # tout : Office.js, synchro, tunnel, manifestes, puis l'édition
 npm test -- liaison # filtre les tests d'édition par nom
 npm run smoke       # test de fumée (amorçage depuis le classeur, barre d'outils, aperçu, panneau)
 npm run serve       # sert dist/renderer sur http://localhost:8811 (banc navigateur)
@@ -362,6 +362,11 @@ un poste, c'est `npm run addin:install -- --enligne`.
   - Les **noms de couloirs** vivent dans `options.lanes.titles` (apparence, pas dans Excel) et
     s'affichent dans une **gouttière réservée à gauche** : posés sur le dessin, ils
     chevaucheraient le premier nœud et la barre des entêtes de colonnes.
+- **Un nœud créé est TOUJOURS un « produit »**, par quelque chemin que ce soit (`＋ Nœud`, le
+  « + » du nœud sélectionné, une ligne saisie dans Excel dont la colonne « Type » est vide).
+  Il reprenait le type du nœud sélectionné : enchaîner deux industries en créait une, en
+  silence, et la règle (« ça dépend de ce qui était sélectionné ») ne se voyait pas depuis le
+  canevas. Un défaut unique se dit en un mot et se corrige en un clic.
 - **Types de nœuds (`kind`)** : un nœud est soit un **produit / commodité** qui circule, soit une
   **industrie** — étape de transformation ou de commercialisation. Le type vit dans Excel
   (colonne « Type ») et pilote l'apparence dans l'aperçu : largeur, police, position de
@@ -452,6 +457,29 @@ un poste, c'est `npm run addin:install -- --enligne`.
   - Les tests mesurent le **recouvrement réellement peint** (`noeudsRecouverts` dans
     `tests/helpers.js`, par `isPointInFill` sur le tracé) et vérifient que le rendu « tout droit »,
     lui, recouvre bien le nœud traversé — sans quoi le test ne prouverait rien.
+- **La colonne « Valeur du flux » ne doit JAMAIS devenir une colonne calculée d'Excel.**
+  Excel transforme une colonne de tableau en *colonne calculée* dès que ses cellules portent
+  toutes la même formule : il inscrit un `calculatedColumnFormula` et **remplit lui-même toute
+  la colonne**, écrasant les valeurs. Constaté sur `Flux APS.xlsx` (AgriParis Seine) le
+  2026-09-04 : 150 liens portant tous `='Blé tendre'!$C$8`, l'affectation des données de
+  modélisation aux liens détruite, restauration par l'historique des versions.
+  - **Ce que le complément faisait** : relire ces 150 cellules comme autant de formules
+    d'utilisatrice (`collecterFormules`) et les réécrire toutes. Il **cimentait** la corruption,
+    et la recréait à la première écriture qui suivait une restauration.
+  - **Ce qu'il fait** : `colonneCalculee()` reconnaît le remplissage — *toutes* les lignes non
+    vides portent une formule, et la **même** — et ne le réémet pas. La colonne, réécrite en
+    valeurs, perd ses formules : Excel abandonne la colonne calculée et le classeur est réparé.
+    Le résultat d'écriture porte alors `colonneCalculee`.
+  - **Deux lignes concordantes suffisent, une seule non** : un diagramme naissant dont l'unique
+    lien porte une formule ne doit pas la perdre. Contrepartie assumée : deux liens qui visent
+    délibérément la même cellule perdent leur formule (leur valeur, elle, est conservée) —
+    Excel en aurait de toute façon fait une colonne calculée.
+- **Écrire une colonne, c'est écrire une plage de la HAUTEUR EXACTE des données**
+  (`colonneDuCorps`, qui part de la première cellule et redimensionne). `getColumn()` prend la
+  hauteur qu'a le tableau au moment du sync ; **Excel diffuse un tableau à une ligne sur toute
+  la plage** au lieu de se plaindre, et une seule cellule efface alors une colonne entière. Le
+  faux Office refuse désormais toute affectation mal dimensionnée (mutation vérifiée : forcer
+  la hauteur à 1 fait échouer 11 tests).
 - Un **lien est identifié par le couple (ID origine, ID destination)** — jamais de doublon.
 - **Les identifiants doivent être uniques, sans exception.** `nodeById`, le registre `nodeEls`
   et le rendu des liens travaillent par identifiant : un doublon fait raccrocher les liens au
@@ -488,6 +516,13 @@ un poste, c'est `npm run addin:install -- --enligne`.
   (barre des titres de colonnes) diffèrent d'un bloc à l'autre. `mesurerEchelle()` lance le layout
   dans un `<g>` **détaché** à deux hauteurs d'essai ; l'échelle étant affine en la hauteur, on en
   déduit la hauteur à donner à chaque bloc pour que tous partagent la même échelle.
+- **Une seule carte « Nœuds »**, qui règle la boîte *et* son étiquette. Elles en faisaient deux
+  (« Nœuds » et « Étiquettes des nœuds ») alors qu'elles décrivent un seul objet : on ne choisit
+  pas la largeur d'un nœud sans regarder le nom posé dessus, et l'aller-retour coûtait à chaque
+  essai. Ordre de lecture : la boîte, puis le nom. « Afficher » y est devenu « Afficher
+  l'étiquette », la carte portant aussi « Afficher la valeur ». Un test compte les réglages
+  (`tests/run.js`, « la carte « Nœuds » réunit la boîte et son étiquette ») : aucun ne doit
+  disparaître d'une fusion.
 - **Panneau des paramètres** : `.card-body` est une grille à 2 colonnes ; `numberField` et
   `colorField` posent la classe `half`. `buildSidebar()` reconstruit tout à chaque changement
   d'option : `card()` mémorise l'état plié/déplié par titre (`cartesOuvertes`), sinon les sections

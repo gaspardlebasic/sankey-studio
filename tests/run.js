@@ -776,6 +776,69 @@ test("types : le champ « Type » change la nature du nœud", "complexe", async 
   egal(r.industries, 1, "un seul nœud a changé de type");
 });
 
+test("types : un nouveau nœud est toujours un produit", "complexe", async p => {
+  // Le type par défaut ne doit dépendre d'AUCUN contexte. Il reprenait celui du
+  // nœud sélectionné : partir d'une industrie en créait une autre, en silence,
+  // et rien à l'écran ne disait pourquoi.
+  const r = await p(`
+    const cible = nodes().find(n => !T.hidden().includes(n.filiere));
+    await selectNode(cible.id);
+    await setField('Type', 'industrie');
+    await sleep(150);
+
+    const avant = nodes().map(n => n.id);
+    document.querySelector('#toolbar button').click();   // ＋ Nœud
+    await sleep(200);
+    const parLeBouton = nodes().find(n => !avant.includes(n.id));
+
+    // Deuxième chemin : le « + » du nœud sélectionné, qui crée un nœud DÉJÀ RELIÉ.
+    await selectNode(cible.id);
+    const avant2 = nodes().map(n => n.id);
+    await clickPlus();
+    document.querySelector('.inline-edit') && document.querySelector('.inline-edit').blur();
+    await sleep(200);
+    const parLePlus = nodes().find(n => !avant2.includes(n.id));
+
+    return {
+      source: byId(cible.id).kind,
+      bouton: parLeBouton && parLeBouton.kind,
+      plus: parLePlus && parLePlus.kind
+    };
+  `);
+  egal(r.source, "industrie", "le nœud de départ est bien une industrie");
+  egal(r.bouton, "produit", "« ＋ Nœud » crée un produit, même depuis une industrie");
+  egal(r.plus, "produit", "le « + » du nœud crée un produit lui aussi");
+});
+
+test("panneau : la carte « Nœuds » réunit la boîte et son étiquette", "complexe", async p => {
+  // Les deux cartes réglaient un seul objet. Fusionnées, aucun réglage ne doit
+  // avoir disparu au passage — c'est ce que ce test compte.
+  const r = await p(`
+    const titres = [...document.querySelectorAll('#sidebar details summary')]
+      .map(s => s.textContent.trim());
+    const c = await carteDuPanneau('Nœuds');
+    const labels = [...c.querySelectorAll('.field')]
+      .map(f => (f.querySelector('span') || f).textContent.trim());
+    return { titres, labels };
+  `);
+  egal(r.titres.filter(t => t.indexOf("Étiquettes des nœuds") >= 0).length, 0,
+       "il n'y a plus de carte « Étiquettes des nœuds » séparée");
+  egal(r.titres.filter(t => t.indexOf("Nœuds") >= 0).length, 1,
+       "une seule carte « Nœuds »");
+  // Les réglages des deux anciennes cartes, tous présents dans la nouvelle.
+  [
+    "Couleur par défaut", "Largeur des nœuds", "Espacement vertical",
+    "Afficher l'étiquette", "Position", "Afficher la valeur",
+    "Arrière-plan", "Couleur d'arrière-plan", "Opacité de l'arrière-plan (%)",
+    "Retour à la ligne", "Longueur max. par ligne"
+  ].forEach(l => {
+    if (!r.labels.some(x => x.indexOf(l) >= 0)) {
+      throw new Error("réglage perdu à la fusion : « " + l + " »\n      présents : "
+                      + JSON.stringify(r.labels));
+    }
+  });
+});
+
 test("types : sans réglage propre, la mise en page ne bouge pas d'un pixel", "complexe", async p => {
   const r = await p(`
     const releve = () => rectsApercu()
@@ -1001,7 +1064,7 @@ test("majuscules : la bascule [AA] met en capitales l'affichage, pas les donnée
     await versEdition();
 
     await basculer('Titres de colonnes', 'Majuscules');
-    await basculer('Étiquettes des nœuds', 'Majuscules');
+    await basculer('Nœuds', 'Majuscules');
     // La vue d'édition suit elle aussi la casse des étiquettes.
     const edition = { avant: editionAvant, apres: etiquetteEdition() };
 
@@ -1181,7 +1244,7 @@ test("liens : une ligne saisie dans Excel sans identifiant fait réécrire le cl
 test("étiquettes (aperçu) : « Centré » pose le nom sur le nœud, calé aux colonnes de bord",
   "complexe", async p => {
   const r = await p(`
-    await reglerCarte('Étiquettes des nœuds', 'Position', 'centre');
+    await reglerCarte('Nœuds', 'Position', 'centre');
     await versApercu();
     const rects = rectsApercu();
     const parId = new Map(etiquettesApercu().map(e => [e.id, e]));

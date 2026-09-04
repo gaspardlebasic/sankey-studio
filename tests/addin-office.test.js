@@ -632,6 +632,111 @@ await test("écriture : les références d'une formule sont ancrées ($) en la r
   ], "seules les références de cellules sont ancrées");
 });
 
+/* ------------- la colonne « Valeur du flux » ne doit pas se remplir seule ------------- */
+
+/** Quatre nœuds, trois liens, chacun avec SA formule — le cas de la vraie vie. */
+function classeurAFormulesDistinctes() {
+  return classeurType({
+    noeuds: RANGS_QUATRE,
+    liens: [
+      ["Lait", "Production bio", "Lait cru", { f: "='Blé tendre'!$C$8", v: 120 }, "t", "n1", "n2"],
+      ["Lait", "Lait cru", "Transformation", { f: "='Blé tendre'!$C$9", v: 95 }, "t", "n2", "n3"],
+      ["Lait", "Transformation", "Beurre", { f: "='Blé tendre'!$C$10", v: 30 }, "t", "n3", "n4"]
+    ]
+  });
+}
+
+await test("ajout d'un nœud : les formules distinctes de la colonne valeur sont intactes", async () => {
+  // Le cas signalé, dans sa forme saine. Ajouter un nœud réécrit tout le
+  // classeur : chaque formule doit rester sur SA ligne, et aucune ne doit se
+  // propager sur les voisines.
+  const c = classeurAFormulesDistinctes();
+  const avantLiens = JSON.stringify(c.lignesDe("Liens"));
+
+  const modele = {
+    nodes: QUATRE.concat([{
+      id: "n5", name: "Nouveau nœud", column: 4, title: "", order: 0,
+      lane: 1, kind: "produit", filiere: "Lait", color: null
+    }]),
+    links: LIENS_QUATRE
+  };
+  const r = await office.ecrireDiagramme(modele);
+  attendu(r.ok, "écriture réussie");
+  attendu(!r.colonneCalculee, "aucune colonne calculée : le classeur était sain");
+
+  const iVal = LINK_COLS.indexOf("Valeur du flux");
+  egal(c.formulesDe("Liens").map(l => l[iVal]),
+       ["='Blé tendre'!$C$8", "='Blé tendre'!$C$9", "='Blé tendre'!$C$10"],
+       "chaque formule est restée sur la ligne de SON lien");
+  egal(JSON.stringify(c.lignesDe("Liens")), avantLiens,
+       "le tableau des liens n'a pas bougé d'une cellule : le nœud ajouté ne le concerne pas");
+  egal(c.hauteurDe("Noeuds"), 5, "seul le tableau des nœuds a gagné une ligne");
+});
+
+await test("écriture : une colonne calculée d'Excel n'est pas prise pour des données", async () => {
+  // LA CAUSE RACINE. Excel transforme une colonne de tableau en « colonne
+  // calculée » dès que ses cellules portent la même formule : il la recopie
+  // alors sur TOUTES les lignes, écrasant les valeurs. Le classeur d'AgriParis
+  // Seine a fini avec 150 liens portant `='Blé tendre'!$C$8`.
+  // Relire ces cellules comme autant de formules d'utilisatrice, c'est
+  // réécrire la corruption — et la recréer après chaque restauration.
+  const c = classeurType({
+    noeuds: RANGS_QUATRE,
+    liens: [
+      ["Lait", "Production bio", "Lait cru", { f: "='Blé tendre'!$C$8", v: 42 }, "t", "n1", "n2"],
+      ["Lait", "Lait cru", "Transformation", { f: "='Blé tendre'!$C$8", v: 42 }, "t", "n2", "n3"],
+      ["Lait", "Transformation", "Beurre", { f: "='Blé tendre'!$C$8", v: 42 }, "t", "n3", "n4"]
+    ]
+  });
+  const r = await office.ecrireDiagramme({ nodes: QUATRE, links: LIENS_QUATRE });
+  attendu(r.ok, "écriture réussie");
+  egal(r.colonneCalculee, "='Blé tendre'!$C$8", "la colonne calculée est signalée");
+  egal(r.formules, 0, "aucune formule réémise");
+  const iVal = LINK_COLS.indexOf("Valeur du flux");
+  egal(c.formulesDe("Liens").map(l => l[iVal]), ["", "", ""],
+       "la colonne est réécrite en valeurs : Excel abandonne la colonne calculée");
+  egal(c.lignesDe("Liens").map(l => l[iVal]),
+       LIENS_QUATRE.map(l => l.value),
+       "chaque lien retrouve la valeur du modèle");
+});
+
+await test("écriture : un unique lien à formule n'est pas une colonne calculée", async () => {
+  // Le cas limite de la détection : quand le tableau ne compte qu'UNE ligne,
+  // « toutes les lignes portent la même formule » est vrai par construction.
+  // Il faut au moins deux lignes concordantes pour parler de remplissage,
+  // sinon le premier lien d'un diagramme naissant perdrait sa formule.
+  const c = classeurType({
+    noeuds: [
+      ["Lait", "Production bio", 1, "Production", 0, "", "n1", 1, "Produit"],
+      ["Lait", "Lait cru", 2, "Collecte", 0, "", "n2", 1, "Produit"]
+    ],
+    liens: [["Lait", "Production bio", "Lait cru", { f: "='Blé tendre'!$C$8", v: 120 }, "t", "n1", "n2"]]
+  });
+  const modele = {
+    nodes: [
+      { id: "n1", name: "Production bio", column: 1, title: "Production", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: null },
+      { id: "n2", name: "Lait cru", column: 2, title: "Collecte", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: null }
+    ],
+    links: [{ source: "n1", target: "n2", value: 120, unit: "t" }]
+  };
+  const r = await office.ecrireDiagramme(modele);
+  attendu(!r.colonneCalculee, "une ligne unique ne prouve rien");
+  egal(c.formulesDe("Liens")[0][LINK_COLS.indexOf("Valeur du flux")],
+       "='Blé tendre'!$C$8", "la formule du seul lien est conservée");
+});
+
+await test("écriture : une seule formule dans la colonne reste une formule", async () => {
+  // Le garde-fou de la détection : une colonne calculée se remplit ENTIÈREMENT.
+  // Une formule isolée, elle, est une donnée — il ne faut pas la confondre avec
+  // un remplissage et l'effacer.
+  const c = classeurType();          // deux liens, un seul porte une formule
+  const r = await office.ecrireDiagramme(MODELE);
+  attendu(!r.colonneCalculee, "une formule isolée n'est pas une colonne calculée");
+  egal(r.formules, 1, "la formule est réémise");
+  egal(c.formulesDe("Liens")[1][LINK_COLS.indexOf("Valeur du flux")],
+       "=Lentilles!$C$68", "et elle est toujours là");
+});
+
 await test("écriture : les lignes sans filière descendent en bas des deux tableaux", async () => {
   const c = classeurType({
     noeuds: [

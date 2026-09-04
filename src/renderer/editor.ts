@@ -400,9 +400,12 @@ function addNode(column?: number, rank?: number, lane?: number): void {
         title: "",
         order: 0,
         lane: lane ?? ref?.lane ?? 1,
-        // Le nœud créé reprend le type du nœud sélectionné, comme sa filière :
-        // on enchaîne le plus souvent des nœuds de même nature.
-        kind: ref ? kindOf(ref) : "produit",
+        // TOUJOURS « Produit », quel que soit le chemin de création. Le nœud
+        // reprenait le type du nœud sélectionné : enchaîner deux industries
+        // créait alors une industrie qu'il fallait corriger, et la règle
+        // (« ça dépend de ce qui était sélectionné ») était invisible depuis le
+        // canevas. Un défaut unique se dit en un mot et se corrige en un clic.
+        kind: "produit",
         filiere: currentFiliereForNew(),
         color: null,
         x: 0,
@@ -1174,7 +1177,7 @@ function addLinkedNode(src: FlowNode): void {
         title: "",
         order: 0,
         lane: src.lane,
-        kind: kindOf(src),
+        kind: "produit",          // même défaut unique que « ＋ Nœud » (cf. addNode)
         filiere: src.filiere || "",
         color: null,
         x: 0,
@@ -1770,7 +1773,11 @@ function buildAppearance(): DocumentFragment {
         frag.appendChild(b.parentElement as HTMLElement);
     }
 
-    // ---- Nœuds ----
+    /* ---- Nœuds : la boîte ET son étiquette ----
+       Les deux faisaient deux cartes. Elles réglaient pourtant un seul objet —
+       on ne choisit pas la largeur d'un nœud sans regarder le nom qui va
+       dessus — et l'aller-retour entre les deux cartes coûtait à chaque essai.
+       Une seule carte, dans l'ordre où on la lit : la boîte, puis le nom. */
     {
         const b = card("Nœuds", false);
         b.appendChild(colorField("Couleur par défaut", options.nodes.nodeColor,
@@ -1779,6 +1786,32 @@ function buildAppearance(): DocumentFragment {
             v => { options.nodes.nodeWidth = v; rr(); }));
         b.appendChild(rangeField("Espacement vertical", options.nodes.nodePadding, 0, 60,
             v => { options.nodes.nodePadding = v; rr(); }));
+
+        const nl = options.nodeLabels;
+        b.appendChild(divider());
+        b.appendChild(checkField("Afficher l'étiquette", nl.show, v => { nl.show = v; rr(); }));
+        b.appendChild(selectField("Position", nl.position,
+            NODE_LABEL_POSITIONS as [string, string][],
+            v => { nl.position = v as NodeLabelPosition; rr(); }));
+        if (nl.position === "centre") {
+            b.appendChild(hint(
+                "L'étiquette se pose sur la boîte du nœud ; aux colonnes de bord elle "
+                + "se cale sur le côté tourné vers l'intérieur pour ne pas sortir du cadre."
+            ));
+        }
+        fontControls(b, nl, rr);
+        b.appendChild(checkField("Afficher la valeur", nl.showValue, v => { nl.showValue = v; rr(); }));
+        b.appendChild(divider());
+        b.appendChild(checkField("Arrière-plan", nl.showBackground, v => { nl.showBackground = v; rr(); }));
+        b.appendChild(colorField("Couleur d'arrière-plan", nl.backgroundColor,
+            v => { nl.backgroundColor = v; rr(); }));
+        b.appendChild(rangeField("Opacité de l'arrière-plan (%)", nl.backgroundOpacity, 0, 100,
+            v => { nl.backgroundOpacity = v; rr(); }));
+        b.appendChild(divider());
+        b.appendChild(checkField("Retour à la ligne", nl.wrap, v => { nl.wrap = v; rr(); }));
+        b.appendChild(numberField("Longueur max. par ligne", nl.maxChars, v => { nl.maxChars = v; rr(); }));
+
+        b.appendChild(divider());
         b.appendChild(hint(
             "Produits et industries peuvent avoir leur propre largeur, leur propre police, "
             + "leur propre position d'étiquette et leur propre contour : voir les deux "
@@ -1803,7 +1836,7 @@ function buildAppearance(): DocumentFragment {
         ));
         b.appendChild(hint(
             "Tant qu'une case n'est pas cochée, ce type suit les options générales "
-            + "« Nœuds » et « Étiquettes des nœuds » ; la cocher reprend la valeur en cours."
+            + "de la carte « Nœuds » ; la cocher reprend la valeur en cours."
         ));
 
         b.appendChild(checkField("Largeur propre à ce type", t.width !== null, v => {
@@ -1866,34 +1899,6 @@ function buildAppearance(): DocumentFragment {
         }
         frag.appendChild(b.parentElement as HTMLElement);
     });
-
-    // ---- Étiquettes des nœuds ----
-    {
-        const b = card("Étiquettes des nœuds", false);
-        const nl = options.nodeLabels;
-        b.appendChild(checkField("Afficher", nl.show, v => { nl.show = v; rr(); }));
-        b.appendChild(selectField("Position", nl.position,
-            NODE_LABEL_POSITIONS as [string, string][],
-            v => { nl.position = v as NodeLabelPosition; rr(); }));
-        if (nl.position === "centre") {
-            b.appendChild(hint(
-                "L'étiquette se pose sur la boîte du nœud ; aux colonnes de bord elle "
-                + "se cale sur le côté tourné vers l'intérieur pour ne pas sortir du cadre."
-            ));
-        }
-        fontControls(b, nl, rr);
-        b.appendChild(checkField("Afficher la valeur", nl.showValue, v => { nl.showValue = v; rr(); }));
-        b.appendChild(divider());
-        b.appendChild(checkField("Arrière-plan", nl.showBackground, v => { nl.showBackground = v; rr(); }));
-        b.appendChild(colorField("Couleur d'arrière-plan", nl.backgroundColor,
-            v => { nl.backgroundColor = v; rr(); }));
-        b.appendChild(rangeField("Opacité de l'arrière-plan (%)", nl.backgroundOpacity, 0, 100,
-            v => { nl.backgroundOpacity = v; rr(); }));
-        b.appendChild(divider());
-        b.appendChild(checkField("Retour à la ligne", nl.wrap, v => { nl.wrap = v; rr(); }));
-        b.appendChild(numberField("Longueur max. par ligne", nl.maxChars, v => { nl.maxChars = v; rr(); }));
-        frag.appendChild(b.parentElement as HTMLElement);
-    }
 
     // ---- Liens ----
     {

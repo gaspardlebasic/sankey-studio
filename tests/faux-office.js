@@ -89,6 +89,9 @@ class FausseP1age {
   getColumn(i) {
     return new FausseP1age(this.ctx, this.grille, this.r0, this.c0 + i, this.lignes, 1);
   }
+  getCell(r, c) {
+    return new FausseP1age(this.ctx, this.grille, this.r0 + r, this.c0 + c, 1, 1);
+  }
   getOffsetRange(dr, dc) {
     return new FausseP1age(this.ctx, this.grille, this.r0 + dr, this.c0 + dc,
                            this.lignes, this.colonnes);
@@ -342,6 +345,15 @@ class FauxContexte {
 
     // values / formulas
     const p = op.plage;
+    // Excel, lui, DIFFUSE un tableau à une ligne sur toute la plage — c'est
+    // ainsi qu'une seule formule a rempli une colonne entière. Le faux refuse
+    // plutôt que de diffuser : un désaccord de dimensions est un défaut, et il
+    // doit se voir ici avant de se voir dans le classeur de quelqu'un.
+    if (op.data.length !== p.lignes) {
+      throw new Error(
+        `affectation de ${op.data.length} ligne(s) sur une plage qui en compte ` +
+        `${p.lignes} (${p.address}) : Excel diffuserait la valeur sur toute la plage`);
+    }
     op.data.forEach((ligne, r) => {
       ligne.forEach((v, c) => {
         const ancienne = p.grille.lire(p.r0 + r, p.c0 + c);

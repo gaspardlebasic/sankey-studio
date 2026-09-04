@@ -370,6 +370,55 @@ export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel |
   });
 }
 
+/**
+ * La colonne « Valeur du flux » est-elle une COLONNE CALCULÉE d'Excel ?
+ *
+ * POURQUOI CETTE QUESTION EXISTE. Excel transforme une colonne de tableau en
+ * « colonne calculée » dès que ses cellules portent toutes la MÊME formule : il
+ * inscrit alors un `calculatedColumnFormula` dans le tableau et **remplit
+ * lui-même toute la colonne**, ligne après ligne, en écrasant les nombres qui
+ * s'y trouvaient. Le classeur d'AgriParis Seine a fini ainsi : 150 liens
+ * portant tous `='Blé tendre'!$C$8`, et l'affectation des valeurs de
+ * modélisation aux liens détruite.
+ *
+ * Ce que nous faisions alors : relire ces 150 cellules comme autant de formules
+ * d'utilisatrice, et les RÉÉCRIRE toutes à l'identique. Le complément cimentait
+ * la corruption — et la recréait dès la première écriture qui suivait une
+ * restauration du classeur.
+ *
+ * Une même formule sur TOUTES les lignes n'est jamais une donnée de lien : deux
+ * liens n'ont pas la même valeur de flux par hasard, encore moins cent
+ * cinquante. On la reconnaît donc pour ce qu'elle est — un remplissage
+ * automatique d'Excel — et on ne la réémet pas. La colonne, réécrite en
+ * `.values`, perd ses formules : Excel abandonne du même coup la colonne
+ * calculée, et le classeur est réparé au lieu d'être ré-abîmé.
+ *
+ * Renvoie la formule fautive, ou `null` quand la colonne est saine.
+ */
+function colonneCalculee(
+  liens: TableauTrouve, valeurs: unknown[][], formules: unknown[][]
+): string | null {
+  const iVal = liens.index.get("Valeur du flux");
+  if (iVal === undefined) return null;
+  const lignesV = lignesDonnees(valeurs);
+  const lignesF = lignesDonnees(formules);
+
+  let commune: string | null = null;
+  let lignes = 0;
+  for (let i = 0; i < lignesV.length; i++) {
+    if (ligneVide(lignesV[i])) continue;          // ligne de réserve : elle ne compte pas
+    const brute = texte(lignesF[i] ? lignesF[i][iVal] : "");
+    if (brute.charAt(0) !== "=") return null;     // une seule cellule sans formule suffit
+    if (commune === null) commune = brute;
+    else if (commune !== brute) return null;      // formules distinctes : colonne saine
+    lignes++;
+  }
+  // Une seule ligne ne prouve rien : c'est le cas normal d'un lien qui porte
+  // une formule. Il en faut au moins deux, identiques, pour que ce soit un
+  // remplissage.
+  return lignes >= 2 ? commune : null;
+}
+
 /** Extrait la table des formules à partir de valeurs + formules déjà chargées. */
 function collecterFormules(
   liens: TableauTrouve, valeurs: unknown[][], formules: unknown[][]
@@ -518,6 +567,24 @@ function apparierLignes(
   });
 }
 
+/**
+ * Une colonne du corps du tableau, HAUTE DE `hauteur` LIGNES EXACTEMENT.
+ *
+ * `getDataBodyRange().getColumn(c)` prend la hauteur que le tableau a au moment
+ * du sync — pas forcément celle du tableau qu'on s'apprête à y verser. Or Excel
+ * ne se plaint pas d'un tableau à UNE ligne posé sur une plage qui en compte
+ * cent : **il diffuse la valeur sur toute la plage**. Une seule cellule suffit
+ * alors à écraser une colonne entière.
+ *
+ * En partant de la première cellule et en redimensionnant nous-mêmes, la plage
+ * fait la hauteur des données par construction : la diffusion devient
+ * impossible, et un désaccord se solde par une erreur d'Excel — bruyante, donc
+ * réparable — au lieu d'une colonne effacée en silence.
+ */
+function colonneDuCorps(corps: Excel.Range, c: number, hauteur: number): Excel.Range {
+  return corps.getCell(0, c).getResizedRange(hauteur - 1, 0);
+}
+
 /** Réécrit les colonnes étrangères, chacune sur la ligne de SON nœud / SON lien. */
 function reporterEtrangeres(
   t: TableauTrouve, colonnes: number[], sources: (Contenu[] | undefined)[],
@@ -533,7 +600,7 @@ function reporterEtrangeres(
       donnees.push([cel === undefined ? "" : cel]);
     }
     // .formulas et non .values : une formule de l'utilisatrice reste une formule.
-    corps.getColumn(c).formulas = donnees;
+    colonneDuCorps(corps, c, hauteur).formulas = donnees;
   }
 }
 
@@ -557,6 +624,11 @@ export interface ResultatEcriture {
   formules: number;
   /** Excel a-t-il enregistré (seulement si options.save). */
   enregistre: boolean;
+  /**
+   * Formule d'une « colonne calculée » d'Excel trouvée sur la colonne
+   * « Valeur du flux » et défaite par cette écriture. Absente = rien à signaler.
+   */
+  colonneCalculee?: string;
   ms: number;
   error?: string;
 }
@@ -603,7 +675,13 @@ export async function ecrireDiagramme(
     lLignes.load("count");
     await context.sync();                                          // sync 3
 
-    const carte = collecterFormules(t.liens, rLiens.values, rLiens.formulas);
+    // Une colonne « Valeur du flux » entièrement remplie d'une même formule est
+    // un remplissage d'Excel, pas des données : on ne la réémet pas, et
+    // l'écriture en `.values` qui suit défait la colonne calculée.
+    const calculee = colonneCalculee(t.liens, rLiens.values, rLiens.formulas);
+    const carte: Formules = calculee
+      ? new Map()
+      : collecterFormules(t.liens, rLiens.values, rLiens.formulas);
 
     // Le tri des lignes et la réémission des formules viennent du module
     // partagé : identiques à l'écriture du .xlsx, par construction.
@@ -646,7 +724,8 @@ export async function ecrireDiagramme(
       sheetName: t.feuille || nomFeuille || FEUILLE_DEFAUT,
       formules: nombreDeFormulesReemises(linkRows),
       enregistre,
-      ms: Date.now() - t0
+      ms: Date.now() - t0,
+      ...(calculee ? { colonneCalculee: calculee } : {})
     };
   });
 }
@@ -708,9 +787,15 @@ function ecrireColonnes(
       if (!cellule) { donnees.push([""]); continue; }
       donnees.push([formule ? formuleDe(cellule) : valeurDe(cellule)]);
     }
-    const colonne = corps.getColumn(iClasseur);
-    if (formule) colonne.formulas = donnees;
-    else colonne.values = donnees;
+    const colonne = colonneDuCorps(corps, iClasseur, hauteur);
+    // `.formulas` seulement quand il y a vraiment une formule à poser. Les deux
+    // effacent les formules déjà présentes (ce qui défait la colonne calculée) :
+    // écrire des nombres en `.values` dit simplement ce qu'on fait.
+    if (formule && donnees.some(l => typeof l[0] === "string" && l[0].charAt(0) === "=")) {
+      colonne.formulas = donnees;
+    } else {
+      colonne.values = donnees;
+    }
   });
 }
 
