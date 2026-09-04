@@ -1195,17 +1195,46 @@ function drawSankey(
                 rectX = isLeft ? anchorX - padX : anchorX - maxLineW - padX;
             }
 
-            const g = gLabels.append("g");
+            /* Le bloc que l'étiquette occupe : le fond s'y pose, et la zone
+               de prise aussi. Une seule mesure pour les deux — un fond et une
+               zone de prise qui se décaleraient l'un de l'autre donneraient une
+               étiquette qu'on voit mais qu'on n'attrape pas. */
+            const boite = {
+                x: rectX,
+                y: blockTopY - padY,
+                w: maxLineW + padX * 2,
+                h: lines.length * lineHeight + padY * 2
+            };
+
+            // Le repère est porté par le GROUPE, pas seulement par le texte :
+            // c'est le groupe entier — fond, zone de prise, texte — que
+            // l'éditeur donne à cliquer dans l'aperçu.
+            const g = gLabels.append("g").attr("data-label-for", d.id);
             if (NL.showBackground) {
                 g.append("rect")
-                    .attr("x", rectX)
-                    .attr("y", blockTopY - padY)
-                    .attr("width", maxLineW + padX * 2)
-                    .attr("height", lines.length * lineHeight + padY * 2)
+                    .attr("x", boite.x)
+                    .attr("y", boite.y)
+                    .attr("width", boite.w)
+                    .attr("height", boite.h)
                     .attr("rx", 2)
                     .attr("fill", NL.backgroundColor)
                     .attr("fill-opacity", bgOpacity);
             }
+            /* ZONE DE PRISE de l'étiquette, invisible et toujours là.
+               Un `<text>` ne se laisse attraper que sur ses glyphes : entre deux
+               lettres, le clic passe au travers et atteint ce qu'il y a dessous.
+               Ce rectangle rend le bloc entier cliquable — c'est par lui qu'on
+               sélectionne un nœud dans l'aperçu, y compris un nœud de largeur
+               nulle, qui n'a pas d'autre prise. `fill: none` + `pointer-events:
+               all` : rien à voir, tout à attraper, même dans un SVG exporté. */
+            g.append("rect")
+                .attr("class", "node-label-hit")
+                .attr("x", boite.x)
+                .attr("y", boite.y)
+                .attr("width", boite.w)
+                .attr("height", boite.h)
+                .attr("fill", "none")
+                .attr("pointer-events", "all");
             const text = g
                 .append("text")
                 .attr("x", anchorX)

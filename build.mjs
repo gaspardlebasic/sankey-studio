@@ -16,12 +16,21 @@ const watch = process.argv.includes("--watch");
 
 mkdirSync("dist/renderer", { recursive: true });
 
+/*
+ * Date de construction, gravée dans les bundles (src/addin/date-build.ts).
+ * Le volet l'affiche : c'est le seul moyen de distinguer « ma correction n'est
+ * pas encore publiée » de « Excel me sert une page en cache ». Un seul instant
+ * pour toutes les cibles d'une même construction.
+ */
+const DATE_BUILD = new Date().toISOString();
+
 const commun = {
   bundle: true,
   platform: "browser",
   format: "iife",
   sourcemap: true,
   target: "es2019",
+  define: { __DATE_BUILD__: JSON.stringify(DATE_BUILD) },
   logLevel: "info"
 };
 

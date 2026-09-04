@@ -27,6 +27,11 @@
         #courtier-amorce { display: flex; flex-direction: column; gap: 12px; }
         #courtier-amorce p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
         #courtier-etat.erreur { color: var(--alert); }
+        /* La date de construction : le plus discret de tout le volet — on ne
+           la lit qu'en cas de doute sur la version servie. Une classe et non un
+           identifiant : la même ligne se pose aussi sous un message d'échec,
+           là où le volet courtier n'est pas affiché. */
+        .build-note { margin: 0; font-size: 11px; color: var(--muted); }
         #courtier .note, #courtier-synchro {
             margin: 0; font-size: 12px; color: var(--muted); line-height: 1.45;
             border-top: var(--hairline) solid var(--grey); padding-top: 12px;
@@ -59,6 +64,12 @@
         <p class="note">Garde ce volet ouvert : la fenêtre d'édition se ferme avec lui.
             Le diagramme, lui, vit dans le classeur — rien n'est perdu si tu la refermes.</p>
         <p id="courtier-synchro" hidden></p>
+        <!--
+          Version servie. Les bundles portent une empreinte et se rechargent
+          seuls ; les pages HTML, non — Excel peut servir l'ancienne longtemps
+          après une publication. Cette ligne dit laquelle on regarde.
+        -->
+        <p id="courtier-build" class="build-note" hidden></p>
     </div>
 
     <!--

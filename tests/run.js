@@ -1755,6 +1755,64 @@ test("étiquette : le numéro de colonne n'est plus affiché dans le nœud", "co
   attendu(!/col\s*\d/.test(r.texte), `aucun numéro de colonne dans le nœud (${r.texte})`);
 });
 
+test("aperçu : cliquer un libellé sélectionne son nœud", "complexe", async p => {
+  const r = await p(`
+    const cible = one('Féverolle');
+    await versApercu();
+    const et = etiquettesApercu().find(e => e.id === cible.id);
+    if (!et) throw new Error("étiquette non peinte : " + cible.id);
+    // Un point HORS des glyphes mais dans le bloc de l'étiquette : c'est
+    // précisément ce qu'un <text> nu laisse passer au travers.
+    await clicReel(et.gauche - 2, et.milieuY);
+    const sel = T.selection();
+    const halo = document.querySelectorAll('#canvas .apercu-selection').length;
+    const nom = field('Nom') ? field('Nom').value : null;
+    const vue = T.view();
+    await versEdition();
+    return { attendu: cible.id, sel, halo, nom, vue, nomCible: cible.name };
+  `);
+  egal(r.vue, "preview", "le clic ne doit pas faire sortir de l'aperçu");
+  egal(r.sel.type, "node", "un nœud doit être sélectionné");
+  egal(r.sel.id, r.attendu, "et ce doit être celui du libellé cliqué");
+  egal(r.nom, r.nomCible, "le panneau doit ouvrir la carte de ce nœud");
+  egal(r.halo, 1, "un repère de sélection, et un seul, doit entourer le libellé");
+});
+
+test("aperçu : le repère de sélection suit le libellé et disparaît avec lui", "complexe", async p => {
+  const r = await p(`
+    const a = one('Féverolle');
+    const b = one('Lentilles sèches');
+    await versApercu();
+    const et = id => etiquettesApercu().find(e => e.id === id);
+
+    await clicReel(et(a.id).gauche - 2, et(a.id).milieuY);
+    // Le halo doit être posé DANS le groupe de l'étiquette : c'est ce qui lui
+    // fait partager son système de coordonnées, donc son emplacement.
+    const surA = document.querySelector('#canvas .apercu-selection')
+      .parentNode.getAttribute('data-label-for');
+
+    await clicReel(et(b.id).gauche - 2, et(b.id).milieuY);
+    const surB = document.querySelector('#canvas .apercu-selection')
+      .parentNode.getAttribute('data-label-for');
+    const combien = document.querySelectorAll('#canvas .apercu-selection').length;
+
+    // Clic dans le vide : la sélection se referme, faute de quoi l'aperçu
+    // n'offre aucun moyen de la défaire.
+    const c = canvasRect();
+    await clicReel(c.left + 3, c.bottom - 3);
+    const apres = T.selection();
+    const restant = document.querySelectorAll('#canvas .apercu-selection').length;
+
+    await versEdition();
+    return { a: a.id, b: b.id, surA, surB, combien, apres, restant };
+  `);
+  egal(r.surA, r.a, "le repère entoure le libellé cliqué");
+  egal(r.surB, r.b, "puis celui du nœud suivant");
+  egal(r.combien, 1, "jamais deux repères à la fois");
+  egal(r.apres.type, null, "un clic dans le vide désélectionne");
+  egal(r.restant, 0, "et retire le repère");
+});
+
 /* -------------------------------- exécution ------------------------------ */
 
 async function charger(win, fixture) {

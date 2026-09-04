@@ -257,6 +257,7 @@ export function createApp(root: HTMLElement): void {
     // détruirait ses tableaux.
     excelPath = (desktop() && desktop().nomClasseur) || "Classeur Excel";
 
+    canvas.addEventListener("click", onApercuClick);
     canvas.addEventListener("dblclick", onCanvasDblClick);
     window.addEventListener("keydown", onGlobalKey);
     window.addEventListener("resize", render);
@@ -458,7 +459,11 @@ function deleteSelected(): void {
 function select(type: "node" | "link" | null, id: string): void {
     selection = { type, id };
     buildSidebar();
+    // En édition, la sélection change le dessin (halo, points de liaison, « + »).
+    // Dans l'aperçu, refaire le Sankey pour un simple clic serait cher pour
+    // rien : seul le repère de sélection bouge, et il se pose sur place.
     if (view === "edit") render();
+    else marquerSelectionApercu();
 }
 
 /* ----------------------------- rendu ------------------------------- */
@@ -469,10 +474,13 @@ function render(): void {
     const visH = Math.max(1, wrap.clientHeight);
     while (canvas.firstChild) canvas.removeChild(canvas.firstChild);
 
+    canvas.classList.toggle("apercu", view === "preview");
+
     if (view === "preview") {
         wrap.style.overflow = "hidden";
         sizeCanvas(visW, visH);
         dessinerApercu(canvas, visW, visH);
+        marquerSelectionApercu();
         return;
     }
 
@@ -548,11 +556,52 @@ function dessinerApercu(svgEl: SVGSVGElement, w: number, h: number, fond = "#fff
         renderSankey(svgEl, viewModel(), options, w, h, fond);
     }
 }
+/**
+ * Repère de sélection dans l'APERÇU.
+ *
+ * L'aperçu est peint par le moteur, qui ne sait rien de la sélection — et on ne
+ * veut pas la lui apprendre : c'est lui qui fait aussi les exports, où un halo
+ * n'a rien à faire. Le repère est donc posé APRÈS coup, sur le dessin en place,
+ * et retiré de même. Il vit dans le groupe de l'étiquette, dont il partage le
+ * système de coordonnées : rien à convertir.
+ */
+function marquerSelectionApercu(): void {
+    canvas.querySelectorAll("." + CLASSE_HALO).forEach(el => el.remove());
+    if (view !== "preview" || selection.type !== "node") return;
+    const groupe = etiquetteApercu(selection.id);
+    if (!groupe) return;                      // nœud masqué, ou étiquettes éteintes
+    const b = groupe.getBBox();
+    const halo = document.createElementNS(SVGNS, "rect");
+    halo.setAttribute("class", CLASSE_HALO);
+    halo.setAttribute("x", String(b.x - HALO_MARGE));
+    halo.setAttribute("y", String(b.y - HALO_MARGE));
+    halo.setAttribute("width", String(b.width + HALO_MARGE * 2));
+    halo.setAttribute("height", String(b.height + HALO_MARGE * 2));
+    halo.setAttribute("rx", "3");
+    // Devant le fond de l'étiquette, derrière son texte : le nom reste net.
+    groupe.insertBefore(halo, groupe.firstChild);
+}
+
+/** Groupe de l'étiquette d'un nœud dans l'aperçu, s'il est peint. */
+function etiquetteApercu(id: string): SVGGraphicsElement | null {
+    const groupes = canvas.querySelectorAll("g[data-label-for]");
+    for (let i = 0; i < groupes.length; i++) {
+        if (groupes[i].getAttribute("data-label-for") === id) {
+            return groupes[i] as SVGGraphicsElement;
+        }
+    }
+    return null;
+}
+
 function distinctFilieres(): string[] {
     const set = new Set<string>();
     model.nodes.forEach(n => set.add(n.filiere || ""));
     return Array.from(set).sort((a, b) => a.localeCompare(b));
 }
+
+/* Repère de la sélection dans l'aperçu : classe du halo et écart à l'étiquette. */
+const CLASSE_HALO = "apercu-selection";
+const HALO_MARGE = 3;
 
 /* Registres des éléments SVG du mode édition (utilisés par l'animation du drag). */
 let nodeEls = new Map<string, SVGGElement>();
@@ -1072,6 +1121,27 @@ function onNodeClick(e: MouseEvent, n: FlowNode): void {
     if (view !== "edit") return;
     if (dragState && dragState.moved) return;
     select("node", n.id);
+}
+
+/**
+ * APERÇU : cliquer une étiquette sélectionne son nœud.
+ *
+ * C'est le libellé qu'on vise, pas la boîte : dans l'aperçu, la largeur d'un
+ * nœud est propre à son type et vaut couramment zéro pixel (les rubans se
+ * rejoignent alors sur l'axe de la colonne, sans nœud visible). Le nom, lui,
+ * est toujours là. Le rectangle de nœud reste accepté quand il a une largeur —
+ * c'est le même geste, et refuser le clic dessus serait une surprise.
+ *
+ * Un clic dans le vide désélectionne : sans quoi, l'aperçu n'offre aucun moyen
+ * de refermer la carte du panneau.
+ */
+function onApercuClick(e: MouseEvent): void {
+    if (view !== "preview") return;
+    const cible = (e.target as Element).closest("g[data-label-for], rect[data-id]");
+    const id = cible && (cible.getAttribute("data-label-for") || cible.getAttribute("data-id"));
+    if (!id) { if (selection.type) select(null, ""); return; }
+    if (!nodeById(id)) return;      // escale de traversée, ou nœud disparu du modèle
+    select("node", id);
 }
 
 function onCanvasDblClick(e: MouseEvent): void {

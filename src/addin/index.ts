@@ -23,6 +23,7 @@ import { installerPont, elargirVolet, supporte } from "./pont";
 import type { Pont } from "./pont";
 import { diagrammePresent, initialiserClasseur } from "./excel-office";
 import { CourtierVolet, JEU_FENETRE, type Etat } from "./courtier-volet";
+import { dateBuildLisible } from "./date-build";
 import { createApp } from "../renderer/editor";
 
 function element<T extends HTMLElement>(id: string): T | null {
@@ -34,7 +35,34 @@ function annoncer(message: string): void {
   const panneau = element("courtier");
   if (panneau) panneau.hidden = true;
   const racine = element("app");
-  if (racine) { racine.hidden = false; racine.textContent = message; }
+  if (!racine) return;
+  racine.hidden = false;
+  racine.textContent = message;
+  // La version compte SURTOUT ici : « c'est pourtant corrigé » et « Excel sert
+  // encore l'ancienne page » se présentent sous le même message d'échec.
+  const date = dateBuildLisible();
+  if (!date) return;
+  const ligne = document.createElement("p");
+  ligne.className = "build-note";
+  ligne.textContent = "Version du " + date;
+  racine.appendChild(ligne);
+}
+
+/**
+ * La date de construction du complément, en bas du volet.
+ *
+ * Posée dès le démarrage, avant même de savoir si Excel répond : c'est
+ * justement quand quelque chose cloche qu'on veut savoir quelle version est
+ * servie. Sans date gravée (bundle fabriqué hors `build.mjs`), la ligne reste
+ * cachée plutôt que de mentir.
+ */
+function montrerDateBuild(): void {
+  const ligne = element("courtier-build");
+  if (!ligne) return;
+  const date = dateBuildLisible();
+  if (!date) return;
+  ligne.textContent = "Version du " + date;
+  ligne.hidden = false;
 }
 
 /* --------------------------- volet courtier --------------------------- */
@@ -187,6 +215,11 @@ function demarrer(): void {
     courtier.ouvrir();
   });
 }
+
+// La version se pose AVANT tout le reste, et sans rien demander à Excel : elle
+// ne dépend que du bundle qu'on est en train d'exécuter. C'est ce qui la rend
+// lisible même quand la suite échoue.
+montrerDateBuild();
 
 // office.js vient d'Internet (c'est la règle du modèle Office) : hors ligne il
 // manque, et la page resterait blanche sans rien dire. Le risque est assumé

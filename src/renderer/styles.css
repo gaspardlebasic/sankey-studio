@@ -232,6 +232,14 @@ button.linklike:hover { color: var(--dark); }
     filter: drop-shadow(4px 4px 0 rgba(0, 0, 0, 0.2)); }
 #canvas.dragging-active .plus-handle { display: none; }
 
+/* ---- Aperçu : sélectionner un nœud par son libellé ----
+   Le dessin de l'aperçu vient du moteur, qui ignore la sélection. Ces deux
+   règles ne portent donc que sur ce que l'éditeur y ajoute : la main sur les
+   étiquettes, et le halo posé autour de celle du nœud choisi. */
+#canvas.apercu g[data-label-for] { cursor: pointer; }
+#canvas .apercu-selection { fill: none; stroke: var(--dark); stroke-width: 1.5;
+    stroke-dasharray: 4 3; }
+
 #canvas .plus-handle { cursor: pointer; }
 #canvas .plus-circle { fill: var(--grey); transition: r 0.1s var(--ease), fill 0.1s var(--ease); }
 #canvas .plus-sign { stroke: var(--dark); stroke-width: 2; transition: stroke 0.1s var(--ease); }

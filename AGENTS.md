@@ -106,6 +106,14 @@ plutôt bien — du plus au moins pratique :
     `ExcelApi 1.1` et rien de plus, `AppDomains` cohérent avec `SourceLocation`.
     Trois mutations vérifiées.
 
+9. **`node tests/addin-date-build.test.js`** (dans `npm run test:addin`) — la **date de
+    construction** affichée par le volet. Deux choses, parce qu'une date fausse ressemble
+    à une date : la **gravure** (le `define` de `build.mjs`, contrôlé sur le bundle
+    réellement construit — mutation vérifiée : retirer le `define` fait échouer deux tests)
+    et la **mise en forme**, éprouvée dans un fuseau imposé (`process.env.TZ`) contre une
+    chaîne écrite à la main. Le test construit `dist/addin` s'il manque : sauter en silence
+    ne dirait jamais rien.
+
 Ce qu'aucun de ces bancs ne prouve : `displayDialogAsync`, les limites réelles du canal du
 tunnel, et le comportement du ruban. Ceux-là ne s'éprouvent que **dans Excel** — sur macOS
 (`RESULTATS-ESSAI-MAC.md`) et sur Windows (`RESULTATS-PHASE-6.md`).
@@ -275,7 +283,7 @@ npm run serve       # sert dist/renderer sur http://localhost:8811 (banc navigat
                     # + /volet-essai.html   : le renderer sous les capacités du complément
                     # + /fenetre-essai.html : volet courtier + fenêtre d'édition (phase 4)
                     # + /sonde-essai.html   : la sonde elle-même, hors d'Excel (phase 6)
-npm run test:addin  # tests de l'adaptateur Office.js, du rythme de synchro et du tunnel
+npm run test:addin  # adaptateur Office.js, rythme de synchro, tunnel, manifestes, date de build
 npm run addin:certs   # UNE FOIS : certificat HTTPS de dev (demande le mot de passe)
 npm run addin:install # charge le manifeste de côté (-- --sonde, -- --retirer)
 npm run addin:install -- --enligne  # pose le manifeste PUBLIÉ : ni serveur local ni certificat
@@ -556,6 +564,20 @@ un poste, c'est `npm run addin:install -- --enligne`.
   capacité `envoiAutomatique` est vraie — elle l'est dès qu'Excel offre `ExcelApi 1.7`, parce
   qu'écrire coûte 12 ms et ne déclenche aucun enregistrement. Sans 1.7, ce sont les deux boutons
   du panneau qui font le travail.
+- **Sélectionner dans l'APERÇU, c'est cliquer le LIBELLÉ.** La boîte d'un nœud y a la largeur
+  de son type, couramment zéro pixel (les rubans se rejoignent alors sur l'axe de la colonne,
+  sans nœud visible) : le nom est la seule prise qui existe toujours. Le rectangle reste
+  accepté quand il a une largeur, et un clic dans le vide désélectionne — sinon la carte du
+  panneau ne se refermerait jamais.
+  - Le moteur pose une **zone de prise invisible** (`.node-label-hit`, `fill: none` +
+    `pointer-events: all`) sur le bloc de l'étiquette : un `<text>` nu ne s'attrape que sur ses
+    glyphes, et un clic entre deux lettres passe au travers. Elle vaut aussi dans un SVG
+    exporté, où elle ne se voit pas.
+  - Le repère de sélection (`.apercu-selection`) est posé **après coup par l'éditeur**, dans le
+    groupe de l'étiquette dont il partage le système de coordonnées. Le moteur n'apprend pas
+    la sélection : c'est lui qui fait aussi les exports, où un halo n'aurait rien à faire.
+  - `select()` ne refait pas le Sankey dans l'aperçu — seul le repère bouge. Le refaire à
+    chaque clic coûterait une disposition d3 complète pour rien.
 - **Interaction du canevas (plus de modes)** : un seul mode d'édition. Glisser un nœud le déplace ;
   sélectionner un nœud fait apparaître un **point de liaison sur chaque bord** (`linkDot`) — tirer
   depuis le point droit crée un lien *sortant*, depuis le gauche un lien *entrant* (`linkDrag`,
@@ -602,6 +624,13 @@ volet ↔ fenêtre » plus bas.
   l'envoi. `planifierEnvoiExcel()` ne part donc que si `dirtySinceSync` — ne pas retirer ce test.
 - `pushEnCours` est le garde-fou de **réentrance** (deux écritures concurrentes), pas une
   optimisation du coût : le retirer ferait se marcher dessus deux écritures d'une même salve.
+- **Le volet affiche la DATE DE CONSTRUCTION** du bundle qu'il exécute (`src/addin/date-build.ts`,
+  gravée par le `define` de `build.mjs`). Elle ne sert qu'à une chose, mais elle y sert seule :
+  distinguer « ma correction n'est pas encore publiée » de « Excel me sert une page en cache ».
+  Les bundles portent une empreinte et se rechargent seuls ; **les pages HTML, non**. Elle est
+  posée **avant** `Office.onReady`, sans rien demander à Excel, et se répète sous un message
+  d'échec (`annoncer`) — c'est justement quand ça casse qu'on veut savoir quelle version tourne.
+  Sans gravure, la ligne se cache plutôt que de mentir.
 - **Manifeste** : n'y déclarer que `ExcelApi 1.1`. Un jeu d'exigences plus élevé empêche le
   complément de **se charger du tout** sur un Excel plus ancien ; ce dont on a besoin
   (`onChanged` = 1.7, `setWidth`, réglages) se sonde à l'exécution avec `isSetSupported`.
@@ -643,6 +672,15 @@ le reste.
 - Office n'autorise **qu'une fenêtre à la fois**, elle se ferme avec le volet, et sur Excel pour
   le web elle doit naître d'un clic — d'où le bouton du volet, en plus de l'ouverture au
   démarrage.
+- **La fenêtre reste au-dessus d'Excel, et rien ne le change** (vérifié le 2026-09-04).
+  `DialogOptions` n'a que `height`, `width`, `displayInIframe`, `promptBeforeOpen` et
+  `asyncContext` : aucun réglage d'ordre d'empilement. La documentation ne promet que
+  *non modale* — on peut continuer à travailler dans le classeur derrière — plus déplaçable
+  et redimensionnable. `displayInIframe` ne concerne qu'Excel pour le web, et y donne une
+  surcouche flottante : encore plus au-dessus. La seule façon d'avoir une fenêtre qui se
+  comporte comme les autres serait de ne pas en ouvrir — l'éditeur dans le volet, c'est-à-dire
+  le repli de compatibilité, à 755 px pour un diagramme qui en fait 1 362. Ne pas rouvrir la
+  question sans un changement d'API de Microsoft.
 
 ### Synchro Excel
 

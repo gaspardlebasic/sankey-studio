@@ -10,8 +10,8 @@
     "addin:install": "node scripts/install-addin.mjs",
     "addin:manifeste": "node build.mjs && node scripts/manifeste-prod.mjs",
     "excel:cache": "node scripts/vider-cache-excel.mjs",
-    "test": "node build.mjs && node tests/cache-excel.test.js && node tests/addin-office.test.js && node tests/addin-synchro.test.js && node tests/addin-protocole.test.js && node tests/addin-manifeste.test.js && electron tests/run.js",
-    "test:addin": "node tests/cache-excel.test.js && node tests/addin-office.test.js && node tests/addin-synchro.test.js && node tests/addin-protocole.test.js && node tests/addin-manifeste.test.js",
+    "test": "node build.mjs && node tests/cache-excel.test.js && node tests/addin-office.test.js && node tests/addin-synchro.test.js && node tests/addin-protocole.test.js && node tests/addin-manifeste.test.js && node tests/addin-date-build.test.js && electron tests/run.js",
+    "test:addin": "node tests/cache-excel.test.js && node tests/addin-office.test.js && node tests/addin-synchro.test.js && node tests/addin-protocole.test.js && node tests/addin-manifeste.test.js && node tests/addin-date-build.test.js",
     "smoke": "node build.mjs && electron scripts/smoke.js"
   },
   "author": "Mathieu Peychet",
