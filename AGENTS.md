@@ -457,23 +457,37 @@ un poste, c'est `npm run addin:install -- --enligne`.
   - Les tests mesurent le **recouvrement réellement peint** (`noeudsRecouverts` dans
     `tests/helpers.js`, par `isPointInFill` sur le tracé) et vérifient que le rendu « tout droit »,
     lui, recouvre bien le nœud traversé — sans quoi le test ne prouverait rien.
-- **La colonne « Valeur du flux » ne doit JAMAIS devenir une colonne calculée d'Excel.**
-  Excel transforme une colonne de tableau en *colonne calculée* dès que ses cellules portent
-  toutes la même formule : il inscrit un `calculatedColumnFormula` et **remplit lui-même toute
-  la colonne**, écrasant les valeurs. Constaté sur `Flux APS.xlsx` (AgriParis Seine) le
-  2026-09-04 : 150 liens portant tous `='Blé tendre'!$C$8`, l'affectation des données de
-  modélisation aux liens détruite, restauration par l'historique des versions.
-  - **Ce que le complément faisait** : relire ces 150 cellules comme autant de formules
+- **La colonne « Valeur du flux » ne doit JAMAIS se remplir toute seule.** Excel a une
+  correction automatique — *« Remplir les formules dans les tableaux pour créer des colonnes
+  calculées »* — qui recopie sur **toutes les lignes** une formule saisie dans UNE cellule d'une
+  colonne de tableau, écrasant les nombres qui s'y trouvaient, et inscrit un
+  `calculatedColumnFormula`. Constaté sur `Flux APS.xlsx` (AgriParis Seine) le 2026-09-04 :
+  `='Blé tendre'!$C$8` était la formule légitime du **premier** lien (production de blé tendre
+  non-bio) ; Excel l'a posée sur les 149 autres, et l'affectation des données de modélisation aux
+  liens a été détruite. **Le complément n'en est pas la cause — il l'a propagée.**
+  - **Ce que le complément faisait** : relire ces cellules comme autant de formules
     d'utilisatrice (`collecterFormules`) et les réécrire toutes. Il **cimentait** la corruption,
     et la recréait à la première écriture qui suivait une restauration.
-  - **Ce qu'il fait** : `colonneCalculee()` reconnaît le remplissage — *toutes* les lignes non
-    vides portent une formule, et la **même** — et ne le réémet pas. La colonne, réécrite en
-    valeurs, perd ses formules : Excel abandonne la colonne calculée et le classeur est réparé.
-    Le résultat d'écriture porte alors `colonneCalculee`.
+  - **Ce qui trahit une recopie** : le **même texte de formule ET la même valeur calculée** sur
+    au moins deux liens. Les deux moitiés comptent — une vraie colonne calculée écrite en
+    référence structurée (`=[@Quantité]*1000`) porte le même texte partout mais donne des
+    valeurs *différentes*, et deux liens peuvent légitimement valoir 0.
+  - **On juge LIGNE PAR LIGNE**, jamais colonne entière : `lignesDeRemplissage()` rend les
+    indices à ne pas préserver. C'est ce qui rattrape les remplissages **partiels** — cent lignes
+    recopiées, trente rescapées, ce qu'on trouve après une restauration ou une correction faite à
+    la main. L'ancien critère (« *toutes* les lignes, la même formule ») déclarait cette
+    colonne-là saine, réémettait la recopie, et Excel tuait les trente survivantes.
   - **Deux lignes concordantes suffisent, une seule non** : un diagramme naissant dont l'unique
     lien porte une formule ne doit pas la perdre. Contrepartie assumée : deux liens qui visent
     délibérément la même cellule perdent leur formule (leur valeur, elle, est conservée) —
     Excel en aurait de toute façon fait une colonne calculée.
+  - **Et on le DIT.** Défaire la recopie ne rend pas les valeurs qu'Excel a écrasées : elles sont
+    perdues, et seule l'utilisatrice peut restaurer une version antérieure — tant qu'elle sait
+    qu'il faut le faire. Le résultat d'écriture porte `remplissage: { formule, liens }`, et
+    l'éditeur en fait une **carte d'alerte persistante** en tête du panneau (`buildAlertePanel`),
+    qui nomme la formule, compte les liens et donne le réglage d'Excel à décocher. Elle survit
+    aux reconstructions du panneau : l'écriture qui la découvre est le plus souvent automatique
+    et silencieuse, et un message de la barre d'état serait remplacé avant d'être lu.
 - **Écrire une colonne, c'est écrire une plage de la HAUTEUR EXACTE des données**
   (`colonneDuCorps`, qui part de la première cellule et redimensionne). `getColumn()` prend la
   hauteur qu'a le tableau au moment du sync ; **Excel diffuse un tableau à une ligne sur toute

@@ -662,7 +662,7 @@ await test("ajout d'un nœud : les formules distinctes de la colonne valeur sont
   };
   const r = await office.ecrireDiagramme(modele);
   attendu(r.ok, "écriture réussie");
-  attendu(!r.colonneCalculee, "aucune colonne calculée : le classeur était sain");
+  attendu(!r.remplissage, "aucun remplissage : le classeur était sain");
 
   const iVal = LINK_COLS.indexOf("Valeur du flux");
   egal(c.formulesDe("Liens").map(l => l[iVal]),
@@ -690,7 +690,8 @@ await test("écriture : une colonne calculée d'Excel n'est pas prise pour des d
   });
   const r = await office.ecrireDiagramme({ nodes: QUATRE, links: LIENS_QUATRE });
   attendu(r.ok, "écriture réussie");
-  egal(r.colonneCalculee, "='Blé tendre'!$C$8", "la colonne calculée est signalée");
+  egal(r.remplissage, { formule: "='Blé tendre'!$C$8", liens: 3 },
+       "le remplissage est signalé, avec le nombre de liens qu'il occupait");
   egal(r.formules, 0, "aucune formule réémise");
   const iVal = LINK_COLS.indexOf("Valeur du flux");
   egal(c.formulesDe("Liens").map(l => l[iVal]), ["", "", ""],
@@ -720,7 +721,7 @@ await test("écriture : un unique lien à formule n'est pas une colonne calculé
     links: [{ source: "n1", target: "n2", value: 120, unit: "t" }]
   };
   const r = await office.ecrireDiagramme(modele);
-  attendu(!r.colonneCalculee, "une ligne unique ne prouve rien");
+  attendu(!r.remplissage, "une ligne unique ne prouve rien");
   egal(c.formulesDe("Liens")[0][LINK_COLS.indexOf("Valeur du flux")],
        "='Blé tendre'!$C$8", "la formule du seul lien est conservée");
 });
@@ -731,10 +732,60 @@ await test("écriture : une seule formule dans la colonne reste une formule", as
   // un remplissage et l'effacer.
   const c = classeurType();          // deux liens, un seul porte une formule
   const r = await office.ecrireDiagramme(MODELE);
-  attendu(!r.colonneCalculee, "une formule isolée n'est pas une colonne calculée");
+  attendu(!r.remplissage, "une formule isolée n'est pas un remplissage");
   egal(r.formules, 1, "la formule est réémise");
   egal(c.formulesDe("Liens")[1][LINK_COLS.indexOf("Valeur du flux")],
        "=Lentilles!$C$68", "et elle est toujours là");
+});
+
+await test("écriture : un remplissage PARTIEL n'emporte pas les lignes rescapées", async () => {
+  // Le trou que la première correction laissait. Après une restauration — ou une
+  // correction faite à la main sur quelques lignes — la colonne porte des lignes
+  // recopiées ET des lignes saines. L'ancien critère (« TOUTES les lignes, la
+  // même formule ») déclarait la colonne saine, le complément réémettait la
+  // recopie, et Excel recréait la colonne calculée : les rescapées mouraient au
+  // tour suivant. On juge donc ligne par ligne.
+  const c = classeurType({
+    noeuds: RANGS_QUATRE,
+    liens: [
+      ["Lait", "Production bio", "Lait cru", { f: "='Blé tendre'!$C$8", v: 42 }, "t", "n1", "n2"],
+      ["Lait", "Lait cru", "Transformation", { f: "='Blé tendre'!$C$8", v: 42 }, "t", "n2", "n3"],
+      ["Lait", "Transformation", "Beurre", { f: "=Lentilles!$C$68", v: 30 }, "t", "n3", "n4"]
+    ]
+  });
+  const r = await office.ecrireDiagramme({ nodes: QUATRE, links: LIENS_QUATRE });
+  attendu(r.ok, "écriture réussie");
+  egal(r.remplissage, { formule: "='Blé tendre'!$C$8", liens: 2 },
+       "les deux lignes recopiées sont reconnues, malgré la troisième qui ne l'est pas");
+  egal(r.formules, 1, "seule la formule de la ligne rescapée est réémise");
+
+  const iVal = LINK_COLS.indexOf("Valeur du flux");
+  egal(c.formulesDe("Liens").map(l => l[iVal]),
+       ["", "", "=Lentilles!$C$68"],
+       "la recopie est effacée, la formule du troisième lien est intacte");
+});
+
+await test("écriture : une vraie colonne calculée n'est pas prise pour un remplissage", async () => {
+  // Le garde-fou de la détection. Une référence structurée (« [@Quantité] »)
+  // porte le MÊME texte sur toutes les lignes — c'est la façon normale d'écrire
+  // une colonne calculée, et ce sont des données. Ce qui la distingue d'une
+  // recopie destructrice : elle donne une valeur DIFFÉRENTE à chaque ligne.
+  // D'où le critère à deux moitiés : même formule ET même valeur.
+  const c = classeurType({
+    noeuds: RANGS_QUATRE,
+    liens: [
+      ["Lait", "Production bio", "Lait cru", { f: "=[@Quantité]*1000", v: 120 }, "t", "n1", "n2"],
+      ["Lait", "Lait cru", "Transformation", { f: "=[@Quantité]*1000", v: 95 }, "t", "n2", "n3"],
+      ["Lait", "Transformation", "Beurre", { f: "=[@Quantité]*1000", v: 30 }, "t", "n3", "n4"]
+    ]
+  });
+  const r = await office.ecrireDiagramme({ nodes: QUATRE, links: LIENS_QUATRE });
+  attendu(!r.remplissage, "des valeurs distinctes : ce sont des données, pas une recopie");
+  egal(r.formules, 3, "les trois formules sont réémises");
+  const iVal = LINK_COLS.indexOf("Valeur du flux");
+  egal(c.formulesDe("Liens").map(l => l[iVal]),
+       ["=[@Quantité]*1000", "=[@Quantité]*1000", "=[@Quantité]*1000"],
+       "la colonne calculée de l'utilisatrice est rendue telle quelle");
 });
 
 await test("écriture : les lignes sans filière descendent en bas des deux tableaux", async () => {

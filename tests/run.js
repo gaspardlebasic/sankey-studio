@@ -469,6 +469,40 @@ test("synchro automatique : une modification part seule dans le classeur", "comp
     "la modification doit partir d'elle-même dans le classeur — écritures : " + excel.ecritures);
 });
 
+test("alerte : un remplissage d'Excel est montré, et pas seulement corrigé", "complexe", async (p, excel) => {
+  // Le complément DÉFAIT la recopie d'Excel, mais il ne peut pas rendre les
+  // valeurs qu'elle a écrasées. Se taire, c'est laisser l'utilisatrice croire
+  // que sa colonne est intacte — et laisser passer la fenêtre pendant laquelle
+  // une version antérieure du classeur est encore restaurable.
+  excel.remplissage = { formule: "='Blé tendre'!$C$8", liens: 130 };
+  try {
+    const r = await p(`
+      T.amorce(true);
+      const src = one('Féverolle');
+      await selectNode(src.id);
+      await clickPlus();
+      await sleep(600);            // au-delà du délai d'apaisement (300 ms)
+      T.amorce(false);
+      const carte = [...document.querySelectorAll('#sidebar .panel')]
+          .find(e => e.querySelector('h3') && e.querySelector('h3').textContent.includes('écrasées'));
+      const texte = carte ? carte.textContent : '';
+      const bouton = carte && carte.querySelector('button.linklike');
+      if (bouton) bouton.click();
+      await sleep(60);
+      const apres = [...document.querySelectorAll('#sidebar .panel')]
+          .some(e => e.querySelector('h3') && e.querySelector('h3').textContent.includes('écrasées'));
+      return { montre: !!carte, formule: texte.includes("='Blé tendre'!$C$8"),
+               liens: texte.includes('130 liens'), restePresente: apres };
+    `);
+    attendu(r.montre, "le panneau doit porter une carte d'alerte après l'écriture");
+    attendu(r.formule, "l'alerte doit nommer la formule recopiée");
+    attendu(r.liens, "l'alerte doit dire combien de liens elle occupait");
+    attendu(!r.restePresente, "l'alerte doit disparaître une fois écartée");
+  } finally {
+    excel.remplissage = null;
+  }
+});
+
 test("couloirs : le couloir 2 se range sous le couloir 1", "complexe", async p => {
   const r = await p(`
     const m = T.model();
@@ -1741,7 +1775,9 @@ async function charger(win, fixture) {
 const excelSimule = {
   ecritures: 0,
   derniereEcriture: null,
-  apparence: null
+  apparence: null,
+  /** Ce que l'écriture répond quand elle défait une recopie d'Excel. */
+  remplissage: null
 };
 
 /**
@@ -1755,7 +1791,9 @@ function stubExcelIpc() {
   ipcMain.handle("excel:write", (_e, model) => {
     excelSimule.ecritures++;
     excelSimule.derniereEcriture = model;
-    return { ok: true, live: true, path: "Classeur d'essai.xlsx", sheetName: "Diagramme" };
+    const r = { ok: true, live: true, path: "Classeur d'essai.xlsx", sheetName: "Diagramme" };
+    if (excelSimule.remplissage) r.remplissage = excelSimule.remplissage;
+    return r;
   });
   ipcMain.handle("apparence:lire", () => null);
   ipcMain.handle("apparence:ecrire", (_e, json) => {

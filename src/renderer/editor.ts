@@ -1364,6 +1364,9 @@ function toCanvas(e: MouseEvent): { x: number; y: number } {
 function buildSidebar(): void {
     sidebar.innerHTML = "";
 
+    const ap = buildAlertePanel();
+    if (ap) sidebar.appendChild(ap);
+
     const ep = buildExcelPanel();
     if (ep) sidebar.appendChild(ep);
 
@@ -1506,6 +1509,64 @@ function buildFilierePanel(): HTMLElement | null {
     row.appendChild(all);
     row.appendChild(none);
     s.appendChild(row);
+    return s;
+}
+
+/* ------------------- alerte « remplissage d'Excel » ------------------- */
+
+/** Ce que l'adaptateur signale quand il défait une recopie d'Excel. */
+interface Remplissage { formule: string; liens: number; }
+
+/**
+ * Le dernier remplissage d'Excel rencontré, tant que l'utilisatrice ne l'a pas
+ * écarté. Il SURVIT aux reconstructions du panneau, et c'est tout l'enjeu :
+ * l'écriture qui le découvre est le plus souvent automatique et silencieuse
+ * (300 ms après une modification), et un message de la barre d'état serait
+ * remplacé par le suivant avant d'avoir été lu.
+ */
+let alerteRemplissage: Remplissage | null = null;
+
+/**
+ * Recueille ce qu'une écriture a trouvé. Le complément ne peut pas rendre les
+ * valeurs qu'Excel a écrasées — il peut seulement dire lesquelles, et à quoi
+ * les reconnaître, tant qu'il est encore temps de restaurer une version.
+ */
+function signalerRemplissage(r: Remplissage | undefined): void {
+    if (!r || !r.formule) return;
+    const a = alerteRemplissage;
+    // La même alerte deux fois de suite ne vaut pas une reconstruction du
+    // panneau : l'utilisatrice est peut-être en train d'y saisir quelque chose.
+    if (a && a.formule === r.formule && a.liens === r.liens) return;
+    alerteRemplissage = r;
+    buildSidebar();
+}
+
+function buildAlertePanel(): HTMLElement | null {
+    const a = alerteRemplissage;
+    if (!a) return null;
+
+    const s = section("⚠︎  Valeurs de flux écrasées par Excel");
+    const p = document.createElement("p");
+    p.className = "hint warn";
+    p.textContent =
+        `La formule ${a.formule} occupait ${a.liens} liens à l'identique dans la colonne `
+        + "« Valeur du flux ». C'est la correction automatique d'Excel « Remplir les formules "
+        + "dans les tableaux pour créer des colonnes calculées » : elle a recopié une formule "
+        + "saisie sur un seul lien par-dessus les valeurs des autres. Ces valeurs-là sont "
+        + "perdues dans ce classeur.";
+    s.appendChild(p);
+    s.appendChild(hint(
+        "Le complément vient de retirer la recopie : la colonne ne se remplira plus toute seule. "
+        + "Pour retrouver les valeurs, restaure une version du classeur antérieure à la recopie. "
+        + "Pour que cela ne recommence pas, décoche dans Excel : Préférences ▸ Vérification ▸ "
+        + "Options de correction automatique ▸ Mise en forme automatique au cours de la frappe ▸ "
+        + "« Remplir les formules dans les tableaux pour créer des colonnes calculées »."
+    ));
+    const b = document.createElement("button");
+    b.className = "linklike";
+    b.textContent = "J'ai lu — masquer cet avertissement";
+    b.addEventListener("click", () => { alerteRemplissage = null; buildSidebar(); });
+    s.appendChild(b);
     return s;
 }
 
@@ -2586,6 +2647,9 @@ async function pushToExcel(opts?: { silencieux?: boolean }): Promise<void> {
         }
         markAllSynced();
         dirtySinceSync = false;
+        // Avant le render : l'alerte est une carte du panneau, et elle doit
+        // apparaître dans la reconstruction qui suit, pas à la suivante.
+        signalerRemplissage(res.remplissage);
         if (!linkDrag && !dragState) {
             render();
             buildSidebar();
@@ -2674,6 +2738,7 @@ async function pullExcel(manual: boolean): Promise<void> {
     if (assigned) {
         const w = await d.writeExcel({ nodes: model.nodes, links: model.links }, excelPath);
         if (w.ok) markAllSynced();
+        signalerRemplissage(w.remplissage);
     }
 }
 

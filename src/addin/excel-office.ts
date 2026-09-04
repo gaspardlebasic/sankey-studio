@@ -370,58 +370,106 @@ export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel |
   });
 }
 
+/** Un remplissage d'Excel reconnu dans « Valeur du flux », et non réémis. */
+export interface Remplissage {
+  /** La formule recopiée, « = » compris. */
+  formule: string;
+  /** Nombre de liens qu'elle occupait. */
+  liens: number;
+}
+
+/** Ce que la détection rend : les lignes à ne pas préserver, et de quoi le dire. */
+interface Remplissages {
+  /** Indices, dans le corps du tableau, des lignes issues d'un remplissage. */
+  ignorees: Set<number>;
+  /** Le plus gros remplissage trouvé — celui qu'on nomme à l'utilisatrice. */
+  principal: Remplissage | null;
+}
+
+const AUCUN_REMPLISSAGE: Remplissages = { ignorees: new Set(), principal: null };
+
 /**
- * La colonne « Valeur du flux » est-elle une COLONNE CALCULÉE d'Excel ?
+ * Quelles lignes de « Valeur du flux » sont un REMPLISSAGE d'Excel — pas des
+ * données de lien ?
  *
- * POURQUOI CETTE QUESTION EXISTE. Excel transforme une colonne de tableau en
- * « colonne calculée » dès que ses cellules portent toutes la MÊME formule : il
- * inscrit alors un `calculatedColumnFormula` dans le tableau et **remplit
- * lui-même toute la colonne**, ligne après ligne, en écrasant les nombres qui
- * s'y trouvaient. Le classeur d'AgriParis Seine a fini ainsi : 150 liens
- * portant tous `='Blé tendre'!$C$8`, et l'affectation des valeurs de
- * modélisation aux liens détruite.
+ * POURQUOI CETTE QUESTION EXISTE. Excel a une correction automatique nommée
+ * « Remplir les formules dans les tableaux pour créer des colonnes calculées » :
+ * dès qu'une formule est saisie dans UNE cellule d'une colonne de tableau, il la
+ * recopie sur **toutes les autres lignes**, écrasant les nombres qui s'y
+ * trouvaient. Le classeur d'AgriParis Seine a fini ainsi : `='Blé tendre'!$C$8`
+ * était la formule légitime du PREMIER lien (la production de blé tendre
+ * non-bio) ; Excel l'a posée sur les 149 autres, et l'affectation des valeurs de
+ * modélisation aux liens a été détruite.
  *
- * Ce que nous faisions alors : relire ces 150 cellules comme autant de formules
+ * Ce que nous faisions alors : relire ces cellules comme autant de formules
  * d'utilisatrice, et les RÉÉCRIRE toutes à l'identique. Le complément cimentait
  * la corruption — et la recréait dès la première écriture qui suivait une
  * restauration du classeur.
  *
- * Une même formule sur TOUTES les lignes n'est jamais une donnée de lien : deux
- * liens n'ont pas la même valeur de flux par hasard, encore moins cent
- * cinquante. On la reconnaît donc pour ce qu'elle est — un remplissage
- * automatique d'Excel — et on ne la réémet pas. La colonne, réécrite en
- * `.values`, perd ses formules : Excel abandonne du même coup la colonne
- * calculée, et le classeur est réparé au lieu d'être ré-abîmé.
+ * CE QUI TRAHIT UNE RECOPIE : **le même texte de formule ET la même valeur
+ * calculée sur au moins deux liens.** Deux liens n'ont pas la même valeur de
+ * flux par hasard, encore moins depuis la même cellule. Les deux moitiés du
+ * critère comptent :
  *
- * Renvoie la formule fautive, ou `null` quand la colonne est saine.
+ * - la formule seule ne suffit pas — une vraie colonne calculée, écrite avec
+ *   une référence structurée (`=[@Quantité]*1000`), porte le même texte partout
+ *   et reste des données ; elle donne des valeurs DIFFÉRENTES ligne à ligne ;
+ * - la valeur seule ne suffit pas non plus : deux liens peuvent légitimement
+ *   valoir 0.
+ *
+ * On juge donc LIGNE PAR LIGNE, et pas colonne entière — c'est ce qui rattrape
+ * les remplissages PARTIELS. Après une restauration, ou une correction faite à
+ * la main sur quelques lignes, une colonne peut porter cent lignes recopiées et
+ * trente rescapées : l'ancien critère (« toutes les lignes, la même formule »)
+ * la déclarait saine, le complément réémettait la formule sur les cent, et
+ * Excel recréait la colonne calculée — tuant les trente survivantes.
+ *
+ * Les lignes reconnues perdent leur formule : réécrites en `.values`, elles
+ * font abandonner à Excel sa colonne calculée. Leur VALEUR, elle, est déjà
+ * perdue — Excel l'a écrasée avant nous. D'où l'alerte, remontée jusqu'au volet.
  */
-function colonneCalculee(
+function lignesDeRemplissage(
   liens: TableauTrouve, valeurs: unknown[][], formules: unknown[][]
-): string | null {
+): Remplissages {
   const iVal = liens.index.get("Valeur du flux");
-  if (iVal === undefined) return null;
+  if (iVal === undefined) return AUCUN_REMPLISSAGE;
   const lignesV = lignesDonnees(valeurs);
   const lignesF = lignesDonnees(formules);
 
-  let commune: string | null = null;
-  let lignes = 0;
+  // Groupées par (formule, valeur produite) : c'est le couple qui trahit.
+  const groupes = new Map<string, { formule: string; lignes: number[] }>();
   for (let i = 0; i < lignesV.length; i++) {
     if (ligneVide(lignesV[i])) continue;          // ligne de réserve : elle ne compte pas
-    const brute = texte(lignesF[i] ? lignesF[i][iVal] : "");
-    if (brute.charAt(0) !== "=") return null;     // une seule cellule sans formule suffit
-    if (commune === null) commune = brute;
-    else if (commune !== brute) return null;      // formules distinctes : colonne saine
-    lignes++;
+    const f = texte(lignesF[i] ? lignesF[i][iVal] : "");
+    if (f.charAt(0) !== "=") continue;            // pas une formule : rien à suspecter
+    const cle = f + " " + texte(lignesV[i][iVal]);
+    const g = groupes.get(cle);
+    if (g) g.lignes.push(i);
+    else groupes.set(cle, { formule: f, lignes: [i] });
   }
-  // Une seule ligne ne prouve rien : c'est le cas normal d'un lien qui porte
-  // une formule. Il en faut au moins deux, identiques, pour que ce soit un
-  // remplissage.
-  return lignes >= 2 ? commune : null;
+
+  const ignorees = new Set<number>();
+  let principal: Remplissage | null = null;
+  for (const g of groupes.values()) {
+    // Une ligne seule ne prouve rien : c'est le cas normal d'un lien qui porte
+    // sa formule. Il en faut au moins deux, concordantes.
+    if (g.lignes.length < 2) continue;
+    for (const i of g.lignes) ignorees.add(i);
+    if (!principal || g.lignes.length > principal.liens) {
+      principal = { formule: g.formule, liens: g.lignes.length };
+    }
+  }
+  return ignorees.size ? { ignorees, principal } : AUCUN_REMPLISSAGE;
 }
 
-/** Extrait la table des formules à partir de valeurs + formules déjà chargées. */
+/**
+ * Extrait la table des formules à partir de valeurs + formules déjà chargées.
+ * `ignorees` désigne les lignes qu'un remplissage d'Excel occupe : leur formule
+ * n'est pas d'elles, et ne doit surtout pas repartir dans le classeur.
+ */
 function collecterFormules(
-  liens: TableauTrouve, valeurs: unknown[][], formules: unknown[][]
+  liens: TableauTrouve, valeurs: unknown[][], formules: unknown[][],
+  ignorees: Set<number>
 ): Formules {
   const out: Formules = new Map();
   const poser = (cle: string, e: FormulePreservee): void => {
@@ -436,6 +484,7 @@ function collecterFormules(
   const lignesV = lignesDonnees(valeurs);
   const lignesF = lignesDonnees(formules);
   for (let i = 0; i < lignesF.length; i++) {
+    if (ignorees.has(i)) continue;              // recopie d'Excel : pas une formule à nous
     const brute = texte(lignesF[i][iVal]);
     if (brute.charAt(0) !== "=") continue;      // pas une formule : rien à préserver
     const formule = brute.slice(1);             // convention : sans le « = »
@@ -625,10 +674,12 @@ export interface ResultatEcriture {
   /** Excel a-t-il enregistré (seulement si options.save). */
   enregistre: boolean;
   /**
-   * Formule d'une « colonne calculée » d'Excel trouvée sur la colonne
-   * « Valeur du flux » et défaite par cette écriture. Absente = rien à signaler.
+   * Remplissage automatique d'Excel trouvé sur « Valeur du flux » et défait par
+   * cette écriture. Absent = rien à signaler. **Présent, il doit être MONTRÉ** :
+   * les valeurs de ces liens sont perdues, et seule l'utilisatrice peut le
+   * savoir et restaurer une version antérieure du classeur.
    */
-  colonneCalculee?: string;
+  remplissage?: Remplissage;
   ms: number;
   error?: string;
 }
@@ -675,13 +726,12 @@ export async function ecrireDiagramme(
     lLignes.load("count");
     await context.sync();                                          // sync 3
 
-    // Une colonne « Valeur du flux » entièrement remplie d'une même formule est
-    // un remplissage d'Excel, pas des données : on ne la réémet pas, et
-    // l'écriture en `.values` qui suit défait la colonne calculée.
-    const calculee = colonneCalculee(t.liens, rLiens.values, rLiens.formulas);
-    const carte: Formules = calculee
-      ? new Map()
-      : collecterFormules(t.liens, rLiens.values, rLiens.formulas);
+    // Une même formule produisant la même valeur sur plusieurs liens est un
+    // remplissage d'Excel, pas des données : on ne la réémet pas, et l'écriture
+    // en `.values` qui suit défait la colonne calculée.
+    const remplissages = lignesDeRemplissage(t.liens, rLiens.values, rLiens.formulas);
+    const carte: Formules = collecterFormules(
+      t.liens, rLiens.values, rLiens.formulas, remplissages.ignorees);
 
     // Le tri des lignes et la réémission des formules viennent du module
     // partagé : identiques à l'écriture du .xlsx, par construction.
@@ -725,7 +775,7 @@ export async function ecrireDiagramme(
       formules: nombreDeFormulesReemises(linkRows),
       enregistre,
       ms: Date.now() - t0,
-      ...(calculee ? { colonneCalculee: calculee } : {})
+      ...(remplissages.principal ? { remplissage: remplissages.principal } : {})
     };
   });
 }
