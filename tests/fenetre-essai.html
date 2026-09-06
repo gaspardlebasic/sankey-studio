@@ -87,10 +87,10 @@
       { id: "n3", name: "Beurre", column: 3, title: "Aval", order: 0, lane: 1, kind: "produit", filiere: "Lait", color: "#e79a3c" }
     ],
     links: [
-      { sourceId: "n1", targetId: "n2", sourceName: "Production", targetName: "Lait cru", value: 5500, unit: "t" },
-      { sourceId: "n2", targetId: "n3", sourceName: "Lait cru", targetName: "Beurre", value: 92, unit: "t" }
+      { sourceId: "n1", targetId: "n2", sourceName: "Production", targetName: "Lait cru", value: 5500, unit: "t", bio: 0.4 },
+      { sourceId: "n2", targetId: "n3", sourceName: "Lait cru", targetName: "Beurre", value: 92, unit: "t", bio: 0 }
     ],
-    hasLane: true, hasKind: true
+    hasLane: true, hasKind: true, hasBio: true
   };
   var apparence = null;
   var derniereEcriture = null;

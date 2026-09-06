@@ -244,7 +244,8 @@ const rectsApercu = () => [...document.querySelectorAll('#canvas rect[data-id]')
  */
 const noeudsRecouverts = (sourceId, cibleId) => {
     const ruban = document.querySelector(
-        '#canvas path[data-source="' + sourceId + '"][data-target="' + cibleId + '"]');
+        '#canvas path:not(.lien-bio)[data-source="' + sourceId + '"][data-target="'
+        + cibleId + '"]');
     if (!ruban) throw new Error('ruban non peint : ' + sourceId + ' -> ' + cibleId);
     const num = (el, a) => parseFloat(el.getAttribute(a));
     // Cette version de Chromium n'accepte qu'un SVGPoint, pas un DOMPoint.
@@ -267,6 +268,50 @@ const noeudsRecouverts = (sourceId, cibleId) => {
         })
         .map(rc => rc.getAttribute('data-id'));
 };
+/**
+ * Part du ruban que le bandeau bio recouvre RÉELLEMENT.
+ * On balaie une verticale juste à la sortie du nœud d'origine et on compte les
+ * points qui tombent dans le tracé peint — du ruban, puis du bandeau. Jamais un
+ * calcul refait d'après le modèle : c'est la peinture qui doit être jugée.
+ */
+const mesurerBio = ruban => {
+    const src = ruban.getAttribute('data-source');
+    const dst = ruban.getAttribute('data-target');
+    const bio = document.querySelector(
+        '#canvas path.lien-bio[data-source="' + src + '"][data-target="' + dst + '"]');
+    const rc = document.querySelector('#canvas rect[data-id="' + src + '"]');
+    if (!rc) throw new Error('origine non peinte dans l aperçu : ' + src);
+    const x = parseFloat(rc.getAttribute('x')) + parseFloat(rc.getAttribute('width')) + 1;
+    // Cette version de Chromium n'accepte qu'un SVGPoint, pas un DOMPoint.
+    const pt = ruban.ownerSVGElement.createSVGPoint();
+    pt.x = x;
+    const dedans = (el, y) => { pt.y = y; return el.isPointInFill(pt); };
+    const b = ruban.getBBox();
+    let nR = 0, nB = 0, hautR = null, hautB = null;
+    for (let y = b.y; y <= b.y + b.height; y += 0.1) {
+        if (dedans(ruban, y)) { nR++; if (hautR === null) hautR = y; }
+        if (bio && dedans(bio, y)) { nB++; if (hautB === null) hautB = y; }
+    }
+    return {
+        lien: src + ' -> ' + dst,
+        part: nR ? nB / nR : 0,
+        // Le bandeau part du BORD SUPÉRIEUR du ruban : les deux commencent au
+        // même endroit, sinon on verrait un vert flottant au milieu du flux.
+        ecartHaut: hautB === null ? null : Math.abs(hautB - hautR)
+    };
+};
+/** Les rubans les plus épais de l'aperçu, chacun mesuré par mesurerBio. */
+const rubansMesures = n => [...document.querySelectorAll('#canvas path[data-source]')]
+    .filter(el => !el.classList.contains('lien-bio'))
+    .map(el => ({ el, h: el.getBBox().height }))
+    .sort((a, b) => b.h - a.h)
+    .slice(0, n)
+    .map(x => mesurerBio(x.el));
+/** Tracés des rubans (hors bandeaux), pour vérifier qu'ils n'ont pas bougé. */
+const tracesRubans = () => [...document.querySelectorAll('#canvas path[data-source]')]
+    .filter(el => !el.classList.contains('lien-bio'))
+    .map(el => el.getAttribute('d'));
+
 /** Étiquettes de l'aperçu réellement peintes, avec la place qu'elles occupent. */
 const etiquettesApercu = () => [...document.querySelectorAll('#canvas text[data-label-for]')]
     .map(t => {

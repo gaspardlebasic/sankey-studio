@@ -59,6 +59,8 @@ const SCENARIO = `(async () => {
   segs[1].click(); await sleep(150);
   out.apercu_rendu = !document.querySelector('#canvas .edit-node')
       && !!document.querySelector('#canvas path, #canvas rect');
+  // La part bio du classeur se voit : deux liens la portent, deux bandeaux.
+  out.bandeau_bio_peint = document.querySelectorAll('#canvas path.lien-bio').length === 2;
   document.querySelectorAll('#toolbar .segmented .seg')[0].click(); await sleep(150);
   out.retour_edition = !!document.querySelector('#canvas .edit-node');
 
@@ -172,18 +174,22 @@ const CLASSEUR = (() => {
     n("n9", "Consommation de produits laitiers", 6, "", 1, "", "produit")
   ];
   const nom = id => nodes.find(x => x.id === id).name;
-  const l = (s2, t, value) =>
-    ({ sourceId: s2, targetId: t, sourceName: nom(s2), targetName: nom(t), value, unit: "t" });
+  // `bio` : la part du flux en bio / durable, telle que la colonne du classeur
+  // la donne — c'est elle qui fait peindre le bandeau vert dans l'aperçu.
+  const l = (s2, t, value, bio) =>
+    ({ sourceId: s2, targetId: t, sourceName: nom(s2), targetName: nom(t),
+       value, unit: "t", bio: bio || 0 });
   return {
     nodes,
     links: [
-      l("n1", "n2", 5500000), l("n2", "n3", 5500000),
+      l("n1", "n2", 5500000, 0.5), l("n2", "n3", 5500000, 0.5),
       l("n3", "n4", 92000), l("n3", "n5", 497000), l("n3", "n6", 652000),
       l("n4", "n7", 92000), l("n5", "n7", 497000), l("n6", "n7", 652000),
       l("n7", "n8", 500000), l("n7", "n9", 741000)
     ],
     hasLane: true,
-    hasKind: true
+    hasKind: true,
+    hasBio: true
   };
 })();
 

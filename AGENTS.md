@@ -14,7 +14,7 @@ d'Excel ont été retirés. Electron ne subsiste que comme **banc d'essai** (cf.
 npm install          # une seule fois
 npm run build        # construit dist/addin (le complément) et dist/renderer (le banc)
 npm test             # toutes les suites
-npm run smoke        # test de fumée de bout en bout (16 vérifications)
+npm run smoke        # test de fumée de bout en bout (17 vérifications)
 npm run addin:install -- --enligne   # installe le complément publié sur ce poste
 npm run excel:cache  # vide le cache d'Excel pour Mac après une publication
 ```
@@ -318,11 +318,12 @@ un poste, c'est `npm run addin:install -- --enligne`.
 - **FlowNode** : `id, name, column, title, order, lane, kind, filiere, color, x, y`.
   `lane` = **couloir** horizontal (entier >= 1, 1 par défaut) ;
   `kind` = **type** du nœud, `"produit"` (défaut) ou `"industrie"`.
-- **FlowLink** : `id, source, target, value, unit, colorOverride?`
-  (`colorOverride` = surcharge couleur propre au lien, **app only**, absente de l'Excel).
+- **FlowLink** : `id, source, target, value, unit, colorOverride?, bio?`
+  (`colorOverride` = surcharge couleur propre au lien, **app only**, absente de l'Excel ;
+  `bio` = part du flux en bio / durable, de 0 à 1, **lue dans le classeur et jamais réécrite**).
 - **Excel** : un onglet `Diagramme`, deux tableaux Excel (ListObjects) côte à côte :
   - **Noeuds** (A..I) : Filière · Noeud · Numéro de colonne d'affichage · Intitulé de la colonne d'affichage · Ordre vertical d'affichage · Couleur · ID · **Couloir** · **Type**
-  - une colonne vide (`GAP = 1`), puis **Liens** (K..Q) : Filière · Origine · Destination · Valeur du flux · Unité · ID origine · ID destination
+  - une colonne vide (`GAP = 1`), puis **Liens** (K..R) : Filière · Origine · Destination · Valeur du flux · Unité · ID origine · ID destination · **Part bio / durable**
   - **Rangement imposé à l'écriture** : les nœuds descendent par **filière**, puis **colonne**,
     **couloir** et **ordre vertical** ; les liens suivent leur **origine**, puis leur
     **destination**. Le classeur se lit ainsi dans l'ordre où on voit le diagramme. Le tri vit
@@ -334,12 +335,23 @@ un poste, c'est `npm run addin:install -- --enligne`.
     deux tableaux ne sont pas forcément aux mêmes adresses qu'aujourd'hui. « Couloir » puis
     « Type » sont d'ailleurs ajoutés **en fin** de liste pour ne pas bousculer les colonnes
     existantes.
+  - **« Part bio / durable » est LUE, jamais ÉCRITE** (`LINK_COL_BIO`,
+    `LINK_COLS_ECRITES`). C'est une donnée de modélisation, souvent calculée
+    (`=Bio!C2/Bio!D2`) : réécrire la colonne effacerait ce calcul, exactement ce qu'Excel a
+    fait à « Valeur du flux » chez AgriParis Seine. La laisser hors des colonnes écrites la
+    range parmi les **colonnes de l'utilisatrice** — sa formule survit, et elle voyage avec sa
+    ligne au retri (`reporterEtrangeres`). Elle reste dans `LINK_COLS` pour qu'un classeur
+    préparé par le complément la porte d'emblée. Toute colonne en lecture seule doit rester
+    **en fin** de `LINK_COLS` : `buildModelRows` produit les cellules dans l'ordre de
+    `LINK_COLS_ECRITES`.
   - `readDiagram` renvoie **`hasLane`** et **`hasKind`** : si le classeur ignore les couloirs
     (ou les types), la réconciliation **garde** ceux de l'app au lieu de tout remettre au défaut.
   - « Type » s'écrit **en clair** (« Produit » / « Industrie ») : c'est une colonne que
     l'utilisatrice lit et remplit. La relecture (`typeDepuisTexte`) tolère la casse, les
     accents et les formulations (« Étape de transformation », « commercialisation »…) ;
     tout ce qui n'évoque pas une industrie est un produit.
+  - Et **`hasBio`** pour le tableau des liens, de même : sans la colonne, l'app garde les
+    parts qu'elle connaît.
   - À la réécriture, la **mise en forme utilisateur est préservée** (`preserve` dans
     `updateExistingWorkbook` : styles de cellules `s=`, hauteurs de lignes, `<cols>`,
     `tableStyleInfo`) — attention aux attributs à préfixe (`x14ac:` …) qu'il faut retirer.
@@ -465,6 +477,29 @@ un poste, c'est `npm run addin:install -- --enligne`.
   - Les tests mesurent le **recouvrement réellement peint** (`noeudsRecouverts` dans
     `tests/helpers.js`, par `isPointInFill` sur le tracé) et vérifient que le rendu « tout droit »,
     lui, recouvre bien le nœud traversé — sans quoi le test ne prouverait rien.
+- **Part bio / durable : un bandeau vert sur la tranche haute du ruban.** Chaque lien porte
+  une part de flux bio (colonne « Part bio / durable » du tableau des liens, de 0 à 1) ; le
+  moteur la peint comme une **bande du ruban** — entièrement vert à 100 %, deux flux collés
+  l'un à l'autre à 50 %, ruban inchangé à 0 %.
+  - **Une bande, pas un ruban de plus** : `bandePath` trace la portion du ruban comprise entre
+    deux décalages de son axe, et `ribbonPath` n'en est que le cas [-e/2, +e/2]. Le bandeau
+    suit donc les mêmes escales et la même courbure, et l'**épaisseur du flux ne change pas** —
+    une coupe verticale du diagramme totalise toujours le même flux. Un test compare les
+    tracés `d` des rubans avec et sans part bio : ils doivent être identiques au caractère près.
+  - **La saisie se fait dans le classeur**, comme la valeur du flux : le panneau l'affiche en
+    lecture seule (nous n'écrivons jamais cette colonne, une saisie faite là serait perdue en
+    silence).
+  - **La colonne accepte une part ou des pour cent** (`partBioDepuisTexte`) : « 0,5 », « 50 »
+    et une cellule mise en forme « 50 % » (qu'Excel rend en 0,5) disent tous la moitié — au
+    delà de 1, c'est un pourcentage. Tout ce qui n'est pas un nombre vaut 0.
+  - Les bandeaux vivent dans **leur propre groupe** (`gBio`), après tous les rubans : ils se
+    posent au-dessus de leur ruban et jamais entre deux d'entre eux. Ils portent
+    `data-source`/`data-target` comme les rubans, plus une classe `lien-bio` — d'où le
+    `:not(.lien-bio)` des sélecteurs de tests qui visent le ruban.
+  - Les tests mesurent la **part réellement peinte** (`mesurerBio` dans `tests/helpers.js`,
+    par `isPointInFill` le long d'une verticale à la sortie du nœud d'origine) et vérifient
+    que le bandeau part bien du **bord supérieur** du ruban.
+  - Couleur et présence sont réglables dans la carte « Liens » (`options.links.bio`).
 - **La colonne « Valeur du flux » ne doit JAMAIS se remplir toute seule.** Excel a une
   correction automatique — *« Remplir les formules dans les tableaux pour créer des colonnes
   calculées »* — qui recopie sur **toutes les lignes** une formule saisie dans UNE cellule d'une

@@ -36,8 +36,29 @@ const LINK_COLS = [
   "Valeur du flux",
   "Unité",
   "ID origine",
-  "ID destination"
+  "ID destination",
+  "Part bio / durable"
 ];
+
+/**
+ * La colonne que le complément LIT SANS JAMAIS L'ÉCRIRE.
+ *
+ * La part bio est une donnée de modélisation, comme la valeur du flux : elle se
+ * saisit dans le classeur, et très souvent par un calcul (« =C8/C7 »). Or nous
+ * réécrivons chaque colonne que nous nous attribuons, ce qui effacerait ce
+ * calcul. La laisser hors des colonnes écrites la range parmi les colonnes de
+ * l'utilisatrice : elle n'est jamais recalculée, sa formule survit, et elle
+ * VOYAGE AVEC SA LIGNE au retri (reporterEtrangeres). Elle reste dans
+ * `LINK_COLS` pour qu'un classeur préparé par le complément la porte d'emblée.
+ */
+const LINK_COL_BIO = "Part bio / durable";
+
+/**
+ * Colonnes des liens réellement écrites — et l'ordre exact des cellules que
+ * `buildModelRows` produit pour chaque lien. Toute colonne en lecture seule
+ * doit rester EN FIN de `LINK_COLS`, sans quoi cet alignement se romprait.
+ */
+const LINK_COLS_ECRITES = LINK_COLS.filter(c => c !== LINK_COL_BIO);
 
 const NODE_START = 1; // colonne A
 // Une colonne vide sépare les deux tableaux : elle aère la lecture et laisse de
@@ -88,6 +109,22 @@ function typeDepuisTexte(v) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
   return /indus|etape|transform|commerc/.test(s) ? "industrie" : "produit";
+}
+
+/**
+ * Part du flux qui est bio / durable, lue dans une cellule : un nombre de 0 à 1.
+ *
+ * La colonne se remplit à la main, et de deux façons également naturelles :
+ * « 0,5 » (une part) ou « 50 » (des pour cent) — Excel rend d'ailleurs 0,5 pour
+ * une cellule mise en forme « 50 % ». D'où la règle, qui les accepte toutes :
+ * **au-delà de 1, c'est un pourcentage**. Tout ce qui n'est pas un nombre
+ * (cellule vide, texte, colonne absente) vaut 0 : le lien se dessine alors
+ * exactement comme avant l'arrivée de cette colonne.
+ */
+function partBioDepuisTexte(v) {
+  const n = Number(String(v === undefined || v === null ? "" : v).replace(",", "."));
+  if (!isFinite(n) || n <= 0) return 0;
+  return Math.min(1, n > 1 ? n / 100 : n);
 }
 
 /**
@@ -261,8 +298,8 @@ function buildModelRows(model, formulaMap) {
 }
 
 module.exports = {
-  NODE_COLS, LINK_COLS, NODE_START, GAP, LINK_START,
-  toInt, toNum, couloirDe, TYPE_LABELS, typeDe, typeDepuisTexte,
+  NODE_COLS, LINK_COLS, LINK_COL_BIO, LINK_COLS_ECRITES, NODE_START, GAP, LINK_START,
+  toInt, toNum, couloirDe, TYPE_LABELS, typeDe, typeDepuisTexte, partBioDepuisTexte,
   comparerTexte, comparerFiliere, comparerPlacement, filiereDuLien,
   ancrerFormule, buildModelRows
 };

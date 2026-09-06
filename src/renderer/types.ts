@@ -40,6 +40,20 @@ export interface FlowLink {
     value: number; // valeur du flux (proviendra d'Excel ; défaut 1)
     unit?: string; // unité affichée avec la valeur
     colorOverride?: string | null; // couleur propre au lien (apparence, app only)
+    /**
+     * Part du flux qui est bio / durable, de 0 à 1. Absente = 0, et le ruban se
+     * dessine alors exactement comme avant. Vient du classeur (colonne « Part
+     * bio / durable » du tableau des liens) et n'y retourne jamais : c'est une
+     * donnée de l'utilisatrice, souvent calculée, que nous ne réécrivons pas.
+     */
+    bio?: number;
+}
+
+/** Part bio d'un lien, ramenée à un nombre de 0 à 1 (0 par défaut). */
+export function partBio(l: { bio?: number } | null | undefined): number {
+    const v = Number(l && l.bio);
+    if (!isFinite(v) || v <= 0) return 0;
+    return Math.min(1, v);
 }
 
 export interface FlowModel {
@@ -149,6 +163,15 @@ export interface SankeyOptions {
          *   passer sur les nœuds intermédiaires (rendu d'avant l'option).
          */
         traversee: "passage" | "direct";
+        /**
+         * Bandeau qui recouvre la part bio / durable du ruban, depuis son bord
+         * supérieur : à 100 % le lien est entièrement vert, à 50 % on voit deux
+         * flux collés l'un à l'autre, à 0 % le lien est inchangé.
+         */
+        bio: {
+            show: boolean;
+            color: string;
+        };
         showBorder: boolean;
         borderColor: string;
         borderWidth: number;
@@ -257,6 +280,8 @@ export function defaultOptions(): SankeyOptions {
             curveType: "courbe",
             curvature: 50,
             traversee: "passage",
+            // « field » de la palette BASIC : le vert des cultures.
+            bio: { show: true, color: "#adcb47" },
             showBorder: false,
             borderColor: "#000000",
             borderWidth: 1

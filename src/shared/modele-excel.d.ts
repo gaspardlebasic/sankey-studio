@@ -23,6 +23,10 @@ export interface Modele { nodes: NoeudModele[]; links: LienModele[]; }
 
 export const NODE_COLS: string[];
 export const LINK_COLS: string[];
+/** Colonne des liens que le complément lit sans jamais l'écrire. */
+export const LINK_COL_BIO: string;
+/** Colonnes des liens réellement écrites — l'ordre des cellules de linkRows. */
+export const LINK_COLS_ECRITES: string[];
 export const NODE_START: number;
 export const GAP: number;
 export const LINK_START: number;
@@ -33,6 +37,8 @@ export function toNum(v: unknown, dflt: number): number;
 export function couloirDe(n: unknown): number;
 export function typeDe(n: unknown): string;
 export function typeDepuisTexte(v: unknown): NodeKind;
+/** Part bio / durable lue dans une cellule, de 0 à 1 (au-delà de 1 : des %). */
+export function partBioDepuisTexte(v: unknown): number;
 export function comparerTexte(a: unknown, b: unknown): number;
 /** Compare deux filières : une filière vide descend en bas du tableau. */
 export function comparerFiliere(a: unknown, b: unknown): number;

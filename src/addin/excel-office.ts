@@ -20,8 +20,8 @@
  */
 
 import {
-  NODE_COLS, LINK_COLS, NODE_START, LINK_START,
-  buildModelRows, toInt, toNum, typeDepuisTexte
+  NODE_COLS, LINK_COLS, LINK_COL_BIO, LINK_COLS_ECRITES, NODE_START, LINK_START,
+  buildModelRows, toInt, toNum, typeDepuisTexte, partBioDepuisTexte
 } from "../shared/modele-excel.js";
 import type {
   Cellule, FormulePreservee, Modele, NodeKind
@@ -38,6 +38,8 @@ export interface LienExcel {
   sourceId: string | null; targetId: string | null;
   sourceName: string; targetName: string;
   value: number; unit: string;
+  /** Part du flux en bio / durable, de 0 à 1 (0 = colonne vide ou absente). */
+  bio: number;
 }
 export interface DonneesExcel {
   nodes: NoeudExcel[];
@@ -46,6 +48,8 @@ export interface DonneesExcel {
   hasLane?: boolean;
   /** Idem pour « Type ». */
   hasKind?: boolean;
+  /** Le tableau des liens porte-t-il « Part bio / durable » ? */
+  hasBio?: boolean;
   sheetName?: string;
 }
 
@@ -352,7 +356,8 @@ export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel |
           sourceName: s,
           targetName: d,
           value: toNum(col(ligne, "Valeur du flux"), 0),
-          unit: texte(col(ligne, "Unité"))
+          unit: texte(col(ligne, "Unité")),
+          bio: partBioDepuisTexte(col(ligne, LINK_COL_BIO))
         });
       }
     }
@@ -365,7 +370,8 @@ export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel |
       nodes,
       links,
       hasLane: !!(t.noeuds && t.noeuds.index.has("Couloir")),
-      hasKind: !!(t.noeuds && t.noeuds.index.has("Type"))
+      hasKind: !!(t.noeuds && t.noeuds.index.has("Type")),
+      hasBio: !!(t.liens && t.liens.index.has(LINK_COL_BIO))
     };
   });
 }
@@ -503,8 +509,9 @@ function collecterFormules(
 /* --------------------- colonnes de l'utilisatrice --------------------- */
 
 /**
- * Les colonnes que nous ne connaissons pas — un « Commentaire », une quantité
- * brute — appartiennent à l'utilisatrice. On ne les calcule pas : on les fait
+ * Les colonnes que nous n'écrivons pas — un « Commentaire », une quantité
+ * brute, et « Part bio / durable » que nous LISONS sans jamais l'écrire —
+ * appartiennent à l'utilisatrice. On ne les calcule pas : on les fait
  * VOYAGER AVEC LEUR LIGNE.
  *
  * Ne pas y toucher du tout, comme on le faisait, ne les protégeait qu'en
@@ -742,12 +749,16 @@ export async function ecrireDiagramme(
     // nœud, d'un autre lien. L'appariement se fait sur les VALEURS RELUES,
     // donc avant tout ajustement de hauteur.
     const etrNoeuds = colonnesEtrangeres(t.noeuds, NODE_COLS);
-    const etrLiens = colonnesEtrangeres(t.liens, LINK_COLS);
+    // « Part bio / durable » n'est pas dans les colonnes écrites : elle est donc
+    // traitée comme une colonne de l'utilisatrice — sa formule survit, et elle
+    // suit son lien au retri, comme un « Commentaire » l'aurait fait.
+    const etrLiens = colonnesEtrangeres(t.liens, LINK_COLS_ECRITES);
     const srcNoeuds = etrNoeuds.length
       ? apparierLignes(t.noeuds, NODE_COLS, ID_NOEUD, rNoeuds.values, rNoeuds.formulas, nodeRows)
       : [];
     const srcLiens = etrLiens.length
-      ? apparierLignes(t.liens, LINK_COLS, ID_LIEN, rLiens.values, rLiens.formulas, linkRows)
+      ? apparierLignes(t.liens, LINK_COLS_ECRITES, ID_LIEN,
+                       rLiens.values, rLiens.formulas, linkRows)
       : [];
 
     // --- sync 4 : ajuster la hauteur avant d'écrire.
@@ -757,7 +768,7 @@ export async function ecrireDiagramme(
 
     // --- sync 5 : écrire, colonne par colonne, par nom d'en-tête.
     ecrireColonnes(t.noeuds, NODE_COLS, nodeRows);
-    ecrireColonnes(t.liens, LINK_COLS, linkRows, "Valeur du flux");
+    ecrireColonnes(t.liens, LINK_COLS_ECRITES, linkRows, "Valeur du flux");
     reporterEtrangeres(t.noeuds, etrNoeuds, srcNoeuds, Math.max(MIN_LIGNES, nodeRows.length));
     reporterEtrangeres(t.liens, etrLiens, srcLiens, Math.max(MIN_LIGNES, linkRows.length));
     await context.sync();                                          // sync 5

@@ -4,7 +4,7 @@
 import {
     FlowModel, FlowNode, FlowLink, SankeyOptions, defaultOptions,
     NodeKind, NodeTypeStyle, NodeLabelPosition, NODE_KINDS, NODE_LABEL_POSITIONS,
-    kindOf, defaultTypeStyle, TextStyle, texteAffiche
+    kindOf, defaultTypeStyle, TextStyle, texteAffiche, partBio
 } from "./types";
 import {
     renderSankey, renderSankeyGroups, wrapText, policeDuType, positionDuType
@@ -228,6 +228,8 @@ interface ExcelLink {
     sourceId: string | null; targetId: string | null;
     sourceName: string; targetName: string;
     value: number; unit: string;
+    /** Part du flux en bio / durable, de 0 à 1. */
+    bio?: number;
 }
 interface ExcelData {
     nodes: ExcelNode[];
@@ -236,6 +238,8 @@ interface ExcelData {
     hasLane?: boolean;
     /** Idem pour la colonne « Type » : sans elle, on garde les types de l'app. */
     hasKind?: boolean;
+    /** Idem pour « Part bio / durable » dans le tableau des liens. */
+    hasBio?: boolean;
 }
 
 let canvas: SVGSVGElement;
@@ -1498,13 +1502,20 @@ function buildSidebar(): void {
             s.appendChild(readonly("Flux", `${src} → ${tgt}`));
             if (excelPath) {
                 s.appendChild(readonly("Valeur du flux", formatValue(l.value) + (l.unit ? " " + l.unit : "")));
+                // La part bio suit la valeur : même origine (le classeur), même
+                // raison de ne pas être modifiable ici — nous n'écrivons jamais
+                // sa colonne, une saisie faite là serait perdue sans le dire.
+                s.appendChild(readonly(
+                    "Part bio / durable", Math.round(partBio(l) * 100) + " %"));
                 const vh = document.createElement("p");
                 vh.className = "hint";
-                vh.textContent = "La valeur se saisit dans Excel.";
+                vh.textContent = "La valeur et la part bio se saisissent dans Excel.";
                 s.appendChild(vh);
             } else {
                 s.appendChild(numberField("Valeur (provisoire)", l.value, v => { l.value = v; render(); persist(); }));
                 s.appendChild(textField("Unité", l.unit || "", v => { l.unit = v; render(); persist(); }));
+                s.appendChild(numberField("Part bio / durable (%)", Math.round(partBio(l) * 100),
+                    v => { l.bio = Math.min(1, Math.max(0, v / 100)); render(); persist(); }));
             }
             s.appendChild(divider());
             const srcColor = nodeById(l.source)?.color || options.nodes.nodeColor;
@@ -2060,6 +2071,15 @@ function buildAppearance(): DocumentFragment {
             v => { options.links.borderColor = v; rr(); }));
         b.appendChild(numberField("Épaisseur de bordure", options.links.borderWidth,
             v => { options.links.borderWidth = v; rr(); }));
+        b.appendChild(checkField("Part bio / durable", options.links.bio.show,
+            v => { options.links.bio.show = v; rr(); }));
+        b.appendChild(colorField("Couleur du bio / durable", options.links.bio.color,
+            v => { options.links.bio.color = v; rr(); }));
+        b.appendChild(hint(
+            "Un bandeau recouvre la part bio de chaque ruban, depuis son bord "
+            + "supérieur. Elle se saisit dans le classeur, colonne « Part bio / "
+            + "durable » du tableau des liens : 0,5 ou 50 pour la moitié du flux."
+        ));
         frag.appendChild(b.parentElement as HTMLElement);
     }
 
@@ -2385,9 +2405,13 @@ function applyProject(p: ProjectFile): void {
  */
 function normaliserLiens(): void {
     const L = options.links;
+    const d = defaultOptions().links;
     if (L.traversee !== "passage" && L.traversee !== "direct") {
-        L.traversee = defaultOptions().links.traversee;
+        L.traversee = d.traversee;
     }
+    // `Object.assign` ne fusionne que le premier niveau : un projet écrit avant
+    // le bandeau bio arrive sans `links.bio` du tout.
+    L.bio = Object.assign({}, d.bio, L.bio || {});
 }
 /**
  * Complète les réglages de police d'un projet écrit avant la graisse fine et
@@ -2842,6 +2866,7 @@ function mergeValuesFromExcel(data: ExcelData): void {
         if (l) {
             l.value = E.value;
             if (E.unit) l.unit = E.unit;
+            if (data.hasBio) l.bio = partBio(E);
         }
     });
 }
@@ -2927,9 +2952,15 @@ function reconcileFromExcel(data: ExcelData): boolean {
         if (existing) {
             existing.value = E.value;
             existing.unit = E.unit;
+            // Sans la colonne, le classeur ne dit rien de la part bio : on garde
+            // celle de l'app plutôt que de tout remettre à zéro (cf. hasLane).
+            if (data.hasBio) existing.bio = partBio(E);
             newSyncedLinks.add(key);
         } else {
-            const l: FlowLink = { id: newId("l"), source: s, target: t, value: E.value, unit: E.unit };
+            const l: FlowLink = {
+                id: newId("l"), source: s, target: t, value: E.value, unit: E.unit,
+                bio: data.hasBio ? partBio(E) : 0
+            };
             model.links.push(l);
             linksByPair.set(key, l);
             newSyncedLinks.add(key);

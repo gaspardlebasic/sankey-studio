@@ -126,9 +126,10 @@ await test("lecture : nœuds et liens, avec couloirs et types", async () => {
     id: "n1", name: "Production bio", column: 1, title: "Production", order: 0,
     lane: 2, kind: "produit", filiere: "Lait", color: "#adcb47"
   }, "premier nœud");
+  egal(d.hasBio, true, "hasBio");
   egal(d.links[1], {
     sourceId: "n2", targetId: "n3", sourceName: "Lait cru",
-    targetName: "Transformation", value: 95, unit: "t"
+    targetName: "Transformation", value: 95, unit: "t", bio: 0
   }, "second lien : la valeur calculée est lue, pas la formule");
 });
 
@@ -175,6 +176,39 @@ await test("lecture : lignes vides et incomplètes ignorées", async () => {
   const d = await office.lireDiagramme();
   egal(d.nodes.length, 1, "seul le nœud nommé est retenu");
   egal(d.links.length, 0, "un lien sans origine ou sans destination est ignoré");
+});
+
+await test("lecture : la part bio accepte une part comme un pourcentage", async () => {
+  // La colonne se remplit à la main : « 0,5 », « 50 » et une cellule mise en
+  // forme « 50 % » (qu'Excel rend en 0,5) doivent toutes dire la moitié.
+  classeurType({
+    liens: [
+      ["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", 0.5],
+      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", 50]
+    ]
+  });
+  const d = await office.lireDiagramme();
+  egal(d.links.map(l => l.bio), [0.5, 0.5], "part et pourcentage disent la même chose");
+});
+
+await test("lecture : une part bio vide, absurde ou absente vaut zéro", async () => {
+  classeurType({
+    liens: [
+      ["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", ""],
+      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", "beaucoup"]
+    ]
+  });
+  const d = await office.lireDiagramme();
+  egal(d.links.map(l => l.bio), [0, 0], "rien de chiffré : aucun bandeau");
+
+  // Un classeur d'avant la colonne : elle manque, et rien ne casse.
+  classeurType({
+    entetesLiens: LINK_COLS.filter(c => c !== "Part bio / durable"),
+    liens: [["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2"]]
+  });
+  const sans = await office.lireDiagramme();
+  egal(sans.hasBio, false, "hasBio faux sans la colonne");
+  egal(sans.links[0].bio, 0, "part bio nulle");
 });
 
 await test("lecture : classeur sans nos tableaux -> null", async () => {
@@ -511,9 +545,9 @@ await test("écriture : une colonne de l'utilisatrice suit SA ligne quand l'ordr
     noeuds: RANGS_QUATRE,
     entetesLiens: avecExtra,
     liens: [
-      ["Lait", "Production bio", "Lait cru", { f: "=Q2*1000", v: 120 }, "t", "n1", "n2", 0.12],
-      ["Lait", "Lait cru", "Transformation", { f: "=Q3*1000", v: 95 }, "t", "n2", "n3", 0.095],
-      ["Lait", "Transformation", "Beurre", { f: "=Q4*1000", v: 30 }, "t", "n3", "n4", 0.03]
+      ["Lait", "Production bio", "Lait cru", { f: "=Q2*1000", v: 120 }, "t", "n1", "n2", "", 0.12],
+      ["Lait", "Lait cru", "Transformation", { f: "=Q3*1000", v: 95 }, "t", "n2", "n3", "", 0.095],
+      ["Lait", "Transformation", "Beurre", { f: "=Q4*1000", v: 30 }, "t", "n3", "n4", "", 0.03]
     ]
   });
   await office.ecrireDiagramme(deplaceTransformation());
@@ -556,8 +590,8 @@ await test("écriture : une ligne nouvelle n'hérite pas de la colonne du voisin
     noeuds: RANGS_QUATRE,
     entetesLiens: avecExtra,
     liens: [
-      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", 0.095],
-      ["Lait", "Transformation", "Beurre", 30, "t", "n3", "n4", 0.03]
+      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", "", 0.095],
+      ["Lait", "Transformation", "Beurre", 30, "t", "n3", "n4", "", 0.03]
     ]
   });
   await office.ecrireDiagramme({ nodes: QUATRE, links: LIENS_QUATRE });
@@ -569,6 +603,32 @@ await test("écriture : une ligne nouvelle n'hérite pas de la colonne du voisin
     ["Transformation -> Beurre", 0.03]
   ], "le lien ajouté arrive avec une cellule vide, pas celle du voisin");
 });
+
+await test("écriture : la part bio n'est JAMAIS réécrite, formule comprise", async () => {
+  // C'est une donnée de l'utilisatrice, souvent calculée. Nous la lisons ; la
+  // réécrire l'écraserait, comme Excel a écrasé « Valeur du flux » chez APS.
+  const c = classeurType({
+    noeuds: RANGS_QUATRE,
+    liens: [
+      ["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2",
+       { f: "=Bio!C2/Bio!D2", v: 0.4 }],
+      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", 0.25],
+      ["Lait", "Transformation", "Beurre", 30, "t", "n3", "n4", 1]
+    ]
+  });
+  await office.ecrireDiagramme(deplaceTransformation());
+
+  const iBio = LINK_COLS.indexOf("Part bio / durable");
+  const liens = c.lignesDe("Liens");
+  egal(liens.map(l => [l[1] + " -> " + l[2], l[iBio]]), [
+    ["Production bio -> Lait cru", 0.4],
+    ["Transformation -> Beurre", 1],
+    ["Lait cru -> Transformation", 0.25]
+  ], "chaque part bio est restée avec SON lien malgré le retri");
+  egal(c.formulesDe("Liens")[0][iBio], "=Bio!C2/Bio!D2",
+    "et la formule de la part bio est intacte");
+});
+
 
 await test("écriture : une formule n'est pas recopiée sur un lien homonyme", async () => {
   // Deux filières, les mêmes noms de nœuds : le repli par noms servait la même

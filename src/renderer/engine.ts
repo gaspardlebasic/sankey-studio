@@ -5,7 +5,8 @@ import { select } from "d3-selection";
 import { sankey } from "d3-sankey";
 import {
     FlowModel, SankeyOptions, NodeKind, NodeTypeStyle, NodeTypeFont, NodeOutline,
-    NodeLabelPosition, NODE_LABEL_POSITIONS, kindOf, defaultTypeStyle, texteAffiche
+    NodeLabelPosition, NODE_LABEL_POSITIONS, kindOf, defaultTypeStyle, texteAffiche,
+    partBio
 } from "./types";
 
 interface ENode {
@@ -45,6 +46,8 @@ interface ELink {
     value: number;
     unit: string;
     colorOverride: string | null;
+    /** Part du flux en bio / durable, de 0 à 1 (0 = rien à recouvrir). */
+    bio: number;
     y0?: number;
     y1?: number;
     width?: number;
@@ -767,6 +770,9 @@ function drawSankey(
     const prefixe = `d${compteurDiagramme++}`;
     const defs = svg.append("defs");
     const gLinks = svg.append("g");
+    // Le bandeau bio se pose SUR son ruban, dans son propre groupe : il vient
+    // après tous les rubans, donc au-dessus, et jamais entre deux d'entre eux.
+    const gBio = svg.append("g");
     // Les contours passent PAR-DESSUS les rubans (ils entourent le nœud, rubans
     // compris) mais sous les nœuds eux-mêmes.
     const gOutlines = svg.append("g");
@@ -792,7 +798,8 @@ function drawSankey(
             target: l.target,
             value: l.value > 0 ? l.value : 0.000001,
             unit: l.unit || "",
-            colorOverride: l.colorOverride ?? null
+            colorOverride: l.colorOverride ?? null,
+            bio: partBio(l)
         }));
 
     const layerById = couchesModele(model, denseByRaw);
@@ -997,6 +1004,16 @@ function drawSankey(
         });
     }
 
+    // Infobulle d'un ruban — la même sur son bandeau bio, sans quoi survoler la
+    // moitié verte du flux ne dirait plus rien.
+    const titreLien = (d: ELink): string => {
+        const s = (d.source as ENode).name;
+        const t = (d.target as ENode).name;
+        const part = partBio(d);
+        const bio = part > 0 ? ` · dont ${Math.round(part * 100)} % bio / durable` : "";
+        return `${s} → ${t} : ${formatNumber(d.value)}${bio}`;
+    };
+
     gLinks
         .selectAll("path")
         .data(liens)
@@ -1013,11 +1030,31 @@ function drawSankey(
         .attr("stroke", L.showBorder ? L.borderColor : "none")
         .attr("stroke-width", L.showBorder ? clamp(L.borderWidth, 0, 10) : 0)
         .append("title")
-        .text((d: ELink) => {
-            const s = (d.source as ENode).name;
-            const t = (d.target as ENode).name;
-            return `${s} → ${t} : ${formatNumber(d.value)}`;
-        });
+        .text(titreLien);
+
+    /* ---- Part bio / durable : un bandeau vert sur la tranche haute du ruban ----
+       Il en suit exactement le tracé — mêmes escales, même courbure — et n'en
+       recouvre que la part demandée : entière à 100 %, rien à 0 %. Deux flux
+       collés l'un à l'autre, donc, et pas un ruban de plus : l'épaisseur totale
+       reste celle du flux, et une coupe verticale totalise toujours le même. */
+    if (L.bio.show) {
+        gBio
+            .selectAll("path")
+            .data(liens.filter(d => partBio(d) > 0 && (d.width ?? 0) > 0))
+            .enter()
+            .append("path")
+            .attr("class", "lien-bio")
+            .attr("d", (d: ELink) => bandeauBio(d, L.curveType, curvature))
+            .attr("data-source", (d: ELink) => (d.source as ENode).id)
+            .attr("data-target", (d: ELink) => (d.target as ENode).id)
+            // La part réellement peinte, pour les tests et le débogage.
+            .attr("data-bio", (d: ELink) => String(partBio(d)))
+            .attr("fill", L.bio.color)
+            .attr("fill-opacity", opacity)
+            .attr("stroke", "none")
+            .append("title")
+            .text(titreLien);
+    }
 
     /* ---- Nœuds ---- */
     // Échelle réellement obtenue : d3-sankey étire la colonne la plus contrainte
@@ -1319,13 +1356,26 @@ function clamp(v: number, min: number, max: number): number {
 /**
  * Contour d'un ruban : le bord du haut, du départ à l'arrivée, puis le bord du
  * bas en sens inverse. L'épaisseur étant constante, les deux bords suivent la
- * même ligne, décalée de ± une demi-épaisseur.
- *
- * Les points de passage (colonnes seulement traversées) s'intercalent entre le
- * départ et l'arrivée : le ruban file droit sur la largeur de l'escale, puis
- * repart vers le point suivant. Sans passage, le tracé est celui d'avant.
+ * même ligne, décalée de ± une demi-épaisseur — c'est `bandePath`, dont le
+ * ruban entier n'est qu'un cas particulier.
  */
 function ribbonPath(link: ELink, curveType: string, curvature: number): string {
+    const hw = Math.max(0, link.width ?? 0) / 2;
+    return bandePath(link, -hw, hw, curveType, curvature);
+}
+
+/**
+ * Bandeau de la part bio / durable : la TRANCHE HAUTE du ruban, de son bord
+ * supérieur jusqu'à la fraction demandée de son épaisseur. À 100 % il recouvre
+ * le ruban entier, à 0 % il n'est pas dessiné du tout.
+ */
+function bandeauBio(link: ELink, curveType: string, curvature: number): string {
+    const hw = Math.max(0, link.width ?? 0) / 2;
+    return bandePath(link, -hw, -hw + 2 * hw * partBio(link), curveType, curvature);
+}
+
+/** L'axe du ruban : son départ, les escales traversées, son arrivée. */
+function axeRuban(link: ELink): [number, number][] {
     const s = link.source as ENode;
     const t = link.target as ENode;
     const pts: [number, number][] = [[s.x1 ?? 0, link.y0 ?? 0]];
@@ -1334,10 +1384,24 @@ function ribbonPath(link: ELink, curveType: string, curvature: number): string {
         pts.push([p.x1, p.y]);
     });
     pts.push([t.x0 ?? 0, link.y1 ?? 0]);
+    return pts;
+}
 
-    const hw = Math.max(0, link.width ?? 0) / 2;
-    const haut = bordRuban(pts, -hw, curveType, curvature);
-    const bas = bordRuban(pts.slice().reverse(), hw, curveType, curvature);
+/**
+ * Une BANDE du ruban : la portion comprise entre deux décalages de son axe
+ * (en pixels, négatif vers le haut). Le ruban entier est la bande
+ * [-épaisseur/2, +épaisseur/2] ; le bandeau bio en est une tranche.
+ *
+ * Les points de passage (colonnes seulement traversées) s'intercalent entre le
+ * départ et l'arrivée : la bande file droit sur la largeur de l'escale, puis
+ * repart vers le point suivant. Sans passage, le tracé est celui d'avant.
+ */
+function bandePath(
+    link: ELink, de: number, a: number, curveType: string, curvature: number
+): string {
+    const pts = axeRuban(link);
+    const haut = bordRuban(pts, de, curveType, curvature);
+    const bas = bordRuban(pts.slice().reverse(), a, curveType, curvature);
     return `M${haut} L${bas} Z`;
 }
 

@@ -1755,6 +1755,86 @@ test("étiquette : le numéro de colonne n'est plus affiché dans le nœud", "co
   attendu(!/col\s*\d/.test(r.texte), `aucun numéro de colonne dans le nœud (${r.texte})`);
 });
 
+test("part bio : un bandeau vert recouvre la part bio du ruban", "complexe", async p => {
+  // Ce qui compte n'est pas qu'un tracé de plus existe, mais QUELLE PART du
+  // ruban il recouvre, et depuis quel bord : mesuré sur la peinture (isPointInFill).
+  const r = await p(`
+    const m = T.model();
+    const nom = id => (m.nodes.find(n => n.id === id) || {}).name;
+    const ligneN = n => ({ id: n.id, name: n.name, column: n.column, title: n.title,
+                           order: n.order, lane: n.lane, kind: n.kind,
+                           filiere: n.filiere, color: n.color });
+    const lignesN = m.nodes.map(ligneN);
+    const classeur = bio => ({
+      nodes: lignesN,
+      links: m.links.map(l => ({
+        sourceId: l.source, targetId: l.target,
+        sourceName: nom(l.source), targetName: nom(l.target),
+        value: l.value, unit: l.unit || '', bio
+      })),
+      hasLane: true, hasKind: true, hasBio: true
+    });
+    const poser = async bio => {
+      T.setSynced();
+      T.reconcile(classeur(bio));
+      T.refresh();
+      await sleep(150);
+    };
+
+    await versApercu();
+    await poser(0);
+    const sansBio = { bandeaux: document.querySelectorAll('#canvas path.lien-bio').length,
+                      traces: tracesRubans() };
+    await poser(0.5);
+    const moitie = { mesures: rubansMesures(3), traces: tracesRubans() };
+    await poser(1);
+    const tout = rubansMesures(3);
+    return { sansBio, moitie, tout };
+  `);
+  egal(r.sansBio.bandeaux, 0, "à 0 %, aucun bandeau n'est peint");
+  attendu(r.moitie.mesures.length === 3, "trois rubans mesurés");
+  r.moitie.mesures.forEach(mes => {
+    attendu(Math.abs(mes.part - 0.5) < 0.06,
+      `à 50 %, le bandeau doit couvrir la moitié du ruban ${mes.lien} (mesuré ${mes.part})`);
+    attendu(mes.ecartHaut !== null && mes.ecartHaut < 1,
+      `le bandeau de ${mes.lien} doit partir du bord supérieur du ruban`);
+  });
+  r.tout.forEach(mes => {
+    attendu(mes.part > 0.94,
+      `à 100 %, le ruban ${mes.lien} doit être entièrement vert (mesuré ${mes.part})`);
+  });
+  // Deux flux collés l'un à l'autre, pas un ruban de plus : l'épaisseur du flux
+  // ne bouge pas d'un pixel quand la part bio change.
+  egal(r.moitie.traces, r.sansBio.traces, "les rubans eux-mêmes sont inchangés");
+});
+
+test("part bio : la carte « Liens » sait éteindre le bandeau", "complexe", async p => {
+  const r = await p(`
+    const m = T.model();
+    const nom = id => (m.nodes.find(n => n.id === id) || {}).name;
+    T.setSynced();
+    T.reconcile({
+      nodes: m.nodes.map(n => ({ id: n.id, name: n.name, column: n.column, title: n.title,
+                                 order: n.order, lane: n.lane, kind: n.kind,
+                                 filiere: n.filiere, color: n.color })),
+      links: m.links.map(l => ({
+        sourceId: l.source, targetId: l.target,
+        sourceName: nom(l.source), targetName: nom(l.target),
+        value: l.value, unit: l.unit || '', bio: 0.5
+      })),
+      hasLane: true, hasKind: true, hasBio: true
+    });
+    T.refresh();
+    await versApercu();
+    const avant = document.querySelectorAll('#canvas path.lien-bio').length;
+    await cocher('Liens', 'Part bio / durable');
+    const apres = document.querySelectorAll('#canvas path.lien-bio').length;
+    return { avant, apres };
+  `);
+  attendu(r.avant > 0, "des bandeaux sont peints tant que l'option est cochée");
+  egal(r.apres, 0, "décochée, plus aucun bandeau");
+});
+
 test("aperçu : cliquer un libellé sélectionne son nœud", "complexe", async p => {
   const r = await p(`
     const cible = one('Féverolle');
