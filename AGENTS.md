@@ -390,7 +390,7 @@ un poste, c'est `npm run addin:install -- --enligne`.
 - **Types de nœuds (`kind`)** : un nœud est soit un **produit / commodité** qui circule, soit une
   **industrie** — étape de transformation ou de commercialisation. Le type vit dans Excel
   (colonne « Type ») et pilote l'apparence dans l'aperçu : largeur, police, position de
-  l'étiquette et contour.
+  l'étiquette, contour et mosaïque.
   - **Chaque réglage de type vaut `null` tant qu'il n'est pas repris en main** : le type suit
     alors `options.nodes.nodeWidth` / `options.nodeLabels`. C'est ce qui garantit qu'un projet
     d'avant les types s'affiche **au pixel près** comme avant (test dédié dans `tests/run.js`),
@@ -405,6 +405,24 @@ un poste, c'est `npm run addin:install -- --enligne`.
     Le moteur **réserve la place du débordement dans les marges** (`debordement`) : sinon le
     contour de la première et de la dernière colonne serait rogné par le bord du cadre. Cette
     marge n'est prise que si un contour est demandé.
+  - **Mosaïque** (`nodeTypes.<type>.mosaique`) : le nœud est peint en **damier** — un carré
+    sur deux de sa couleur, l'autre blanc, `taille` px de côté (10 par défaut). Sert à marquer
+    une famille de nœuds **sans dépenser une couleur de plus** : le nœud garde la sienne, il la
+    porte autrement.
+    - C'est un `<pattern>` des `defs`, **partagé par (taille, couleur)** et préfixé comme les
+      dégradés (`d<n>-mos<i>`) : sans ce préfixe, deux filières empilées dans le même SVG
+      pointeraient toutes vers le damier du premier bloc.
+    - La **couleur du nœud reste sa couleur** : contour, rubans et dégradés continuent de la
+      lire telle quelle, et un nœud sans mosaïque est peint exactement comme avant (même
+      attribut `fill`). Rien ne bouge dans la géométrie.
+    - **Aperçu et exports seulement** — comme le contour. La vue d'édition garde ses boîtes
+      pleines : elles y sont de gabarit fixe et servent à attraper le nœud, pas à le montrer.
+    - Le test la mesure sur la **peinture** : l'aperçu est rastérisé (SVG → Image → canvas, le
+      chemin même de l'export PNG) et deux colonnes de pixels distantes d'un carré sont lues.
+      Un damier les met **en opposition de phase** — c'est ce qui le distingue de simples
+      rayures, et c'est ce qu'un `fill="url(#…)"` lu dans le DOM ne dirait pas. Quatre
+      mutations vérifiées (rayures au lieu d'un damier, tuile d'un seul carré, taille demandée
+      ignorée, plus de carré blanc).
   - **Position de l'étiquette** : `options.nodeLabels.position` vaut « À côté », « En dessous »
     ou **« Centré sur le nœud »**, et chaque type peut la reprendre à son compte
     (`nodeTypes.<type>.position`, `null` = suivre le réglage global). « Centré » pose le nom

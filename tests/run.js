@@ -1032,6 +1032,82 @@ test("types (aperçu) : le contour peut être du noir transparent", "complexe", 
   egal(r.opacite, 0.3, "l'opacité suit le réglage");
 });
 
+test("types (aperçu) : la mosaïque peint un damier blanc et couleur du nœud", "complexe", async p => {
+  const r = await p(`
+    const m = T.model();
+    // Une couleur franche, loin du blanc : les deux tons du damier se comptent
+    // alors sans ambiguïté sur la peinture, lissage des bords compris.
+    m.nodes.forEach(n => { n.kind = 'industrie'; n.color = '#c0392b'; });
+    T.refresh();
+    await sleep(120);
+    await cocher('Industries / étapes', 'Largeur propre à ce type');
+    await reglerCarte('Industries / étapes', 'Largeur', '40');
+    // D'abord SANS mosaïque : c'est le point de comparaison, sinon rien ne dit
+    // que c'est bien l'option qui change la peinture.
+    await versApercu();
+    const rc = document.querySelector('#canvas rect[data-id]');
+    const id = rc.getAttribute('data-id');
+    const boite = a => parseFloat(rc.getAttribute(a));
+    const avant = { fill: rc.getAttribute('fill'),
+                    boite: [boite('x'), boite('y'), boite('width'), boite('height')],
+                    mosaique: await mesurerMosaique(id, '#c0392b', 10) };
+    await versEdition();
+    await cocher('Industries / étapes', 'Mosaïque');
+    await reglerCarte('Industries / étapes', "Côté d'un carré", '10');
+    await versApercu();
+    const rc2 = document.querySelector('#canvas rect[data-id="' + id + '"]');
+    const boite2 = a => parseFloat(rc2.getAttribute(a));
+    const fill = rc2.getAttribute('fill');
+    // Pas d'expression régulière ici : dans un gabarit JS, « \\( » se replierait
+    // en « ( » avant d'atteindre la page.
+    const motif = fill.slice(0, 5) === 'url(#' && fill.slice(-1) === ')'
+      ? document.getElementById(fill.slice(5, -1)) : null;
+    const res = {
+      avant: avant,
+      fill: fill,
+      motif: motif ? { balise: motif.tagName.toLowerCase(),
+                       largeur: parseFloat(motif.getAttribute('width')),
+                       hauteur: parseFloat(motif.getAttribute('height')),
+                       unites: motif.getAttribute('patternUnits'),
+                       dansDefs: motif.parentElement.tagName.toLowerCase() } : null,
+      boite: [boite2('x'), boite2('y'), boite2('width'), boite2('height')],
+      mosaique: await mesurerMosaique(id, '#c0392b', 10)
+    };
+    await versEdition();
+    return res;
+  `);
+  egal(r.avant.mosaique.plages.length, 1,
+    "sans mosaïque, le nœud est un aplat d'une seule couleur");
+  egal(r.avant.mosaique.opposition, 0,
+    "sans mosaïque, deux colonnes voisines portent le même ton");
+  attendu(r.motif, `la mosaïque doit remplir le nœud par un motif (fill : ${r.fill})`);
+  egal(r.motif.balise, "pattern", "le motif est un <pattern>");
+  egal(r.motif.dansDefs, "defs", "le motif vit dans les <defs> du diagramme");
+  egal(r.motif.unites, "userSpaceOnUse", "la tuile se mesure en pixels du dessin");
+  egal(r.motif.largeur, 20, "une tuile porte deux carrés de 10 px de côté");
+  egal(r.motif.hauteur, 20, "et autant en hauteur");
+  egal(r.boite, r.avant.boite, "la mosaïque ne déplace ni ne redimensionne le nœud");
+  // Ce que voit l'utilisatrice : une colonne de pixels au milieu du nœud
+  // alterne du blanc et la couleur du nœud, par plages de 10 pixels.
+  const c = r.mosaique;
+  attendu(c.blancs > c.hauteur * 0.35 && c.couleurs > c.hauteur * 0.35,
+    `les deux tons se partagent le nœud (blanc ${c.blancs}, couleur ${c.couleurs}, `
+    + `autre ${c.autres}, sur ${c.hauteur} pixels)`);
+  const tons = c.plages.filter(p => p.ton !== "autre").map(p => p.ton);
+  attendu(tons.length >= 3 && tons.every((t, i) => i === 0 || t !== tons[i - 1]),
+    `blanc et couleur alternent (plages : ${JSON.stringify(c.plages)})`);
+  // Les plages du bord sont rognées par le haut et le bas du nœud : seules
+  // celles du milieu portent la taille demandée.
+  const milieu = c.plages.slice(1, -1).filter(p => p.ton !== "autre");
+  attendu(milieu.length > 0 && milieu.every(p => p.n >= 8 && p.n <= 10),
+    `chaque carré fait 10 px de haut (plages : ${JSON.stringify(c.plages)})`);
+  // Un damier, pas des rayures : deux colonnes distantes d'un carré sont en
+  // opposition de phase — au même endroit, l'une est blanche et l'autre non.
+  attendu(c.pointsCompares > 10 && c.opposition > 0.9,
+    `les carrés s'alternent aussi horizontalement (opposition ${c.opposition} `
+    + `sur ${c.pointsCompares} points)`);
+});
+
 test("types : une police propre au type s'applique à l'aperçu et à l'édition", "complexe", async p => {
   const r = await p(`
     const m = T.model();

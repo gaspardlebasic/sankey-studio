@@ -5,8 +5,8 @@ import { select } from "d3-selection";
 import { sankey } from "d3-sankey";
 import {
     FlowModel, SankeyOptions, NodeKind, NodeTypeStyle, NodeTypeFont, NodeOutline,
-    NodeLabelPosition, NODE_LABEL_POSITIONS, kindOf, defaultTypeStyle, texteAffiche,
-    partBio
+    NodeMosaique, NodeLabelPosition, NODE_LABEL_POSITIONS, kindOf, defaultTypeStyle,
+    texteAffiche, partBio
 } from "./types";
 
 interface ENode {
@@ -64,6 +64,11 @@ function laneOf(n: { lane?: number }): number {
 
 /* ------------------------- apparence par type ------------------------- */
 
+/** Fond du damier : l'autre carré sur deux, celui qui n'est pas de la couleur
+ *  du nœud. Blanc, comme le fond du diagramme. */
+const MOSAIQUE_FOND = "#ffffff";
+
+
 /** Réglages d'un type de nœud, complétés si le projet en ignore une partie. */
 function styleDuType(opt: SankeyOptions, kind: NodeKind): NodeTypeStyle {
     const t = opt.nodeTypes && opt.nodeTypes[kind];
@@ -72,7 +77,8 @@ function styleDuType(opt: SankeyOptions, kind: NodeKind): NodeTypeStyle {
         width: typeof t.width === "number" ? t.width : null,
         font: t.font || null,
         position: positionValide(t.position),
-        outline: Object.assign(defaultTypeStyle().outline, t.outline || {})
+        outline: Object.assign(defaultTypeStyle().outline, t.outline || {}),
+        mosaique: Object.assign(defaultTypeStyle().mosaique, t.mosaique || {})
     };
 }
 
@@ -838,6 +844,10 @@ function drawSankey(
         produit: styleDuType(opt, "produit").outline,
         industrie: styleDuType(opt, "industrie").outline
     };
+    const mosaiqueParType: Record<NodeKind, NodeMosaique> = {
+        produit: styleDuType(opt, "produit").mosaique,
+        industrie: styleDuType(opt, "industrie").mosaique
+    };
     const positionParType: Record<NodeKind, NodeLabelPosition> = {
         produit: positionDuType(opt, "produit"),
         industrie: positionDuType(opt, "industrie")
@@ -1066,6 +1076,52 @@ function drawSankey(
         if (v > 0) echelleObtenue = Math.max(echelleObtenue, (((n.y1 ?? 0) - (n.y0 ?? 0)) / v));
     });
 
+    /* ---- Mosaïque : un damier à la PLACE de l'aplat ----
+       Un carré sur deux garde la couleur du nœud, l'autre est blanc. Le motif
+       est déclaré une fois par (taille, couleur) et partagé par tous les nœuds
+       qui le portent ; son identifiant est préfixé comme celui des dégradés,
+       sinon deux filières empilées dans le même SVG pointeraient toutes vers le
+       damier du premier bloc. */
+    const motifs = new Map<string, string>();
+    const motifMosaique = (m: NodeMosaique, couleur: string): string => {
+        const t = clamp(m.taille, 1, 200);
+        const cle = `${t}|${couleur}`;
+        const connu = motifs.get(cle);
+        if (connu) return connu;
+        const id = `${prefixe}-mos${motifs.size}`;
+        motifs.set(cle, id);
+        const pat = defs
+            .append("pattern")
+            .attr("id", id)
+            .attr("patternUnits", "userSpaceOnUse")
+            .attr("width", 2 * t)
+            .attr("height", 2 * t);
+        pat.append("rect")
+            .attr("width", 2 * t)
+            .attr("height", 2 * t)
+            .attr("fill", MOSAIQUE_FOND);
+        // Les deux carrés colorés de la tuile : en haut à gauche, en bas à
+        // droite — le damier se referme donc sur lui-même en se répétant.
+        [[0, 0], [t, t]].forEach(([x, y]) => {
+            pat.append("rect")
+                .attr("x", x)
+                .attr("y", y)
+                .attr("width", t)
+                .attr("height", t)
+                .attr("fill", couleur);
+        });
+        return id;
+    };
+    /* La couleur du nœud reste SA couleur : la mosaïque ne fait que la porter
+       autrement. Contour, rubans et dégradés continuent de la lire telle quelle,
+       et un nœud sans mosaïque est peint exactement comme avant. */
+    const remplissageNoeud = (d: ENode): string => {
+        const m = mosaiqueParType[d.kind];
+        return m.show
+            ? `url(#${motifMosaique(m, nodeDisplayColor(d))})`
+            : nodeDisplayColor(d);
+    };
+
     gNodes
         .selectAll("rect")
         .data(noeuds)
@@ -1078,7 +1134,7 @@ function drawSankey(
         // Repères stables pour les tests et le débogage, comme en vue d'édition.
         .attr("data-id", (d: ENode) => d.id)
         .attr("data-kind", (d: ENode) => d.kind)
-        .attr("fill", (d: ENode) => nodeDisplayColor(d));
+        .attr("fill", (d: ENode) => remplissageNoeud(d));
 
     /* ---- Contours : un liseré autour du nœud, à distance de son bord ----
        Le trait étant centré sur son tracé, on l'écarte de `distance + w/2`

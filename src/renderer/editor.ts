@@ -1956,8 +1956,8 @@ function buildAppearance(): DocumentFragment {
         b.appendChild(divider());
         b.appendChild(hint(
             "Produits et industries peuvent avoir leur propre largeur, leur propre police, "
-            + "leur propre position d'étiquette et leur propre contour : voir les deux "
-            + "cartes qui suivent."
+            + "leur propre position d'étiquette, leur propre contour et leur propre "
+            + "mosaïque : voir les deux cartes qui suivent."
         ));
         frag.appendChild(b.parentElement as HTMLElement);
     }
@@ -2038,6 +2038,22 @@ function buildAppearance(): DocumentFragment {
                 o.mode === "noir" ? "Opacité du contour (%)" : "Assombrissement (%)",
                 o.intensity, 0, 100, v => { o.intensity = v; rr(); }
             ));
+        }
+
+        /* Mosaïque : le nœud garde sa couleur, mais la porte en damier. */
+        b.appendChild(divider());
+        const mo = t.mosaique;
+        b.appendChild(checkField("Mosaïque", mo.show, v => {
+            mo.show = v; rr(); buildSidebar();
+        }));
+        if (mo.show) {
+            b.appendChild(hint(
+                "Un carré sur deux garde la couleur du nœud, l'autre est blanc. "
+                + "Visible dans l'aperçu et les exports ; la vue d'édition, elle, "
+                + "garde ses boîtes pleines."
+            ));
+            b.appendChild(numberField("Côté d'un carré", mo.taille,
+                v => { mo.taille = Math.max(1, v); rr(); }));
         }
         frag.appendChild(b.parentElement as HTMLElement);
     });
@@ -2465,7 +2481,8 @@ function normaliserTypesDeNoeuds(): void {
             width: typeof s.width === "number" ? s.width : null,
             font: s.font ? Object.assign({}, s.font) : null,
             position: NODE_LABEL_POSITIONS.some(([v]) => v === s.position) ? s.position : null,
-            outline: Object.assign(d.outline, s.outline || {})
+            outline: Object.assign(d.outline, s.outline || {}),
+            mosaique: Object.assign(d.mosaique, s.mosaique || {})
         };
     };
     options.nodeTypes = { produit: complet(t.produit), industrie: complet(t.industrie) };

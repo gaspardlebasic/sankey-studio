@@ -269,6 +269,84 @@ const noeudsRecouverts = (sourceId, cibleId) => {
         .map(rc => rc.getAttribute('data-id'));
 };
 /**
+ * Rastérise l'aperçu TEL QU'IL EST PEINT et rend le contexte 2D.
+ * Une mosaïque est un motif SVG : le DOM ne dit que l'intention (« ce nœud est
+ * rempli par url(#…) »), et seule la peinture dit ce que voit l'utilisatrice.
+ * C'est le chemin de l'export PNG de l'application (SVG -> Image -> canvas).
+ */
+const rasteriserApercu = async () => {
+    const svg = document.querySelector('#canvas');
+    const w = Math.round(parseFloat(svg.getAttribute('width')));
+    const h = Math.round(parseFloat(svg.getAttribute('height')));
+    const url = 'data:image/svg+xml;charset=utf-8,'
+        + encodeURIComponent(new XMLSerializer().serializeToString(svg));
+    const img = new Image();
+    await new Promise((res, rej) => {
+        img.onload = () => res();
+        img.onerror = () => rej(new Error('aperçu illisible'));
+        img.src = url;
+    });
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    return ctx;
+};
+/**
+ * La mosaïque d'un nœud, telle qu'elle est PEINTE.
+ * On lit deux colonnes de pixels distantes d'un carré : dans un damier elles
+ * sont en opposition de phase (là où l'une est blanche, l'autre porte la
+ * couleur du nœud) — c'est ce qui distingue un carrelage de simples rayures.
+ * Les pixels de bord entre deux carrés sont lissés par le navigateur : chaque
+ * pixel est ramené au plus proche des deux tons attendus, le reste comptant
+ * comme « autre ».
+ */
+const mesurerMosaique = async (id, couleurNoeud, taille) => {
+    const rc = document.querySelector('#canvas rect[data-id="' + id + '"]');
+    if (!rc) throw new Error('nœud non peint dans l aperçu : ' + id);
+    const num = a => parseFloat(rc.getAttribute(a));
+    const ctx = await rasteriserApercu();
+    const cible = couleurNoeud.replace('#', '').match(/../g).map(h => parseInt(h, 16));
+    const proche = (d, r, g, b) =>
+        Math.abs(d[0] - r) + Math.abs(d[1] - g) + Math.abs(d[2] - b) <= 24;
+    const haut = Math.ceil(num('y')) + 1;
+    const bas = Math.floor(num('y') + num('height')) - 1;
+    const colonne = x => {
+        const tons = [];
+        for (let y = haut; y <= bas; y++) {
+            const d = ctx.getImageData(Math.round(x), y, 1, 1).data;
+            if (proche(d, 255, 255, 255)) tons.push('blanc');
+            else if (proche(d, cible[0], cible[1], cible[2])) tons.push('noeud');
+            else tons.push('autre');
+        }
+        return tons;
+    };
+    const milieu = num('x') + num('width') / 2;
+    // Deux colonnes séparées d'un carré, prises de part et d'autre du milieu.
+    const gauche = colonne(milieu - taille / 2);
+    const droite = colonne(milieu + taille / 2);
+    const plages = [];
+    gauche.forEach(ton => {
+        const derniere = plages[plages.length - 1];
+        if (derniere && derniere.ton === ton) derniere.n++;
+        else plages.push({ ton: ton, n: 1 });
+    });
+    const nets = gauche.map((t, i) => [t, droite[i]])
+        .filter(p => p[0] !== 'autre' && p[1] !== 'autre');
+    return {
+        plages: plages,
+        hauteur: gauche.length,
+        blancs: gauche.filter(t => t === 'blanc').length,
+        couleurs: gauche.filter(t => t === 'noeud').length,
+        autres: gauche.filter(t => t === 'autre').length,
+        // Part des hauteurs où les deux colonnes portent des tons DIFFÉRENTS :
+        // 1 pour un damier, 0 pour des rayures verticales.
+        opposition: nets.length ? nets.filter(p => p[0] !== p[1]).length / nets.length : 0,
+        pointsCompares: nets.length
+    };
+};
+/**
  * Part du ruban que le bandeau bio recouvre RÉELLEMENT.
  * On balaie une verticale juste à la sortie du nœud d'origine et on compte les
  * points qui tombent dans le tracé peint — du ruban, puis du bandeau. Jamais un

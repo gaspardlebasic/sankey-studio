@@ -4,7 +4,7 @@
  * Nature d'un nœud : soit un **produit / commodité** qui circule, soit une
  * **industrie** — étape de transformation ou de commercialisation qui le fait
  * circuler. La distinction vit aussi dans Excel (colonne « Type ») et pilote
- * l'apparence du nœud dans l'aperçu (largeur, police, contour).
+ * l'apparence du nœud dans l'aperçu (largeur, police, contour, mosaïque).
  */
 export type NodeKind = "produit" | "industrie";
 
@@ -124,6 +124,17 @@ export const NODE_LABEL_POSITIONS: [NodeLabelPosition, string][] = [
 ];
 
 /**
+ * Damier peint À LA PLACE de l'aplat du nœud : un carrelage de carrés de
+ * `taille` pixels, alternativement blancs et de la couleur du nœud. Sert à
+ * distinguer une famille de nœuds sans lui donner une couleur de plus — le
+ * nœud garde la sienne, il la porte autrement.
+ */
+export interface NodeMosaique {
+    show: boolean;
+    taille: number; // côté d'un carré, en pixels
+}
+
+/**
  * Apparence propre à un type de nœud.
  *
  * `width`, `font` et `position` valent **null** tant qu'ils ne sont pas repris
@@ -136,14 +147,25 @@ export interface NodeTypeStyle {
     font: NodeTypeFont | null; // null = options.nodeLabels
     position: NodeLabelPosition | null; // null = options.nodeLabels.position
     outline: NodeOutline;
+    mosaique: NodeMosaique;
 }
 
 export function defaultOutline(): NodeOutline {
     return { show: false, distance: 4, width: 1.5, radius: 3, mode: "fonce", intensity: 45 };
 }
 
+export function defaultMosaique(): NodeMosaique {
+    return { show: false, taille: 10 };
+}
+
 export function defaultTypeStyle(): NodeTypeStyle {
-    return { width: null, font: null, position: null, outline: defaultOutline() };
+    return {
+        width: null,
+        font: null,
+        position: null,
+        outline: defaultOutline(),
+        mosaique: defaultMosaique()
+    };
 }
 
 export interface SankeyOptions {
