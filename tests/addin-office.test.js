@@ -66,9 +66,12 @@ function classeurType(opts) {
     },
     {
       nom: "Liens", entetes: opts.entetesLiens || LINK_COLS.slice(), c0: LIENS_C0,
+      // La part bio est explicite : une case VIDE s'écrit désormais 0 (comme
+      // « Valeur du flux »), et le tableau bougerait à la première écriture —
+      // les tests qui vérifient que rien n'a bougé ne verraient plus rien.
       lignes: opts.liens || [
-        ["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2"],
-        ["Lait", "Lait cru", "Transformation", { f: "=Lentilles!C68", v: 95 }, "t", "n2", "n3"]
+        ["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", 0],
+        ["Lait", "Lait cru", "Transformation", { f: "=Lentilles!C68", v: 95 }, "t", "n2", "n3", 0]
       ]
     }
   ], { recopie: opts.recopie, normalise: opts.normalise });
@@ -630,6 +633,54 @@ await test("écriture : la part bio n'est JAMAIS réécrite, formule comprise", 
 });
 
 
+await test("écriture : les formules de la part bio sont posées une à une, jamais la colonne entière", async () => {
+  // « Part bio / durable » est une colonne de l'utilisatrice, et elle porte au
+  // moins autant de calculs que « Valeur du flux » (« =C8/C7 »). Elle courait
+  // donc exactement le même risque : reportée par une affectation de colonne
+  // entière en `.formulas`, Excel y lisait la formule DE LA COLONNE et
+  // l'étendait aux autres lignes.
+  const c = classeurType({
+    recopie: "colonneEntiere",
+    noeuds: RANGS_QUATRE,
+    liens: [
+      ["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", { f: "=Bio!C2/Bio!D2", v: 0.4 }],
+      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", { f: "=Bio!C3/Bio!D3", v: 0.25 }],
+      ["Lait", "Transformation", "Beurre", 30, "t", "n3", "n4", { f: "=Bio!C4/Bio!D4", v: 1 }]
+    ]
+  });
+  await office.ecrireDiagramme(deplaceTransformation());
+
+  const iBio = LINK_COLS.indexOf("Part bio / durable");
+  const liens = c.lignesDe("Liens");
+  const formules = c.formulesDe("Liens");
+  egal(liens.map((l, r) => [l[1] + " -> " + l[2], formules[r][iBio]]), [
+    ["Production bio -> Lait cru", "=Bio!C2/Bio!D2"],
+    ["Transformation -> Beurre", "=Bio!C4/Bio!D4"],
+    ["Lait cru -> Transformation", "=Bio!C3/Bio!D3"]
+  ], "chaque formule de part bio a suivi SON lien — aucune remplacée par la première");
+});
+
+await test("écriture : une part bio vide s'écrit 0, un commentaire vide reste vide", async () => {
+  // La part bio suit « Valeur du flux » : un lien sans part bio en a une, et
+  // elle vaut zéro. Les autres colonnes de l'utilisatrice gardent leur vide —
+  // un 0 dans un « Commentaire » serait une donnée inventée.
+  const entetes = LINK_COLS.concat(["Commentaire"]);
+  const c = classeurType({
+    entetesLiens: entetes,
+    liens: [
+      ["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", "", ""],
+      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", 0.25, "à revoir"]
+    ]
+  });
+  const r = await office.ecrireDiagramme(MODELE);
+  attendu(r.ok, "écriture réussie");
+  const lignes = c.lignesDe("Liens");
+  egal(lignes.map(l => l[entetes.indexOf("Part bio / durable")]), [0, 0.25],
+       "la part bio vide vaut 0, celle qui est saisie ne bouge pas");
+  egal(lignes.map(l => l[entetes.indexOf("Commentaire")]), ["", "à revoir"],
+       "le commentaire vide reste vide");
+});
+
 await test("écriture : une formule n'est pas recopiée sur un lien homonyme", async () => {
   // Deux filières, les mêmes noms de nœuds : le repli par noms servait la même
   // formule à deux liens. Elle appartient à UN lien — celui de sa ligne.
@@ -699,9 +750,9 @@ function classeurAFormulesDistinctes() {
   return classeurType({
     noeuds: RANGS_QUATRE,
     liens: [
-      ["Lait", "Production bio", "Lait cru", { f: "='Blé tendre'!$C$8", v: 120 }, "t", "n1", "n2"],
-      ["Lait", "Lait cru", "Transformation", { f: "='Blé tendre'!$C$9", v: 95 }, "t", "n2", "n3"],
-      ["Lait", "Transformation", "Beurre", { f: "='Blé tendre'!$C$10", v: 30 }, "t", "n3", "n4"]
+      ["Lait", "Production bio", "Lait cru", { f: "='Blé tendre'!$C$8", v: 120 }, "t", "n1", "n2", 0],
+      ["Lait", "Lait cru", "Transformation", { f: "='Blé tendre'!$C$9", v: 95 }, "t", "n2", "n3", 0],
+      ["Lait", "Transformation", "Beurre", { f: "='Blé tendre'!$C$10", v: 30 }, "t", "n3", "n4", 0]
     ]
   });
 }

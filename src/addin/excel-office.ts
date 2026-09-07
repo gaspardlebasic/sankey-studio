@@ -659,10 +659,23 @@ function blocDuCorps(corps: Excel.Range, c: number, r0: number, n: number): Exce
   return corps.getCell(r0, c).getResizedRange(n - 1, 0);
 }
 
-/** Réécrit les colonnes étrangères, chacune sur la ligne de SON nœud / SON lien. */
+/**
+ * Réécrit les colonnes étrangères, chacune sur la ligne de SON nœud / SON lien.
+ *
+ * Une formule de l'utilisatrice reste une formule — et elle est posée **sur sa
+ * seule cellule**, jamais par une affectation de la colonne entière : Excel y
+ * lirait la formule DE LA COLONNE et l'étendrait aux autres (`poserLesFormules`).
+ * Ces colonnes-là portent au moins autant de calculs que « Valeur du flux ».
+ *
+ * `zeroSiVide` désigne la colonne où une cellule vide s'écrit `0` plutôt que de
+ * rester vide : « Part bio / durable », qui suit ainsi « Valeur du flux » —
+ * un lien sans part bio en a une, et elle vaut zéro. Les autres colonnes de
+ * l'utilisatrice (un « Commentaire », une quantité brute) gardent leur vide :
+ * un 0 y serait une donnée inventée.
+ */
 function reporterEtrangeres(
   t: TableauTrouve, colonnes: number[], sources: (Contenu[] | undefined)[],
-  hauteur: number
+  hauteur: number, zeroSiVide?: number
 ): void {
   if (!colonnes.length) return;
   const corps = t.table.getDataBodyRange();
@@ -671,10 +684,14 @@ function reporterEtrangeres(
     for (let r = 0; r < hauteur; r++) {
       const src = sources[r];
       const cel = src ? src[c] : "";
-      donnees.push([cel === undefined ? "" : cel]);
+      let v: Contenu = cel === undefined ? "" : cel;
+      // Les lignes de réserve (au-delà des données) restent vides : elles ne
+      // portent aucun lien, il n'y a pas de part bio à y écrire.
+      if (v === "" && c === zeroSiVide && r < sources.length) v = 0;
+      donnees.push([v]);
     }
-    // .formulas et non .values : une formule de l'utilisatrice reste une formule.
-    colonneDuCorps(corps, c, hauteur).formulas = donnees;
+    if (donnees.some(estUneFormule)) poserLesFormules(corps, c, donnees, hauteur);
+    else colonneDuCorps(corps, c, hauteur).values = donnees;
   }
 }
 
@@ -788,7 +805,8 @@ export async function ecrireDiagramme(
     ecrireColonnes(t.noeuds, NODE_COLS, nodeRows);
     ecrireColonnes(t.liens, LINK_COLS_ECRITES, linkRows, "Valeur du flux");
     reporterEtrangeres(t.noeuds, etrNoeuds, srcNoeuds, Math.max(MIN_LIGNES, nodeRows.length));
-    reporterEtrangeres(t.liens, etrLiens, srcLiens, Math.max(MIN_LIGNES, linkRows.length));
+    reporterEtrangeres(t.liens, etrLiens, srcLiens, Math.max(MIN_LIGNES, linkRows.length),
+                       t.liens.index.get(LINK_COL_BIO));
     await context.sync();                                          // sync 5
 
     // Ce que nous avons écrit et ce que le classeur porte ensuite sont deux
@@ -966,7 +984,7 @@ function ecrireColonnes(
       valeurs.push([valeurDe(cellule)]);
     }
     if (formule && donnees.some(estUneFormule)) {
-      poserLesFormules(corps, iClasseur, donnees, valeurs, hauteur);
+      poserLesFormules(corps, iClasseur, donnees, hauteur, valeurs);
     } else {
       // Écrire des nombres en `.values` dit simplement ce qu'on fait — et
       // efface au passage les formules présentes, ce qui défait une colonne
@@ -977,9 +995,8 @@ function ecrireColonnes(
 }
 
 /**
- * Écrit « Valeur du flux » quand elle porte des formules : les valeurs d'abord,
- * EN BLOC, puis chaque formule SUR SA SEULE CELLULE. Jamais la colonne entière
- * affectée en `.formulas`.
+ * Écrit une colonne qui porte des formules : chacune SUR SA SEULE CELLULE, puis
+ * les nombres. Jamais la colonne entière affectée en `.formulas`.
  *
  * POURQUOI. Affecter la colonne entière en `.formulas`, c'est dire à Excel
  * quelle est la formule DE LA COLONNE : il en fait une colonne calculée et
@@ -991,12 +1008,19 @@ function ecrireColonnes(
  *
  * Puis on repose les nombres : si une formule a quand même débordé, ils la
  * recouvrent dans le même envoi, avant même le `sync`.
+ *
+ * `valeurs` — les mêmes lignes en nombres — n'est donné que pour « Valeur du
+ * flux », dont nous connaissons le calcul : la colonne entière part alors
+ * d'abord en `.values`, ce qui efface les formules présentes et défait une
+ * colonne calculée déjà installée. Pour une colonne de l'utilisatrice, nous ne
+ * savons pas ce que ses formules produisent : on ne les écrase pas d'un blanc
+ * pour les reposer ensuite, on ne touche que les cellules qui leur reviennent.
  */
 function poserLesFormules(
-  corps: Excel.Range, c: number,
-  donnees: (string | number)[][], valeurs: (string | number)[][], hauteur: number
+  corps: Excel.Range, c: number, donnees: Contenu[][], hauteur: number,
+  valeurs?: Contenu[][]
 ): void {
-  colonneDuCorps(corps, c, hauteur).values = valeurs;
+  if (valeurs) colonneDuCorps(corps, c, hauteur).values = valeurs;
   for (let r = 0; r < donnees.length; r++) {
     if (estUneFormule(donnees[r])) blocDuCorps(corps, c, r, 1).formulas = [donnees[r]];
   }
@@ -1004,7 +1028,7 @@ function poserLesFormules(
 }
 
 /** Cette cellule, telle qu'on s'apprête à l'écrire, est-elle une formule ? */
-function estUneFormule(ligne: (string | number)[]): boolean {
+function estUneFormule(ligne: Contenu[]): boolean {
   return typeof ligne[0] === "string" && ligne[0].charAt(0) === "=";
 }
 
@@ -1025,7 +1049,7 @@ function estUneFormule(ligne: (string | number)[]): boolean {
  * vérification d'après-écriture (`verifierColonneValeur`).
  */
 function reposerLesNombres(
-  corps: Excel.Range, c: number, donnees: (string | number)[][]
+  corps: Excel.Range, c: number, donnees: Contenu[][]
 ): void {
   let debut = -1;
   for (let r = 0; r <= donnees.length; r++) {

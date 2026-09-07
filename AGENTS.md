@@ -344,6 +344,12 @@ un poste, c'est `npm run addin:install -- --enligne`.
     préparé par le complément la porte d'emblée. Toute colonne en lecture seule doit rester
     **en fin** de `LINK_COLS` : `buildModelRows` produit les cellules dans l'ordre de
     `LINK_COLS_ECRITES`.
+    - Elle suit « Valeur du flux » sur deux points (demandés le 2026-09-07) : ses **formules
+      sont posées une à une, sur leur cellule** — elle courait le même risque de colonne
+      calculée, et un test le montre — et une **case vide s'y écrit `0`** (`zeroSiVide` de
+      `reporterEtrangeres`) : un lien sans part bio en a une, et elle vaut zéro. Les **autres**
+      colonnes de l'utilisatrice gardent leur vide : un 0 dans un « Commentaire » serait une
+      donnée inventée.
   - `readDiagram` renvoie **`hasLane`** et **`hasKind`** : si le classeur ignore les couloirs
     (ou les types), la réconciliation **garde** ceux de l'app au lieu de tout remettre au défaut.
   - « Type » s'écrit **en clair** (« Produit » / « Industrie ») : c'est une colonne que
@@ -830,6 +836,12 @@ disputer le fichier à Excel — verrou `~$`, `fs.watch`, AppleScript, JXA, COM/
   `assigned = true` dans les deux cas, ce qui déclenche une réécriture qui les inscrit. Tant que
   ces colonnes sont vides, la ligne ne se reconnaît que par les NOMS — le repli fragile, celui
   qui confond deux homonymes.
+- **Les formules d'une colonne de l'utilisatrice sont posées CELLULE PAR CELLULE**, comme
+  celles de « Valeur du flux » (`poserLesFormules`, appelé aussi par `reporterEtrangeres`) : une
+  affectation de colonne entière en `.formulas` dit à Excel quelle est la formule DE LA COLONNE.
+  Nuance pour ces colonnes-là : nous ne savons pas ce que leurs formules produisent, donc pas de
+  passe de valeurs en bloc avant — on ne touche que les cellules qui leur reviennent, sinon on
+  les écraserait d'un blanc.
 - **Les colonnes de l'utilisatrice voyagent avec leur ligne.** Une colonne que nous ne
   connaissons pas (un « Commentaire », une quantité brute) n'est pas calculée, mais elle est
   **déplacée** avec le nœud ou le lien de sa ligne. Ne pas y toucher du tout ne la protégeait
