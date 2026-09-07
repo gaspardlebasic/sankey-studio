@@ -44,6 +44,11 @@ plutôt bien — du plus au moins pratique :
      de vraies frappes et de vrais glissers. Le pont posé devant l'éditeur est
      `tests/pont-essai.js`, qui déclare **les mêmes capacités que le volet**. S'il diverge de
      `src/addin/pont.ts`, la suite éprouve un contrat qui n'existe pas : le tenir à jour.
+   - Son bouchon `excel:read` **échoue** par défaut : `amorceFaite` reste faux, donc aucune
+     écriture ne part toute seule pendant les tests d'édition. Le test qui a besoin d'un
+     classeur lisible pose `excelSimule.lecture` (et lit `excelSimule.lectures` pour compter
+     les allers-retours) — puis **rend l'amorce** (`T.amorce(false)`) dans son `finally`, sinon
+     les tests suivants se remettraient à écrire.
 2. **`npm run smoke`** — test de fumée plus large (barre d'outils, bascule Aperçu, palette,
    panneau), même technique, via le crochet `window.__sankeyTest` (`caps`, `model`, `nodeCount`,
    `loadProject`, `links`, `selection`, `hidden`, `setExcelPath`, `amorce`, `reconcile`,
@@ -642,7 +647,7 @@ un poste, c'est `npm run addin:install -- --enligne`.
   Le layout est aussi enveloppé dans un try/catch → message clair au lieu d'un écran blanc.
 - La **Filière** filtre l'affichage : `viewNodes/viewLinks/viewModel` + `hiddenFilieres`.
 - **Barre d'outils** : `＋ Nœud` · bascule segmentée Édition/Aperçu (`.segmented`, cadre unique,
-  segment actif en noir) · **Enregistrer** · export PNG/SVG. « Enregistrer » range l'**apparence**
+  segment actif en noir) · **Enregistrer** · **resynchroniser** · export PNG/SVG. « Enregistrer » range l'**apparence**
   dans le classeur, rien d'autre : le diagramme, lui, vit déjà dans les tableaux. Ni « Enregistrer
   sous… » ni « Ouvrir » : il n'y a pas de fichier projet. Ni diagramme d'exemple : un modèle qui
   ne viendrait pas du classeur finirait par l'écraser.
@@ -680,6 +685,24 @@ un poste, c'est `npm run addin:install -- --enligne`.
 - **L'intitulé appartient à la COLONNE** : `setColumnTitle()` l'applique à tous ses nœuds, et
   `moveNodeToCell` fait adopter au nœud déplacé l'intitulé de sa nouvelle colonne. Ne jamais écrire
   `n.title` sur un seul nœud.
+- **Le bouton « resynchroniser » (`resynchroniser()`), à gauche des exports.** Une icône seule —
+  le picto « comparer » de la charte BASIC, ses quatre tracés repris **tels quels** ; seuls le
+  cadrage et l'épaisseur du trait sont ajustés, parce qu'un dessin fait pour 68 px ne se lit pas
+  à 15 (calcul dans `resyncBtn`). Il n'apparaît que si la capacité `excel` est là.
+  - **Deux temps, dans cet ordre : relire, puis réécrire.** Le premier rend au diagramme ce que
+    le classeur est seul à savoir (valeurs, part bio, libellés retouchés dans Excel) ; le second
+    réécrit ce qu'on vient de lire — c'est lui qui rend leurs identifiants aux lignes saisies à
+    la main et remet les noms du tableau des liens d'accord avec ceux du tableau des nœuds.
+  - **La réécriture passe par `pushToExcel`**, jamais par un `writeExcel` posé là : c'est
+    `ecrireDiagramme` qui relit les formules et les repose une par une sur leur seule cellule
+    (« Ce que l'écriture préserve »), et c'est de `pushToExcel` que vient l'alerte qui dit une
+    recopie défaite. Écrire en direct ici court-circuiterait les deux.
+  - **Une seule lecture, pas deux** : `pushToExcel({ valeursDejaLues: true })` saute sa relecture
+    de courtoisie, le modèle portant déjà ces valeurs. Un aller-retour vers Excel se compte.
+  - Relire d'abord, c'est laisser le classeur gagner : si des modifications locales attendent
+    (`dirtySinceSync`), le bouton le **dit** et demande confirmation avant de les perdre.
+  - Une lecture réussie vaut **amorce** : quand celle du démarrage a échoué, ce bouton est ce
+    qui débloque la synchro automatique.
 - **Enregistrement automatique** : `persist()` range l'apparence dans le classeur (800 ms) et
   programme l'envoi du modèle (`planifierEnvoiExcel`, 300 ms). Ce dernier ne part que si la
   capacité `envoiAutomatique` est vraie — elle l'est dès qu'Excel offre `ExcelApi 1.7`, parce

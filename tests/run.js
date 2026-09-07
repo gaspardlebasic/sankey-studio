@@ -503,6 +503,92 @@ test("alerte : un remplissage d'Excel est montré, et pas seulement corrigé", "
   }
 });
 
+test("resynchro : le bouton du ruban relit le classeur, puis y réécrit ce qu'il a lu",
+  "complexe", async (p, excel) => {
+  // Ce qu'on éprouve : les DEUX temps du bouton, et dans l'ordre. Excel gagne
+  // sur les libellés (un nœud renommé dans le classeur), et la réécriture qui
+  // suit rend son identifiant à la ligne de lien saisie à la main — celle qui,
+  // sans lui, ne se reconnaît que par les noms de ses extrémités.
+  const avant = await p(`
+    const m = T.model();
+    return {
+      nodes: m.nodes.map(n => ({ id: n.id, name: n.name, column: n.column,
+        title: n.title || '', order: n.order, lane: n.lane || 1,
+        kind: n.kind || 'produit', filiere: n.filiere, color: n.color || null })),
+      links: m.links.map(l => ({ source: l.source, target: l.target,
+        value: l.value, unit: l.unit || '' }))
+    };
+  `);
+
+  // Le repli par les noms n'est fiable que sur des noms uniques : la ligne
+  // « saisie à la main » est prise sur un lien dont les deux bouts le sont.
+  const compte = new Map();
+  avant.nodes.forEach(n => compte.set(n.name, (compte.get(n.name) || 0) + 1));
+  const nomDe = new Map(avant.nodes.map(n => [n.id, n.name]));
+  const unique = id => compte.get(nomDe.get(id)) === 1;
+  const saisieMain = avant.links.find(l => unique(l.source) && unique(l.target));
+  attendu(!!saisieMain, "la fixture doit porter un lien entre deux noms uniques");
+
+  const RENOMME = "Nom retouché dans Excel";
+  const renomme = avant.nodes.find(n => n.id !== saisieMain.source && n.id !== saisieMain.target);
+  nomDe.set(renomme.id, RENOMME);
+
+  excel.lecture = {
+    hasLane: true, hasKind: true, hasBio: true,
+    nodes: avant.nodes.map(n => Object.assign({}, n, { name: nomDe.get(n.id) })),
+    links: avant.links.map(l => ({
+      // La ligne saisie à la main n'a pas ses colonnes d'identifiants.
+      sourceId: l === saisieMain ? null : l.source,
+      targetId: l === saisieMain ? null : l.target,
+      sourceName: nomDe.get(l.source), targetName: nomDe.get(l.target),
+      value: l.value, unit: l.unit, bio: 0
+    }))
+  };
+
+  try {
+    const r = await p(`
+      T.setDirty(false);          // sinon le bouton demande confirmation
+      const b = document.querySelector('#toolbar button.icon-btn');
+      const avantPng = b && b.nextElementSibling;
+      b.click();
+      await sleep(700);
+      return {
+        bouton: !!b,
+        aGauchePng: !!avantPng && avantPng.textContent.includes('PNG'),
+        libelle: b ? b.textContent.trim() : 'x',
+        renomme: nodes().filter(n => n.name === ${JSON.stringify(RENOMME)}).length,
+        // Le lien saisi à la main est raccroché à de VRAIS nœuds du modèle.
+        raccroche: links().some(l => l.source === ${JSON.stringify(saisieMain.source)}
+                                  && l.target === ${JSON.stringify(saisieMain.target)}),
+        rendu: !!document.querySelector('#canvas .edit-node')
+      };
+    `);
+    attendu(r.bouton, "le ruban doit porter le bouton de resynchronisation");
+    attendu(r.aGauchePng, "il se place juste à gauche du bouton PNG");
+    egal(r.libelle, "", "le bouton ne porte qu'une icône, sans libellé");
+    egal(r.renomme, 1, "le libellé retouché dans Excel doit gagner sur celui de l'app");
+    attendu(r.raccroche, "le lien sans identifiants doit être raccroché par les noms");
+    attendu(r.rendu, "le diagramme doit être redessiné après la resynchro");
+
+    egal(excel.lectures, 1, "une seule lecture du classeur : la réécriture ne la refait pas");
+    attendu(excel.ecritures >= 1, "la resynchro doit réécrire dans le classeur");
+
+    // Cohérence des libellés : c'est l'écriture qui les remet d'accord, et elle
+    // ne le peut que si chaque lien pointe deux nœuds du même envoi.
+    const ecrit = excel.derniereEcriture;
+    const ids = new Set(ecrit.nodes.map(n => n.id));
+    attendu(ecrit.links.every(l => ids.has(l.source) && ids.has(l.target)),
+      "tout lien écrit doit viser deux nœuds du même envoi");
+    attendu(ecrit.nodes.some(n => n.name === RENOMME),
+      "le nom relu dans le classeur doit repartir tel quel");
+  } finally {
+    excel.lecture = null;
+    // La lecture a réussi : l'amorce est faite, et les tests suivants
+    // se remettraient à écrire tout seuls. On la défait.
+    await p(`T.amorce(false); T.setDirty(false); return true;`);
+  }
+});
+
 test("couloirs : le couloir 2 se range sous le couloir 1", "complexe", async p => {
   const r = await p(`
     const m = T.model();
@@ -2093,7 +2179,10 @@ const excelSimule = {
   derniereEcriture: null,
   apparence: null,
   /** Ce que l'écriture répond quand elle défait une recopie d'Excel. */
-  remplissage: null
+  remplissage: null,
+  /** Contenu des tableaux, quand un test veut que la lecture RÉUSSISSE. */
+  lecture: null,
+  lectures: 0
 };
 
 /**
@@ -2103,7 +2192,11 @@ const excelSimule = {
  * automatique déclare l'amorce lui-même (`T.amorce(true)`).
  */
 function stubExcelIpc() {
-  ipcMain.handle("excel:read", () => ({ ok: false, error: "bouchon" }));
+  ipcMain.handle("excel:read", () => {
+    excelSimule.lectures++;
+    if (!excelSimule.lecture) return { ok: false, error: "bouchon" };
+    return { ok: true, data: excelSimule.lecture };
+  });
   ipcMain.handle("excel:write", (_e, model) => {
     excelSimule.ecritures++;
     excelSimule.derniereEcriture = model;
@@ -2144,6 +2237,8 @@ app.whenReady().then(async () => {
       excelSimule.ecritures = 0;
       excelSimule.derniereEcriture = null;
       excelSimule.apparence = null;
+      excelSimule.lecture = null;
+      excelSimule.lectures = 0;
       await charger(win, t.fixture);
       await t.fn(page, excelSimule);
       console.log("  ok    " + t.name);

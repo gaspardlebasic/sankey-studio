@@ -400,6 +400,8 @@ let canvas: SVGSVGElement;
 let sidebar: HTMLElement;
 let toolbar: HTMLElement;
 let statusEl: HTMLElement;
+/** Le bouton « resynchroniser » du ruban, gardé pour pouvoir le griser. */
+let resyncEl: HTMLButtonElement | null = null;
 
 /* ------------------------------------------------------------------ */
 
@@ -470,6 +472,12 @@ function buildToolbar(): void {
     const spacer = document.createElement("span");
     spacer.className = "toolbar-spacer";
     toolbar.appendChild(spacer);
+
+    // À gauche des exports : refaire la synchro avec le classeur.
+    if (caps().excel) {
+        resyncEl = resyncBtn(() => { resynchroniser(); });
+        toolbar.appendChild(resyncEl);
+    }
 
     const pngBtn = exportBtn("PNG", () => exportImage("png"));
     pngBtn.title = "Exporter le Sankey en image PNG";
@@ -2385,6 +2393,46 @@ function btn(label: string, onClick: () => void): HTMLButtonElement {
     b.addEventListener("click", onClick);
     return b;
 }
+/**
+ * Bouton « resynchroniser » : le picto « comparer » de la charte BASIC, seul,
+ * sans libellé — deux flèches qui se croisent, l'une vers Excel, l'autre vers
+ * le diagramme.
+ *
+ * Ses quatre tracés sont ceux du fichier de la charte, repris tels quels : on
+ * ne redessine pas un picto maison. Ce qui est ajusté ne tient qu'à la taille.
+ * Le picto est fait pour 68 px ; à 15, son trait de 2,5 tomberait sous le
+ * demi-pixel et le dessin, très marginé dans son carré, paraîtrait plus petit
+ * que ses voisins. D'où le cadrage serré sur le dessin et l'épaisseur relevée,
+ * calculée pour retomber sur les 1,4 px de trait des icônes d'export d'à côté.
+ */
+function resyncBtn(onClick: () => void): HTMLButtonElement {
+    const b = document.createElement("button");
+    b.className = "icon-btn";
+    b.title = TITRE_RESYNC;
+    b.setAttribute("aria-label", "Resynchroniser avec Excel");
+    const icon = document.createElementNS(SVGNS, "svg");
+    icon.setAttribute("viewBox", "8 10 52 48");
+    icon.setAttribute("width", "15");
+    icon.setAttribute("height", "14");
+    icon.setAttribute("fill", "none");
+    icon.setAttribute("aria-hidden", "true");
+    [
+        "M45.7012 31.5L58.1012 44L45.7012 56.5",
+        "M58.1004 44H29.9004",
+        "M22.2988 36.5L9.89883 24L22.2988 11.5",
+        "M9.89961 24L38.0996 24"
+    ].forEach(d => {
+        const p = document.createElementNS(SVGNS, "path");
+        p.setAttribute("d", d);
+        p.setAttribute("stroke", "currentColor");
+        p.setAttribute("stroke-width", "5");
+        p.setAttribute("stroke-miterlimit", "10");
+        icon.appendChild(p);
+    });
+    b.appendChild(icon);
+    b.addEventListener("click", onClick);
+    return b;
+}
 /** Bouton d'export : icône « flèche vers un plateau » + format. */
 function exportBtn(label: string, onClick: () => void): HTMLButtonElement {
     const b = document.createElement("button");
@@ -2974,7 +3022,7 @@ function basename(p: string): string {
 }
 
 /** Sens diagramme → Excel : écrit la structure (les valeurs saisies sont conservées). */
-async function pushToExcel(opts?: { silencieux?: boolean }): Promise<void> {
+async function pushToExcel(opts?: { silencieux?: boolean; valeursDejaLues?: boolean }): Promise<void> {
     const silencieux = !!(opts && opts.silencieux);
     const d = desktop();
     if (!d || !caps().excel) return;
@@ -2988,9 +3036,13 @@ async function pushToExcel(opts?: { silencieux?: boolean }): Promise<void> {
     }
     pushEnCours = true;
     try {
-        // Conserve les valeurs déjà saisies dans Excel pour les liens existants
-        const rd = await d.readExcel(excelPath);
-        if (rd.ok && rd.data) mergeValuesFromExcel(rd.data);
+        // Conserve les valeurs déjà saisies dans Excel pour les liens existants.
+        // Sauf quand l'appelant vient de lire le classeur (la resynchro) : le
+        // modèle porte déjà ces valeurs, et un aller-retour vers Excel se compte.
+        if (!(opts && opts.valeursDejaLues)) {
+            const rd = await d.readExcel(excelPath);
+            if (rd.ok && rd.data) mergeValuesFromExcel(rd.data);
+        }
 
         const res = await d.writeExcel(
             { nodes: model.nodes, links: model.links }, excelPath, undefined,
@@ -3094,6 +3146,76 @@ async function pullExcel(manual: boolean): Promise<void> {
         const w = await d.writeExcel({ nodes: model.nodes, links: model.links }, excelPath);
         if (w.ok) markAllSynced();
         signalerRemplissage(w.remplissage);
+    }
+}
+
+/** Ce que le bouton du ruban annonce, et ce qu'il répète quand il est occupé. */
+const TITRE_RESYNC = "Recharger les données du classeur, puis les y réécrire";
+let resyncEnCours = false;
+
+/** Grise le bouton pendant l'aller-retour : deux resynchros à la fois n'ont aucun sens. */
+function majBoutonResync(): void {
+    if (!resyncEl) return;
+    resyncEl.disabled = resyncEnCours;
+    resyncEl.title = resyncEnCours ? "Resynchronisation en cours…" : TITRE_RESYNC;
+}
+
+/**
+ * Le bouton « resynchroniser » du ruban : relire, puis réécrire.
+ *
+ * Les deux temps comptent, et dans cet ordre. Le premier rend au diagramme ce
+ * que le classeur est seul à savoir — valeurs, part bio, libellés retouchés
+ * dans Excel. Le second réécrit la structure qu'on vient d'en lire : c'est lui
+ * qui rend leurs identifiants aux lignes saisies à la main — sans quoi elles ne
+ * se reconnaissent que par les NOMS de leurs extrémités — et qui remet les noms
+ * du tableau des liens d'accord avec ceux du tableau des nœuds.
+ *
+ * Les formules ne sont pas l'affaire de cette fonction, et c'est voulu :
+ * `ecrireDiagramme` les relit et les repose lui-même, une par une, sur leur
+ * seule cellule (AGENTS.md, « Ce que l'écriture préserve »). Passer par
+ * `pushToExcel` plutôt que d'écrire ici, c'est refuser de court-circuiter ce
+ * travail-là — et hériter au passage de l'alerte qui dit une recopie défaite.
+ */
+async function resynchroniser(): Promise<void> {
+    const d = desktop();
+    if (!d || !caps().excel) {
+        setStatus("Aucun classeur joignable : rien à resynchroniser.");
+        return;
+    }
+    if (resyncEnCours) return;
+    // Relire d'abord, c'est laisser le classeur gagner. On le dit avant.
+    if (dirtySinceSync && !confirm(
+        "⚠️ Des modifications de l'application n'ont pas encore été écrites vers Excel.\n\n" +
+        "Resynchroniser relit le classeur d'abord : elles seront écrasées. Continuer ?"
+    )) return;
+
+    resyncEnCours = true;
+    majBoutonResync();
+    try {
+        setStatus("Relecture du classeur…");
+        let res: { ok?: boolean; data?: ExcelData; error?: string } | null = null;
+        try {
+            res = await d.readExcel(excelPath);
+        } catch (e) {
+            res = { ok: false, error: (e as Error).message };
+        }
+        if (!res || !res.ok || !res.data) {
+            setStatus("Classeur illisible" + (res && res.error ? " : " + res.error : "")
+                + " — vérifie que l'onglet Diagramme porte bien les tableaux Nœuds et Liens.");
+            return;
+        }
+        reconcileFromExcel(res.data);
+        // Une lecture réussie vaut amorce : si celle du démarrage avait échoué,
+        // ce bouton est ce qui débloque la synchro automatique.
+        amorceFaite = true;
+        render();
+        buildSidebar();
+        await pushToExcel({ valeursDejaLues: true });
+        setStatus(`Resynchronisé avec le classeur : ${model.nodes.length} nœud(s), `
+            + `${model.links.length} lien(s).`);
+    } finally {
+        resyncEnCours = false;
+        majBoutonResync();
     }
 }
 
