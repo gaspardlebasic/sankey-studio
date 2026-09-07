@@ -386,6 +386,12 @@ class FauxContexte {
    *    une PARTIE de la colonne est aussitôt recouverte par la formule ; seule
    *    une écriture de la colonne ENTIÈRE en valeurs, qui n'y laisse plus une
    *    seule formule, la lui fait abandonner.
+   *  - `colonneEntiere` : celui qu'on a VU à l'œuvre le 2026-09-07. Seule une
+   *    affectation de la COLONNE ENTIÈRE en `.formulas` déclenche la recopie —
+   *    Excel y lit la formule de la colonne. Une formule posée sur UNE cellule
+   *    ne déclenche rien, et rien n'est tenu ensuite : c'est ce qui a permis
+   *    aux lignes en nombres de survivre pendant que les dix formules
+   *    distinctes étaient remplacées par la première.
    */
   _commeUnExcelQuiRecopie(op) {
     const mode = this._classeur.recopie;
@@ -398,13 +404,18 @@ class FauxContexte {
       const calculees = def.calculees || (def.calculees = new Map());
 
       if (op.type === "formulas") {
+        // La colonne ENTIÈRE, ou seulement quelques cellules ?
+        const colonneEntiere = p.r0 <= def.r0 + 1 && p.r0 + p.lignes >= def.r0 + 1 + def.lignes;
+        if (mode === "colonneEntiere" && !colonneEntiere) continue;
+        // La PREMIÈRE formule de l'affectation gagne : Excel y lit la formule
+        // de la colonne, et c'est bien la première qu'on a vue se propager.
         let f = "";
-        for (let r = 0; r < p.lignes; r++) {
+        for (let r = 0; r < p.lignes && !f; r++) {
           const v = (op.data[r] || [])[c];
           if (typeof v === "string" && v.charAt(0) === "=") f = v;
         }
         if (!f) continue;
-        calculees.set(col, f);
+        if (mode !== "colonneEntiere") calculees.set(col, f);
         this._etendreALaColonne(def, col, f);
         continue;
       }

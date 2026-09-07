@@ -470,7 +470,8 @@ un poste, c'est `npm run addin:install -- --enligne`.
   « Réserver un passage » par défaut ; « Tracer tout droit » redonne le rendu d'avant).
   Cas signalé : A en colonne 1, B en 2, C en 3, avec les liens A→B, B→C **et** A→C — tracé tout
   droit, le ruban A→C passe **sur** B. Le cas `a-b-c-d` doublé d'un `a-d` (deux colonnes
-  traversées) est le même problème en plus long.
+  traversées) est le même problème en plus long. **Le réglage vaut pour les DEUX vues** :
+  l'aperçu (`engine.ts`) et la vue d'édition (`editor.ts`), chacune avec sa géométrie.
   - Le moteur traite un tel lien pour ce qu'il est : un flux **qui traverse** la colonne. Il le
     découpe en segments passant par une **escale** — un nœud de passage, haut comme le ruban, qui
     prend sa place dans l'empilement de la colonne (`decomposer`), puis recolle les segments en un
@@ -495,6 +496,26 @@ un poste, c'est `npm run addin:install -- --enligne`.
   - Les tests mesurent le **recouvrement réellement peint** (`noeudsRecouverts` dans
     `tests/helpers.js`, par `isPointInFill` sur le tracé) et vérifient que le rendu « tout droit »,
     lui, recouvre bien le nœud traversé — sans quoi le test ne prouverait rien.
+  - **Vue d'édition : l'escale prend la place d'un nœud entier** (`PASSAGE_H`), pas l'épaisseur
+    d'un flux — les boîtes y sont de gabarit fixe et le lien n'est qu'un trait. Elle s'insère dans
+    l'empilement de la cellule traversée (`casesEmpilees`), **repousse les nœuds suivants vers le
+    bas**, et le trait la franchit de part en part, en ligne droite, sur la largeur qu'aurait eue
+    un nœud (`pointsDePassage`, `linkPathD(…, via)`).
+    - Mêmes **deux passes** que le moteur : `placerNoeuds()` sans escale donne la géométrie qui
+      dit **où** chaque lien voudrait passer (`planifierEscales`), puis on replace tout. Sans lien
+      traversant, la seconde passe n'a pas lieu et la mise en page est celle d'avant, au pixel près.
+    - **À égalité, l'escale passe devant le nœud** (`rangDansCellule`, `>=`) : la vue d'édition est
+      une grille, un lien qui traverse à la hauteur exacte d'un nœud y est le cas courant. Le lien
+      garde sa trajectoire, le nœud descend d'un cran — c'est ce qui se voit. L'aperçu, lui, place
+      ses escales sur des ordonnées continues où l'égalité n'arrive pas.
+    - **`rankAtY` compte les escales dans les hauteurs mais pas dans les rangs** : sans quoi le
+      rang visé par un glisser ne correspondrait plus à ce qui est peint. `escales` sert aussi à
+      la hauteur du canevas — une place réservée peut clore une colonne.
+    - Le test mesure le tracé **réellement peint** (`noeudsTraversesEdition` dans
+      `tests/helpers.js` : un lien d'édition est un trait, on échantillonne `getPointAtLength`)
+      et vérifie qu'en « tout droit » le même trait recouvre bien le nœud traversé. Attention au
+      diagramme d'essai : il a **déjà** des liens qui sautent une colonne, la mise en page « sans
+      place réservée » est donc celle du tracé tout droit, pas celle d'avant l'ajout du lien.
 - **Part bio / durable : un bandeau vert sur la tranche haute du ruban.** Chaque lien porte
   une part de flux bio (colonne « Part bio / durable » du tableau des liens, de 0 à 1) ; le
   moteur la peint comme une **bande du ruban** — entièrement vert à 100 %, deux flux collés
@@ -557,6 +578,14 @@ un poste, c'est `npm run addin:install -- --enligne`.
     la forme **ancrée**, donc la nôtre, donc étendue APRÈS notre écriture. Et le réglage d'Excel
     était bien décoché : sur ce Mac, une formule TAPÉE dans une colonne de tableau vide ne se
     recopie pas (vérifié). Deux gardes, dans cet ordre :
+    0. **On n'affecte JAMAIS la colonne entière en `.formulas`** (`poserLesFormules`) : les
+       valeurs partent en bloc, puis chaque formule est posée **sur sa seule cellule**.
+       Affecter la colonne entière, c'est dire à Excel quelle est la formule DE LA COLONNE : il
+       en fait une colonne calculée et étend **la première** à toutes les lignes qui en
+       portaient une. Vu le 2026-09-07 sur `Flux APS.xlsx` : dix formules distinctes, toutes
+       remplacées par la première — pendant que les lignes en nombres, reposées juste après,
+       tenaient. C'est cette asymétrie qui a tranché : une écriture **ciblée** s'impose à Excel,
+       une affectation de colonne entière lui donne une idée.
     1. `reposerLesNombres()` repose les nombres des lignes sans formule **dans le même envoi**,
        juste après l'affectation de la colonne — pas un aller-retour de plus. Une recopie
        passagère est démentie avant même le `sync`.
@@ -572,8 +601,12 @@ un poste, c'est `npm run addin:install -- --enligne`.
          anglais, lien vers un autre classeur réécrit avec son chemin). Le second critère crie
          au loup sur NOS PROPRES formules et les efface toutes à chaque modification — il l'a
          fait le 2026-09-07, quelques heures après avoir été écrit. Contrepartie assumée : une
-         colonne dont *tous* les liens portent une formule ne peut pas trahir une recopie ; il
-         n'y a alors aucune valeur à y sauver non plus.
+         colonne dont *tous* les liens portent une formule ne peut pas trahir une recopie par ce
+         signe-là ; il n'y a alors aucune valeur à y sauver non plus.
+       - **Second signe** : deux liens sur lesquels nous avons posé des formules DIFFÉRENTES
+         n'en rendent qu'UNE. Aucune réécriture d'Excel ne confond deux formules distinctes ;
+         une colonne calculée, si. Deux liens qui visent délibérément la même cellule ne sont
+         pas touchés — nous avions posé le même texte sur les deux.
     Le faux Office sait jouer cet Excel-là : `monterClasseur(tables, { recopie: "passagere" })`
     pour la recopie qu'une écriture suivante défait, `{ recopie: "colonneCalculee" }` pour celle
     qui tient. Sans ces deux gardes, les deux tests correspondants rendent la colonne entière

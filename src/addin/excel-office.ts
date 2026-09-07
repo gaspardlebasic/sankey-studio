@@ -881,6 +881,20 @@ async function verifierColonneValeur(
     const f = lue(r);
     if (f.charAt(0) === "=" && !attendue(r)) { recopiee = f; break; }
   }
+
+  // SECOND SIGNE, celui du 7 septembre : deux liens sur lesquels nous avons
+  // posé des formules DIFFÉRENTES en rendent une SEULE. Aucune réécriture
+  // d'Excel ne confond deux formules distinctes — une colonne calculée, si.
+  // Deux liens qui visent délibérément la même cellule ne sont pas touchés :
+  // nous avions posé le même texte sur les deux.
+  const posee = new Map<string, string>();      // texte relu -> formule posée
+  for (let r = 0; r < linkRows.length && !recopiee; r++) {
+    const f = lue(r), att = attendue(r);
+    if (!att || f.charAt(0) !== "=") continue;
+    const vue = posee.get(f);
+    if (vue !== undefined && vue !== att) recopiee = f;
+    else posee.set(f, att);
+  }
   if (!recopiee) return null;                   // chaque formule est à sa place
 
   // Excel a recopié. On repose TOUTES les valeurs — celles du modèle, intactes —
@@ -943,23 +957,50 @@ function ecrireColonnes(
     const iClasseur = t.index.get(nom);
     if (iClasseur === undefined) return;          // colonne absente du classeur
     const formule = nom === colonneFormule;
-    const donnees: (string | number)[][] = [];
+    const donnees: (string | number)[][] = [];   // ce qu'on veut : formules comprises
+    const valeurs: (string | number)[][] = [];   // les mêmes lignes, en nombres
     for (let r = 0; r < hauteur; r++) {
       const cellule = lignes[r] ? lignes[r][iNotre] : undefined;
-      if (!cellule) { donnees.push([""]); continue; }
+      if (!cellule) { donnees.push([""]); valeurs.push([""]); continue; }
       donnees.push([formule ? formuleDe(cellule) : valeurDe(cellule)]);
+      valeurs.push([valeurDe(cellule)]);
     }
-    const colonne = colonneDuCorps(corps, iClasseur, hauteur);
-    // `.formulas` seulement quand il y a vraiment une formule à poser. Les deux
-    // effacent les formules déjà présentes (ce qui défait la colonne calculée) :
-    // écrire des nombres en `.values` dit simplement ce qu'on fait.
     if (formule && donnees.some(estUneFormule)) {
-      colonne.formulas = donnees;
-      reposerLesNombres(corps, iClasseur, donnees);
+      poserLesFormules(corps, iClasseur, donnees, valeurs, hauteur);
     } else {
-      colonne.values = donnees;
+      // Écrire des nombres en `.values` dit simplement ce qu'on fait — et
+      // efface au passage les formules présentes, ce qui défait une colonne
+      // calculée.
+      colonneDuCorps(corps, iClasseur, hauteur).values = donnees;
     }
   });
+}
+
+/**
+ * Écrit « Valeur du flux » quand elle porte des formules : les valeurs d'abord,
+ * EN BLOC, puis chaque formule SUR SA SEULE CELLULE. Jamais la colonne entière
+ * affectée en `.formulas`.
+ *
+ * POURQUOI. Affecter la colonne entière en `.formulas`, c'est dire à Excel
+ * quelle est la formule DE LA COLONNE : il en fait une colonne calculée et
+ * étend la première à toutes les lignes qui en portaient une. Constaté sur
+ * `Flux APS.xlsx` le 2026-09-07 : dix formules distinctes, toutes remplacées
+ * par la première — tandis que les lignes en nombres, reposées juste après,
+ * tenaient. C'est la preuve qu'une écriture CIBLÉE, elle, s'impose : on n'écrit
+ * donc plus que des cellules.
+ *
+ * Puis on repose les nombres : si une formule a quand même débordé, ils la
+ * recouvrent dans le même envoi, avant même le `sync`.
+ */
+function poserLesFormules(
+  corps: Excel.Range, c: number,
+  donnees: (string | number)[][], valeurs: (string | number)[][], hauteur: number
+): void {
+  colonneDuCorps(corps, c, hauteur).values = valeurs;
+  for (let r = 0; r < donnees.length; r++) {
+    if (estUneFormule(donnees[r])) blocDuCorps(corps, c, r, 1).formulas = [donnees[r]];
+  }
+  reposerLesNombres(corps, c, donnees);
 }
 
 /** Cette cellule, telle qu'on s'apprête à l'écrire, est-elle une formule ? */

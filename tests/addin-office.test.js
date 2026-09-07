@@ -854,6 +854,42 @@ await test("écriture : une colonne calculée créée par notre écriture est d�
        "AUCUNE valeur n'est perdue — elles viennent du modèle");
 });
 
+await test("écriture : chaque formule est posée sur SA cellule, jamais la colonne entière", async () => {
+  // LE BUG DU 7 SEPTEMBRE 2026, AU SOIR. Affecter la colonne entière en
+  // `.formulas`, c'est dire à Excel quelle est la formule DE LA COLONNE : il en
+  // fait une colonne calculée et étend la première à toutes les lignes qui en
+  // portaient une. Dans « Flux APS.xlsx » : dix formules distinctes, toutes
+  // remplacées par la première — pendant que les lignes en nombres, reposées
+  // juste après, tenaient. Preuve qu'une écriture CIBLÉE s'impose : on n'écrit
+  // donc plus que des cellules.
+  const c = classeurAFormulesDistinctes();
+  c.classeur.recopie = "colonneEntiere";
+  const r = await office.ecrireDiagramme({ nodes: QUATRE, links: LIENS_QUATRE });
+  attendu(r.ok, "écriture réussie");
+  attendu(!r.remplissage, "rien n'a débordé : il n'y a rien à signaler");
+  egal(r.formules, 3, "les trois formules sont réémises");
+  const iVal = LINK_COLS.indexOf("Valeur du flux");
+  egal(c.formulesDe("Liens").map(l => l[iVal]),
+       ["='Blé tendre'!$C$8", "='Blé tendre'!$C$9", "='Blé tendre'!$C$10"],
+       "chaque lien garde SA formule — aucune n'est remplacée par la première");
+});
+
+await test("écriture : une formule qui déborde sur une autre formule est vue, et défaite", async () => {
+  // Le filet, pour le jour où Excel débordera par un autre chemin : deux liens
+  // sur lesquels on a posé des formules DIFFÉRENTES n'en rendent qu'UNE. Aucune
+  // réécriture d'Excel ne confond deux formules distinctes ; une colonne
+  // calculée, si. Les valeurs, elles, viennent du modèle : rien n'est perdu.
+  const c = classeurAFormulesDistinctes();
+  c.classeur.recopie = "colonneCalculee";       // Excel tient sa colonne
+  const r = await office.ecrireDiagramme({ nodes: QUATRE, links: LIENS_QUATRE });
+  attendu(r.ok, "écriture réussie");
+  attendu(r.remplissage && r.remplissage.aLEcriture, "la recopie est signalée, prise sur le fait");
+  egal(r.formules, 0, "aucune formule n'a survécu : ne pas prétendre le contraire");
+  const iVal = LINK_COLS.indexOf("Valeur du flux");
+  egal(c.lignesDe("Liens").map(l => l[iVal]), LIENS_QUATRE.map(l => l.value),
+       "AUCUNE valeur n'est perdue — elles viennent du modèle");
+});
+
 await test("écriture : une formule qu'Excel réécrit à sa façon n'est pas prise pour une recopie", async () => {
   // LE FAUX POSITIF DU 7 SEPTEMBRE 2026. Excel ne rend pas les formules telles
   // qu'on les lui donne : il les range dans SA forme — noms de fonctions en
