@@ -31,6 +31,9 @@ const GRID_X = 40; // marge gauche
 const GRID_Y = 74; // marge haute (place pour les entêtes de colonnes)
 const LANE_GAP = 22; // espace vertical entre deux couloirs
 const LANE_LABEL_H = 26; // place prise par le nom d'un couloir, au-dessus de sa bande
+// Un lien qui saute une colonne y prend la place d'un nœud : c'est ce qui
+// écarte les nœuds traversés et rend le passage lisible.
+const PASSAGE_H = NODE_H;
 
 function gridX(column: number): number {
     return GRID_X + (column - 1) * COL_W;
@@ -107,20 +110,78 @@ function colonneTriee(column: number, lane: number, sauf?: FlowNode): FlowNode[]
 
 /**
  * Rang d'insertion correspondant à une ordonnée, en tenant compte des hauteurs
- * réelles : les rangées ne sont plus régulières dès qu'un nom passe à la ligne.
+ * réelles : les rangées ne sont plus régulières dès qu'un nom passe à la ligne,
+ * et une escale prend la place d'un nœud sans occuper de rang.
  */
 function rankAtY(column: number, lane: number, y: number, sauf?: FlowNode): number {
     let haut = laneBounds.get(lane)?.haut ?? GRID_Y;
     let rang = 0;
-    for (const n of colonneTriee(column, lane, sauf)) {
-        if (y < haut + nodeH(n) / 2) return rang;
-        haut += nodeH(n) + GAP_Y;
-        rang++;
+    for (const c of casesEmpilees(colonneTriee(column, lane, sauf), escalesDe(column, lane))) {
+        if (c.noeud) {
+            if (y < haut + c.haut / 2) return rang;
+            rang++;
+        }
+        haut += c.haut + GAP_Y;
     }
     return rang;
 }
 function bandLeft(column: number): number {
     return gridX(column) - (COL_W - NODE_W) / 2;
+}
+
+/* ------- liens qui sautent une colonne : la place qu'ils s'y réservent -------
+
+   Un lien A(col 1) -> C(col 3) traverse la colonne 2, où B l'attend : tracé tout
+   droit, son trait passe SUR B et l'on ne voit plus rien. La parade est celle de
+   l'aperçu (`planifierPassages` dans engine.ts) : le lien se réserve dans chaque
+   colonne traversée la place d'un nœud — une escale — qui s'insère dans
+   l'empilement et repousse les nœuds suivants vers le bas. Le trait franchit
+   ensuite cette place de part en part, à découvert.
+
+   L'escale se glisse là où le lien voulait passer : un lien qui longe le haut du
+   diagramme continue de le longer, sans croisement inutile.
+*/
+
+/** Place réservée dans une colonne à un lien qui ne fait que la traverser. */
+interface Escale {
+    id: string; // identifiant du lien
+    column: number;
+    lane: number;
+    rang: number; // rang intercalaire parmi les ordres des nœuds de la cellule
+    y: number; // haut de la place, arrêté par la seconde passe de layoutGrid()
+}
+
+/** Escales en place, renseignées par layoutGrid(). Vide sans lien traversant. */
+let escales: Escale[] = [];
+
+function escalesDe(column: number, lane: number): Escale[] {
+    return escales.filter(e => e.column === column && e.lane === lane);
+}
+
+/** Escales d'un lien, de la colonne la plus à gauche à la plus à droite. */
+function escalesDuLien(id: string): Escale[] {
+    return escales.filter(e => e.id === id).sort((a, b) => a.column - b.column);
+}
+
+/** Une place dans l'empilement d'une cellule : un nœud, ou l'escale d'un lien. */
+interface CaseCellule {
+    rang: number;
+    haut: number;
+    noeud?: FlowNode;
+    escale?: Escale;
+}
+
+/**
+ * Empilement d'une cellule (colonne × couloir) : ses nœuds dans l'ordre, et les
+ * escales des liens qui la traversent, chacune à son rang intercalaire.
+ */
+function casesEmpilees(noeuds: FlowNode[], esc: Escale[]): CaseCellule[] {
+    const cases: CaseCellule[] = noeuds
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .map(n => ({ rang: n.order, haut: nodeH(n), noeud: n }));
+    esc.forEach(e => cases.push({ rang: e.rang, haut: PASSAGE_H, escale: e }));
+    return cases.sort((a, b) => a.rang - b.rang);
 }
 
 /**
@@ -130,8 +191,22 @@ function bandLeft(column: number): number {
  * et le rang dans la cellule. Chaque couloir occupe une bande dont la hauteur est
  * celle de sa colonne la plus chargée, et les bandes s'empilent. Sans couloir
  * déclaré, il n'y en a qu'un : la mise en page est celle d'avant.
+ *
+ * DEUX PASSES, comme dans l'aperçu : la première donne la géométrie sans escale,
+ * qui dit OÙ chaque lien traversant voudrait passer ; la seconde refait la mise
+ * en page avec les places ainsi réservées. Sans lien traversant, la seconde
+ * passe n'a pas lieu et le résultat est celui d'avant, au pixel près.
  */
 function layoutGrid(): void {
+    escales = [];
+    placerNoeuds();
+    if (options.links.traversee !== "direct") {
+        escales = planifierEscales();
+        if (escales.length) placerNoeuds();
+    }
+}
+
+function placerNoeuds(): void {
     laneBounds.clear();
     const lanes = couloirs();
     const avecCouloirs = lanes.length > 1;
@@ -143,21 +218,100 @@ function layoutGrid(): void {
             if (!byCol.has(n.column)) byCol.set(n.column, []);
             byCol.get(n.column)!.push(n);
         });
+        // Une colonne traversée peut n'avoir aucun nœud dans ce couloir : la
+        // place réservée y compte quand même dans la hauteur de la bande.
+        escales.filter(e => e.lane === lane).forEach(e => {
+            if (!byCol.has(e.column)) byCol.set(e.column, []);
+        });
         let hauteur = NODE_H;
-        byCol.forEach(list => {
-            list.sort((a, b) => a.order - b.order);
-            // Empilement cumulatif : chaque nœud pousse le suivant de sa propre hauteur.
+        byCol.forEach((list, col) => {
+            // Empilement cumulatif : chaque place pousse la suivante de sa hauteur.
             let yy = y;
-            list.forEach(n => {
-                n.x = gridX(n.column);
-                n.y = yy;
-                yy += nodeH(n) + GAP_Y;
+            casesEmpilees(list, escalesDe(col, lane)).forEach(c => {
+                if (c.noeud) {
+                    c.noeud.x = gridX(col);
+                    c.noeud.y = yy;
+                } else if (c.escale) {
+                    c.escale.y = yy;
+                }
+                yy += c.haut + GAP_Y;
             });
             hauteur = Math.max(hauteur, yy - GAP_Y - y);
         });
         laneBounds.set(lane, { haut: y, bas: y + hauteur });
         y += hauteur + LANE_GAP;
     }
+}
+
+/**
+ * Décide, à partir d'une première mise en page, où chaque lien qui saute une
+ * colonne s'y glisse : couloir, puis rang parmi les nœuds déjà là. Le repère est
+ * l'ordonnée où le trait passerait s'il allait tout droit.
+ */
+function planifierEscales(): Escale[] {
+    const lanes = couloirs();
+    const plan: Escale[] = [];
+    viewLinks().forEach(l => {
+        const s = nodeById(l.source);
+        const t = nodeById(l.target);
+        if (!s || !t || t.column - s.column < 2) return;
+        const xs = s.x + NODE_W;
+        const xt = t.x;
+        const ys = s.y + nodeH(s) / 2;
+        const yt = t.y + nodeH(t) / 2;
+        for (let col = s.column + 1; col < t.column; col++) {
+            const x = gridX(col) + NODE_W / 2;
+            const f = xt > xs ? Math.max(0, Math.min(1, (x - xs) / (xt - xs))) : 0.5;
+            const yv = ys + (yt - ys) * f;
+            const lane = couloirTraverse(laneOf(s), laneOf(t), yv, lanes);
+            plan.push({ id: l.id, column: col, lane, rang: rangDansCellule(col, lane, yv), y: yv });
+        }
+    });
+    return plan;
+}
+
+/**
+ * Couloir où loger une escale : celui dont la bande est la plus proche de
+ * l'ordonnée visée, parmi les couloirs situés ENTRE le départ et l'arrivée.
+ */
+function couloirTraverse(depart: number, arrivee: number, y: number, lanes: number[]): number {
+    const min = Math.min(depart, arrivee);
+    const max = Math.max(depart, arrivee);
+    const candidats = lanes.filter(l => l >= min && l <= max);
+    if (!candidats.length) return depart;
+    let choisi = candidats[0];
+    let meilleure = Infinity;
+    candidats.forEach(l => {
+        const b = laneBounds.get(l);
+        if (!b) return;
+        const d = y < b.haut ? b.haut - y : y > b.bas ? y - b.bas : 0;
+        if (d < meilleure) {
+            meilleure = d;
+            choisi = l;
+        }
+    });
+    return choisi;
+}
+
+/**
+ * Rang d'une escale parmi les nœuds d'une cellule : un ordre intercalaire, entre
+ * celui du nœud qui la précède et celui du nœud qui la suit à l'écran. Des
+ * valeurs fractionnaires suffisent — l'ordre ne sert qu'à trier.
+ *
+ * À ÉGALITÉ, l'escale passe DEVANT le nœud, qui descend d'un cran. La vue
+ * d'édition est une grille : un lien qui traverse à la hauteur exacte d'un nœud
+ * est le cas courant, pas l'exception, et l'arbitrage doit se voir — le lien
+ * garde sa trajectoire, le nœud est repoussé vers le bas. (L'aperçu, lui, place
+ * ses escales sur des ordonnées continues où l'égalité n'arrive pas.)
+ */
+function rangDansCellule(column: number, lane: number, y: number): number {
+    const list = colonneTriee(column, lane);
+    if (!list.length) return 0;
+    const centre = (n: FlowNode) => n.y + nodeH(n) / 2;
+    const i = list.findIndex(n => centre(n) >= y);
+    if (i < 0) return list[list.length - 1].order + 1;
+    if (i === 0) return list[0].order - 1;
+    return (list[i - 1].order + list[i].order) / 2;
 }
 
 /** Nom affiché d'un couloir. */
@@ -496,6 +650,11 @@ function render(): void {
         maxX = Math.max(maxX, n.x + NODE_W + 140); // marge pour le bouton +
         maxY = Math.max(maxY, n.y + nodeH(n) + 80);
     });
+    // Une place réservée peut clore une colonne : elle compte dans la hauteur,
+    // sans quoi le passage du dernier lien serait rogné par le bas du canevas.
+    escales.forEach(e => {
+        maxY = Math.max(maxY, e.y + PASSAGE_H + 80);
+    });
     sizeCanvas(maxX, maxY);
     renderEditor();
 }
@@ -611,9 +770,47 @@ const HALO_MARGE = 3;
 let nodeEls = new Map<string, SVGGElement>();
 let linkEls: { link: FlowLink; line: SVGPathElement; hit: SVGPathElement }[] = [];
 
-function linkPathD(x1: number, y1: number, x2: number, y2: number): string {
-    const mx = (x1 + x2) / 2;
-    return `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+/**
+ * Tracé d'un lien, éventuellement dérouté par les places qu'il s'est réservées
+ * dans les colonnes qu'il traverse (`via`). Sans escale, le tracé est celui
+ * d'avant, caractère pour caractère.
+ */
+function linkPathD(
+    x1: number, y1: number, x2: number, y2: number,
+    via: { x: number; y: number }[] = []
+): string {
+    if (!via.length) {
+        const mx = (x1 + x2) / 2;
+        return `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+    }
+    // Une courbe jusqu'à l'entrée de la place réservée, la traversée en ligne
+    // droite, et ainsi de suite : le franchissement se voit.
+    const pts = [{ x: x1, y: y1 }, ...via, { x: x2, y: y2 }];
+    let d = `M${x1},${y1}`;
+    for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1];
+        const b = pts[i];
+        if (a.y === b.y) {
+            d += ` L${b.x},${b.y}`;
+        } else {
+            const mx = (a.x + b.x) / 2;
+            d += ` C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`;
+        }
+    }
+    return d;
+}
+
+/**
+ * Points par lesquels passe un lien traversant : il franchit chaque place
+ * réservée de part en part, sur toute la largeur qu'aurait eue un nœud.
+ */
+function pointsDePassage(l: FlowLink): { x: number; y: number }[] {
+    const pts: { x: number; y: number }[] = [];
+    escalesDuLien(l.id).forEach(e => {
+        const y = e.y + PASSAGE_H / 2;
+        pts.push({ x: gridX(e.column), y }, { x: gridX(e.column) + NODE_W, y });
+    });
+    return pts;
 }
 
 function renderEditor(): void {
@@ -690,7 +887,8 @@ function renderEditor(): void {
         const s = nodeById(l.source);
         const t = nodeById(l.target);
         if (!s || !t) return;
-        const d = linkPathD(s.x + NODE_W, s.y + nodeH(s) / 2, t.x, t.y + nodeH(t) / 2);
+        const via = pointsDePassage(l);
+        const d = linkPathD(s.x + NODE_W, s.y + nodeH(s) / 2, t.x, t.y + nodeH(t) / 2, via);
 
         const g = document.createElementNS(SVGNS, "g");
         g.setAttribute("class", "edit-link" + (selection.id === l.id ? " selected" : ""));
@@ -698,6 +896,9 @@ function renderEditor(): void {
         const line = document.createElementNS(SVGNS, "path");
         line.setAttribute("class", "link-line");
         line.setAttribute("d", d);
+        // Repères stables : c'est par eux que les tests mesurent le tracé peint.
+        line.setAttribute("data-source", l.source);
+        line.setAttribute("data-target", l.target);
         line.setAttribute("stroke", l.colorOverride || s.color || "#6b6b6b"); // couleur du nœud d'origine
         g.appendChild(line);
 
@@ -1095,7 +1296,9 @@ function applyDragFrame(): void {
         const ns = nodeById(link.source);
         const nt = nodeById(link.target);
         if (!s || !t || !ns || !nt) return;
-        const d = linkPathD(s.x + NODE_W, s.y + nodeH(ns) / 2, t.x, t.y + nodeH(nt) / 2);
+        const d = linkPathD(
+            s.x + NODE_W, s.y + nodeH(ns) / 2, t.x, t.y + nodeH(nt) / 2, pointsDePassage(link)
+        );
         line.setAttribute("d", d);
         hit.setAttribute("d", d);
     });

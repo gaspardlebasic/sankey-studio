@@ -228,6 +228,7 @@ export function openColorPopover(o: ColorPopoverOptions): void {
         window.removeEventListener("keydown", onKey, true);
         window.removeEventListener("resize", reposition);
         back.remove();
+        retireCale();
         closeCurrentPopover = null;
     }
     const onKey = (e: KeyboardEvent) => {
@@ -240,17 +241,85 @@ export function openColorPopover(o: ColorPopoverOptions): void {
     closeCurrentPopover = done;
 }
 
-/** Place la surcouche sous le bouton, en la ramenant dans la fenêtre. */
+/**
+ * Cale posée en fin de volet le temps du choix : elle autorise le volet à
+ * défiler un peu plus bas que son contenu, pour que le dernier champ de la
+ * dernière carte puisse remonter et laisser la palette tenir dessous.
+ */
+let cale: HTMLElement | null = null;
+
+function poseCale(volet: HTMLElement, px: number): void {
+    if (!cale) {
+        cale = document.createElement("div");
+        cale.className = "cp-cale";
+        cale.setAttribute("aria-hidden", "true");
+        cale.style.flex = "0 0 auto";
+    }
+    cale.style.height = Math.ceil(px) + "px";
+    volet.appendChild(cale);
+}
+
+function retireCale(): void {
+    cale?.remove();
+    cale = null;
+}
+
+/** Le conteneur qui défile autour du bouton (le volet), s'il y en a un. */
+function ancetreDefilant(el: HTMLElement): HTMLElement | null {
+    let e = el.parentElement;
+    while (e && e !== document.body) {
+        const oy = getComputedStyle(e).overflowY;
+        if ((oy === "auto" || oy === "scroll") && e.scrollHeight > e.clientHeight) return e;
+        e = e.parentElement;
+    }
+    return null;
+}
+
+/**
+ * Place la surcouche **sous** le bouton, jamais au-dessus : une palette qui
+ * s'ouvre vers le haut recouvre le champ qu'on est en train de régler.
+ * Quand le bas de la fenêtre est trop proche, on fait d'abord remonter le
+ * bouton en faisant défiler le volet ; s'il manque encore de la hauteur, la
+ * palette se rogne et défile en elle-même.
+ */
 function place(pop: HTMLElement, anchor: HTMLElement): void {
-    const a = anchor.getBoundingClientRect();
-    const w = pop.offsetWidth;
+    const m = 8;      // marge avec les bords de la fenêtre
+    const gap = 6;    // écart entre le bouton et la palette
+    const mini = 160; // en deçà, la palette n'est plus utilisable
+
+    pop.style.maxHeight = "";
+    pop.style.overflowY = "";
     const h = pop.offsetHeight;
-    const m = 8;
+
+    const debord = anchor.getBoundingClientRect().bottom + gap + h - (window.innerHeight - m);
+    if (debord > 0) {
+        const volet = ancetreDefilant(anchor);
+        if (volet) {
+            // On ne remonte le bouton que jusqu'en haut du volet : il doit
+            // rester visible pendant qu'on choisit la couleur.
+            const jusquEnHaut = anchor.getBoundingClientRect().top - volet.getBoundingClientRect().top - m;
+            const aRemonter = Math.max(0, Math.min(debord, jusquEnHaut));
+            const reste = volet.scrollHeight - volet.clientHeight - volet.scrollTop;
+            if (reste < aRemonter) poseCale(volet, aRemonter - reste);
+            volet.scrollTop += aRemonter;
+        }
+    }
+
+    const a = anchor.getBoundingClientRect();
+    let top = a.bottom + gap;
+    let hauteur = h;
+    const dispo = window.innerHeight - m - top;
+    if (h > dispo) {
+        hauteur = Math.max(mini, dispo);
+        pop.style.maxHeight = hauteur + "px";
+        pop.style.overflowY = "auto";
+    }
+    if (top + hauteur > window.innerHeight - m) top = Math.max(m, window.innerHeight - m - hauteur);
+
+    const w = pop.offsetWidth;
     let left = a.left;
-    let top = a.bottom + 6;
     if (left + w > window.innerWidth - m) left = window.innerWidth - w - m;
     if (left < m) left = m;
-    if (top + h > window.innerHeight - m) top = Math.max(m, a.top - h - 6);
     pop.style.left = Math.round(left) + "px";
     pop.style.top = Math.round(top) + "px";
 }

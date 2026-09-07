@@ -398,6 +398,42 @@ const etiquettesApercu = () => [...document.querySelectorAll('#canvas text[data-
                  gauche: b.left, droite: b.right, haut: b.top, bas: b.bottom,
                  milieuX: b.left + b.width / 2, milieuY: b.top + b.height / 2 };
     });
+/**
+ * Nœuds de la VUE D'ÉDITION que le tracé d'un lien recouvre RÉELLEMENT.
+ * Un lien d'édition est un TRAIT, pas une surface : on échantillonne le tracé
+ * peint (getPointAtLength) et l'on regarde quelles boîtes de nœuds il traverse.
+ * Jamais une formule refaite d'après le modèle — c'est la peinture qui compte.
+ * Les deux extrémités sont exclues : le trait part de leur bord.
+ */
+const noeudsTraversesEdition = (sourceId, cibleId) => {
+    const trace = document.querySelector('#canvas .edit-link .link-line[data-source="'
+        + sourceId + '"][data-target="' + cibleId + '"]');
+    if (!trace) throw new Error('lien non tracé : ' + sourceId + ' -> ' + cibleId);
+    const r0 = canvasRect();
+    const L = trace.getTotalLength();
+    const pts = [];
+    for (let i = 0; i <= 600; i++) {
+        const p = trace.getPointAtLength(L * i / 600);
+        pts.push({ x: r0.left + p.x, y: r0.top + p.y });
+    }
+    return [...document.querySelectorAll('#canvas .edit-node')]
+        .filter(el => el.dataset.id !== sourceId && el.dataset.id !== cibleId)
+        .filter(el => {
+            const b = el.querySelector('.node-box').getBoundingClientRect();
+            return pts.some(p => p.x >= b.left && p.x <= b.right
+                              && p.y >= b.top && p.y <= b.bottom);
+        })
+        .map(el => el.dataset.id);
+};
+/** Haut de la boîte peinte de chaque nœud d'une colonne, par identifiant. */
+const hautsDeColonne = col => {
+    const out = {};
+    [...document.querySelectorAll('#canvas .edit-node')].forEach(el => {
+        const n = byId(el.dataset.id);
+        if (n && n.column === col) out[n.id] = Math.round(boxOf(n.id).top);
+    });
+    return out;
+};
 const clickPlus = async () => {
     const g = document.querySelector('#canvas .plus-handle');
     if (!g) throw new Error('bouton + absent');

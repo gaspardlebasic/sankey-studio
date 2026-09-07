@@ -746,6 +746,56 @@ test("traversée : un lien qui saute deux colonnes se faufile dans chacune", "co
     "un ruban par lien : les places réservées ne doivent pas peindre de morceaux en plus");
 });
 
+test("traversée : en édition, un lien qui saute une colonne y prend la place d'un nœud",
+    "complexe", async p => {
+  const r = await p(`
+    // Vue d'ÉDITION : le trait d'un lien A(col 4) -> C(col 6) passait tout droit
+    // SUR le nœud de la colonne 5. Il doit désormais s'y réserver la place d'un
+    // nœud, qui repousse les suivants vers le bas et découvre le passage.
+    [...document.querySelectorAll('#sidebar button.linklike')]
+      .find(b => /Tout afficher/.test(b.textContent))
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await sleep(120);
+    const m = T.model();
+    const a = one('Farine');                                // colonne 4
+    const b = one('Distribution');                          // colonne 5
+    const c = one('Exportation de produits transformés');   // colonne 6
+    // Le diagramme d'essai a déjà des liens qui sautent une colonne : la mise en
+    // page SANS aucune place réservée est celle du tracé tout droit.
+    await reglerCarte('Liens', 'Colonnes sautées', 'direct');
+    const droit0 = hautsDeColonne(b.column);
+    await reglerCarte('Liens', 'Colonnes sautées', 'passage');
+    const avant = hautsDeColonne(b.column);
+    m.links.push({ id: 'saut', source: a.id, target: c.id, value: 400 });
+    T.refresh();
+    await sleep(150);
+    const apres = hautsDeColonne(b.column);
+    const passage = noeudsTraversesEdition(a.id, c.id).map(id => byId(id).name);
+    // Tracé tout droit : le même trait doit repasser sur le nœud traversé, et la
+    // colonne retrouver exactement la mise en page qu'elle a sans place réservée.
+    await reglerCarte('Liens', 'Colonnes sautées', 'direct');
+    const direct = noeudsTraversesEdition(a.id, c.id).map(id => byId(id).name);
+    const droit1 = hautsDeColonne(b.column);
+    await reglerCarte('Liens', 'Colonnes sautées', 'passage');
+    const ids = Object.keys(avant).filter(id => apres[id] !== undefined);
+    return {
+      passage, direct, traversee: b.name, saut: c.column - a.column,
+      decales: ids.map(id => apres[id] - avant[id]).filter(d => d !== 0),
+      rendus: ids.map(id => droit1[id] - droit0[id]).filter(d => d !== 0)
+    };
+  `);
+  egal(r.saut, 2, "le lien mis à l'épreuve doit bien sauter une colonne");
+  egal(r.passage, [], "avec une place réservée, le trait ne recouvre plus aucun nœud");
+  egal(r.direct, [r.traversee],
+    "tracé tout droit, le même trait recouvre le nœud traversé — sans quoi le test ne prouverait rien");
+  attendu(r.decales.length > 0,
+    "la place réservée doit repousser vers le bas les nœuds de la colonne traversée");
+  egal(r.decales.filter(d => d !== 60), [],
+    "chaque nœud repoussé descend exactement d'une place de nœud (38 + 22)");
+  egal(r.rendus, [],
+    "« Tracer tout droit » rend à la colonne la mise en page qu'elle a sans place réservée");
+});
+
 test("filières empilées : la même colonne tombe à la même abscisse", "complexe", async p => {
   const r = await p(`
     [...document.querySelectorAll('#sidebar button.linklike')]
@@ -1502,6 +1552,58 @@ test("palette : propose les couleurs déjà utilisées dans le document", "compl
   egal(r.couvreLesNoeuds, [], "toutes les couleurs de nœuds doivent être proposées");
 });
 
+test("palette : s'ouvre sous la pastille, jamais par-dessus le champ", "complexe", async p => {
+  const r = await p(`
+    await selectNode(one('Féverolle').id);
+    const cartes = [...document.querySelectorAll('#sidebar details')];
+    const carte = cartes[cartes.length - 1];
+    carte.open = true;
+    await sleep(120);
+    // Le pire cas : le dernier champ coloré, volet déroulé jusqu'en bas.
+    let volet = carte.parentElement;
+    while (volet && volet !== document.body) {
+      const oy = getComputedStyle(volet).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && volet.scrollHeight > volet.clientHeight) break;
+      volet = volet.parentElement;
+    }
+    volet.scrollTop = volet.scrollHeight;
+    await sleep(120);
+    const boutons = [...carte.querySelectorAll('.color-btn')];
+    const b = boutons[boutons.length - 1];
+    const avant = Math.round(b.getBoundingClientRect().bottom);
+    b.click();
+    await sleep(140);
+    const pop = document.querySelector('.cp-pop');
+    const a = b.getBoundingClientRect();
+    const p2 = pop.getBoundingClientRect();
+    pop.querySelector('.cp-close').click();
+    await sleep(80);
+    const caleRestante = document.querySelectorAll('.cp-cale').length;
+    // Le volet garde ses cartes ouvertes d'un projet à l'autre : on remet
+    // celle-ci comme on l'a trouvée, sinon le test suivant en hérite.
+    carte.open = false;
+    volet.scrollTop = 0;
+    return {
+      avant,
+      pastille: Math.round(a.bottom),
+      haut: Math.round(p2.top),
+      bas: Math.round(p2.bottom),
+      hauteur: Math.round(p2.height),
+      fenetre: window.innerHeight,
+      caleRestante
+    };
+  `);
+  attendu(r.haut >= r.pastille,
+    `la palette doit s'ouvrir sous la pastille (haut ${r.haut}, pastille ${r.pastille})`);
+  attendu(r.bas <= r.fenetre,
+    `la palette ne doit pas déborder de la fenêtre (bas ${r.bas}, fenêtre ${r.fenetre})`);
+  attendu(r.avant > r.pastille,
+    `le volet doit remonter la pastille pour dégager la place (${r.avant} -> ${r.pastille})`);
+  attendu(r.hauteur > 300,
+    `la palette doit rester entière, pas rognée (hauteur ${r.hauteur})`);
+  egal(r.caleRestante, 0, "en refermant, la cale posée dans le volet doit repartir");
+});
+
 test("panneau : les champs nombre et couleur tiennent en demi-colonne", "complexe", async p => {
   const r = await p(`
     await selectNode(one('Féverolle').id);
@@ -1975,7 +2077,7 @@ async function charger(win, fixture) {
   // Un test peut laisser un éditeur en ligne ou une surcouche ouverts : on
   // repart d'une page propre, sinon le test suivant tombe dessus.
   await win.webContents.executeJavaScript(
-    `document.querySelectorAll('.inline-edit, .ov-backdrop, .cp-backdrop').forEach(e => e.remove()); true`
+    `document.querySelectorAll('.inline-edit, .ov-backdrop, .cp-backdrop, .cp-cale').forEach(e => e.remove()); true`
   );
   await win.webContents.executeJavaScript(
     `window.__sankeyTest.loadProject(${JSON.stringify(FIXTURES[fixture])}); true`
