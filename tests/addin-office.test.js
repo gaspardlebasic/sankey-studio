@@ -71,7 +71,7 @@ function classeurType(opts) {
         ["Lait", "Lait cru", "Transformation", { f: "=Lentilles!C68", v: 95 }, "t", "n2", "n3"]
       ]
     }
-  ]);
+  ], { recopie: opts.recopie });
 }
 
 const MODELE = {
@@ -784,6 +784,74 @@ await test("écriture : un unique lien à formule n'est pas une colonne calculé
   attendu(!r.remplissage, "une ligne unique ne prouve rien");
   egal(c.formulesDe("Liens")[0][LINK_COLS.indexOf("Valeur du flux")],
        "='Blé tendre'!$C$8", "la formule du seul lien est conservée");
+});
+
+/* ------------- quand c'est NOTRE écriture qu'Excel recopie ------------- */
+
+/**
+ * Le classeur d'AgriParis Seine au moment du bug (7 septembre 2026) : la colonne
+ * « Valeur du flux » est VIDE, l'utilisatrice vient de taper sa formule dans la
+ * première case, et elle déplace un nœud de couloir. Le complément n'écrit
+ * qu'UNE formule — les tests au-dessus le prouvent — mais Excel, lui, peut
+ * l'étendre à tous les liens en faisant de la colonne une COLONNE CALCULÉE.
+ * Ce qui compte alors : que les valeurs, qui viennent du modèle, soient encore
+ * là après l'écriture.
+ */
+function classeurDUneSeuleFormule(recopie) {
+  return classeurType({
+    recopie,
+    noeuds: RANGS_QUATRE,
+    liens: [
+      ["Lait", "Production bio", "Lait cru", { f: "='Blé tendre'!$C$8", v: 15126461.6 }, "t", "n1", "n2"],
+      ["Lait", "Lait cru", "Transformation", "", "t", "n2", "n3"],
+      ["Lait", "Transformation", "Beurre", "", "t", "n3", "n4"]
+    ]
+  });
+}
+/** L'édition signalée : un nœud change de couloir, rien d'autre. */
+function deplaceBeurreDeCouloir() {
+  return {
+    nodes: QUATRE.map(n => (n.id === "n4" ? Object.assign({}, n, { lane: 2 }) : n)),
+    links: [
+      { source: "n1", target: "n2", value: 15126461.6, unit: "t" },
+      { source: "n2", target: "n3", value: 0, unit: "t" },
+      { source: "n3", target: "n4", value: 0, unit: "t" }
+    ]
+  };
+}
+
+await test("écriture : une recopie passagère d'Excel est défaite dans le même envoi", async () => {
+  // Excel étend la formule à toute la colonne au moment où elle s'y pose. Les
+  // nombres, reposés juste après dans le MÊME envoi, la démentent avant même le
+  // sync : rien ne se voit, et la formule reste sur le lien qui est le sien.
+  const c = classeurDUneSeuleFormule("passagere");
+  const r = await office.ecrireDiagramme(deplaceBeurreDeCouloir());
+  attendu(r.ok, "écriture réussie");
+  attendu(!r.remplissage, "la recopie a été défaite sans laisser de trace");
+  const iVal = LINK_COLS.indexOf("Valeur du flux");
+  egal(c.formulesDe("Liens").map(l => l[iVal]), ["='Blé tendre'!$C$8", "", ""],
+       "la formule est restée sur SON lien, et nulle part ailleurs");
+  egal(c.lignesDe("Liens").map(l => l[iVal]), [15126461.6, 0, 0],
+       "les valeurs des autres liens sont intactes");
+});
+
+await test("écriture : une colonne calculée créée par notre écriture est défaite, et dite", async () => {
+  // LE CAS DU 7 SEPTEMBRE. Excel TIENT sa colonne calculée : reposer les nombres
+  // ne suffit pas, il les recouvre. On relit donc après avoir écrit, et là on ne
+  // peut plus garder la formule — mais les valeurs, elles, viennent du modèle :
+  // on les repose toutes, la colonne perd sa dernière formule, Excel abandonne.
+  // Et on le DIT, sinon l'utilisatrice croirait sa formule enregistrée.
+  const c = classeurDUneSeuleFormule("colonneCalculee");
+  const r = await office.ecrireDiagramme(deplaceBeurreDeCouloir());
+  attendu(r.ok, "écriture réussie");
+  egal(r.remplissage, { formule: "='Blé tendre'!$C$8", liens: 3, aLEcriture: true },
+       "la recopie est signalée, prise sur le fait");
+  egal(r.formules, 0, "aucune formule n'a survécu : ne pas prétendre le contraire");
+  const iVal = LINK_COLS.indexOf("Valeur du flux");
+  egal(c.formulesDe("Liens").map(l => l[iVal]), ["", "", ""],
+       "plus une seule formule : Excel abandonne sa colonne calculée");
+  egal(c.lignesDe("Liens").map(l => l[iVal]), [15126461.6, 0, 0],
+       "AUCUNE valeur n'est perdue — elles viennent du modèle");
 });
 
 await test("écriture : une seule formule dans la colonne reste une formule", async () => {

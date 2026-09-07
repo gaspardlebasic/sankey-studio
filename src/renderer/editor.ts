@@ -1596,7 +1596,7 @@ function buildFilierePanel(): HTMLElement | null {
 /* ------------------- alerte « remplissage d'Excel » ------------------- */
 
 /** Ce que l'adaptateur signale quand il défait une recopie d'Excel. */
-interface Remplissage { formule: string; liens: number; }
+interface Remplissage { formule: string; liens: number; aLEcriture?: boolean; }
 
 /**
  * Le dernier remplissage d'Excel rencontré, tant que l'utilisatrice ne l'a pas
@@ -1626,6 +1626,14 @@ function buildAlertePanel(): HTMLElement | null {
     const a = alerteRemplissage;
     if (!a) return null;
 
+    // Deux histoires, et il ne faut surtout pas les confondre. À l'ÉCRITURE,
+    // Excel vient d'étendre la formule que nous posions sur un seul lien : les
+    // valeurs viennent du modèle, elles ont été remises, rien n'est perdu — mais
+    // la formule n'a pas pu rester. TROUVÉE dans le classeur, la recopie avait
+    // déjà écrasé les valeurs : elles sont perdues, et seule une version
+    // antérieure du classeur peut les rendre.
+    if (a.aLEcriture) return buildAlerteRecopieVive(a);
+
     const s = section("⚠︎  Valeurs de flux écrasées par Excel");
     const p = document.createElement("p");
     p.className = "hint warn";
@@ -1643,12 +1651,45 @@ function buildAlertePanel(): HTMLElement | null {
         + "Options de correction automatique ▸ Mise en forme automatique au cours de la frappe ▸ "
         + "« Remplir les formules dans les tableaux pour créer des colonnes calculées »."
     ));
+    s.appendChild(boutonLuEtMasque());
+    return s;
+}
+
+/**
+ * L'alerte de la recopie prise SUR LE FAIT : Excel a étendu à tous les liens la
+ * formule que nous venions de poser sur un seul. Le complément a reposé les
+ * valeurs — elles viennent du diagramme, aucune n'est perdue — et retiré la
+ * formule, seule façon de faire abandonner à Excel sa colonne calculée.
+ */
+function buildAlerteRecopieVive(a: Remplissage): HTMLElement {
+    const s = section("⚠︎  Excel recopie ta formule sur tous les liens");
+    const p = document.createElement("p");
+    p.className = "hint warn";
+    p.textContent =
+        `La formule ${a.formule} a été posée sur UN lien, et Excel l'a aussitôt étendue `
+        + `à ${a.liens} liens de la colonne « Valeur du flux » : c'est sa « colonne calculée ». `
+        + "Les valeurs ont été remises — elles viennent du diagramme, aucune n'est perdue — "
+        + "mais la formule a dû être retirée : la garder, c'est la voir recopiée à chaque "
+        + "écriture.";
+    s.appendChild(p);
+    s.appendChild(hint(
+        "Pour pouvoir à nouveau saisir des formules dans cette colonne, décoche dans Excel : "
+        + "Préférences ▸ Vérification ▸ Options de correction automatique ▸ Mise en forme "
+        + "automatique au cours de la frappe ▸ « Remplir les formules dans les tableaux pour "
+        + "créer des colonnes calculées ». En attendant, saisis des VALEURS dans "
+        + "« Valeur du flux » (copier ▸ collage spécial ▸ valeurs)."
+    ));
+    s.appendChild(boutonLuEtMasque());
+    return s;
+}
+
+/** Le bouton qui écarte l'alerte — la même dans les deux cas. */
+function boutonLuEtMasque(): HTMLElement {
     const b = document.createElement("button");
     b.className = "linklike";
     b.textContent = "J'ai lu — masquer cet avertissement";
     b.addEventListener("click", () => { alerteRemplissage = null; buildSidebar(); });
-    s.appendChild(b);
-    return s;
+    return b;
 }
 
 /**

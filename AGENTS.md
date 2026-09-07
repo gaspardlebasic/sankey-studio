@@ -549,6 +549,27 @@ un poste, c'est `npm run addin:install -- --enligne`.
     qui nomme la formule, compte les liens et donne le réglage d'Excel à décocher. Elle survit
     aux reconstructions du panneau : l'écriture qui la découvre est le plus souvent automatique
     et silencieuse, et un message de la barre d'état serait remplacé avant d'être lu.
+  - **Et on ne suppose pas : on relit.** Le complément n'écrit **qu'une** formule — un test le
+    prouve — mais ce que le classeur porte APRÈS l'écriture est une autre affaire : Excel peut
+    faire de « Valeur du flux » une colonne calculée au moment même où la formule s'y pose, et
+    l'étendre à tous les liens. Constaté le **2026-09-07** sur `Flux APS.xlsx`, colonne vide et
+    une seule formule saisie en N2 : toute la colonne est repartie avec `='Blé tendre'!$C$8` —
+    la forme **ancrée**, donc la nôtre, donc étendue APRÈS notre écriture. Et le réglage d'Excel
+    était bien décoché : sur ce Mac, une formule TAPÉE dans une colonne de tableau vide ne se
+    recopie pas (vérifié). Deux gardes, dans cet ordre :
+    1. `reposerLesNombres()` repose les nombres des lignes sans formule **dans le même envoi**,
+       juste après l'affectation de la colonne — pas un aller-retour de plus. Une recopie
+       passagère est démentie avant même le `sync`.
+    2. `verifierColonneValeur()` **relit** la colonne après l'écriture — un aller-retour, et
+       seulement quand une formule est en jeu. Si une ligne porte une formule qu'on n'y a pas
+       mise, Excel tient sa colonne calculée : on repose **toutes** les valeurs (elles viennent
+       du modèle, aucune n'est perdue), la colonne perd sa dernière formule, Excel abandonne, et
+       le résultat porte `remplissage: { …, aLEcriture: true }`. L'alerte du volet raconte alors
+       l'autre histoire — rien n'est perdu, mais la formule n'a pas pu rester.
+    Le faux Office sait jouer cet Excel-là : `monterClasseur(tables, { recopie: "passagere" })`
+    pour la recopie qu'une écriture suivante défait, `{ recopie: "colonneCalculee" }` pour celle
+    qui tient. Sans ces deux gardes, les deux tests correspondants rendent la colonne entière
+    remplie de la même formule — le symptôme signalé, reproduit.
 - **Écrire une colonne, c'est écrire une plage de la HAUTEUR EXACTE des données**
   (`colonneDuCorps`, qui part de la première cellule et redimensionne). `getColumn()` prend la
   hauteur qu'a le tableau au moment du sync ; **Excel diffuse un tableau à une ligne sur toute

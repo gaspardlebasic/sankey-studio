@@ -382,6 +382,16 @@ export interface Remplissage {
   formule: string;
   /** Nombre de liens qu'elle occupait. */
   liens: number;
+  /**
+   * La recopie s'est produite PENDANT NOTRE ÉCRITURE : Excel a repris la
+   * formule que nous venions de poser sur un seul lien et l'a étendue aux
+   * autres. Les valeurs, elles, viennent du modèle — nous les avons remises,
+   * rien n'est perdu ; c'est la formule qui n'a pas pu rester.
+   *
+   * Sans ce drapeau, le remplissage a été TROUVÉ dans le classeur en le
+   * relisant : les valeurs qu'il a écrasées, elles, sont bel et bien perdues.
+   */
+  aLEcriture?: boolean;
 }
 
 /** Ce que la détection rend : les lignes à ne pas préserver, et de quoi le dire. */
@@ -393,6 +403,9 @@ interface Remplissages {
 }
 
 const AUCUN_REMPLISSAGE: Remplissages = { ignorees: new Set(), principal: null };
+
+/** Sépare les deux moitiés d'une clé de groupe : aucune formule ne le porte. */
+const SEP = "\u0000";
 
 /**
  * Quelles lignes de « Valeur du flux » sont un REMPLISSAGE d'Excel — pas des
@@ -448,7 +461,7 @@ function lignesDeRemplissage(
     if (ligneVide(lignesV[i])) continue;          // ligne de réserve : elle ne compte pas
     const f = texte(lignesF[i] ? lignesF[i][iVal] : "");
     if (f.charAt(0) !== "=") continue;            // pas une formule : rien à suspecter
-    const cle = f + " " + texte(lignesV[i][iVal]);
+    const cle = f + SEP + texte(lignesV[i][iVal]);
     const g = groupes.get(cle);
     if (g) g.lignes.push(i);
     else groupes.set(cle, { formule: f, lignes: [i] });
@@ -638,7 +651,12 @@ function apparierLignes(
  * réparable — au lieu d'une colonne effacée en silence.
  */
 function colonneDuCorps(corps: Excel.Range, c: number, hauteur: number): Excel.Range {
-  return corps.getCell(0, c).getResizedRange(hauteur - 1, 0);
+  return blocDuCorps(corps, c, 0, hauteur);
+}
+
+/** Un morceau de colonne : `n` lignes du corps à partir de `r0`. */
+function blocDuCorps(corps: Excel.Range, c: number, r0: number, n: number): Excel.Range {
+  return corps.getCell(r0, c).getResizedRange(n - 1, 0);
 }
 
 /** Réécrit les colonnes étrangères, chacune sur la ligne de SON nœud / SON lien. */
@@ -773,6 +791,11 @@ export async function ecrireDiagramme(
     reporterEtrangeres(t.liens, etrLiens, srcLiens, Math.max(MIN_LIGNES, linkRows.length));
     await context.sync();                                          // sync 5
 
+    // Ce que nous avons écrit et ce que le classeur porte ensuite sont deux
+    // choses différentes : Excel a pu faire de « Valeur du flux » une colonne
+    // calculée et y étendre notre formule. On relit avant d'enregistrer.
+    const recopie = await verifierColonneValeur(context, t.liens, linkRows);
+
     let enregistre = false;
     if (options && options.save) {
       context.workbook.save(Excel.SaveBehavior.save);
@@ -783,10 +806,13 @@ export async function ecrireDiagramme(
     return {
       ok: true,
       sheetName: t.feuille || nomFeuille || FEUILLE_DEFAUT,
-      formules: nombreDeFormulesReemises(linkRows),
+      formules: recopie ? 0 : nombreDeFormulesReemises(linkRows),
       enregistre,
       ms: Date.now() - t0,
-      ...(remplissages.principal ? { remplissage: remplissages.principal } : {})
+      // La recopie d'après-écriture prime : c'est celle qui vient de se
+      // produire. L'autre a été trouvée dans le classeur, et défaite avant.
+      ...(recopie || remplissages.principal
+            ? { remplissage: (recopie || remplissages.principal) as Remplissage } : {})
     };
   });
 }
@@ -795,6 +821,70 @@ function nombreDeFormulesReemises(linkRows: Cellule[][]): number {
   let n = 0;
   for (const ligne of linkRows) for (const c of ligne) if (c.t === "f") n++;
   return n;
+}
+
+/**
+ * Après avoir écrit : Excel a-t-il étendu notre formule aux autres liens ?
+ *
+ * POURQUOI ON REGARDE AU LIEU DE SUPPOSER. Une formule posée dans une colonne
+ * de tableau peut décider Excel à en faire une COLONNE CALCULÉE : il la recopie
+ * alors sur TOUS les liens, par-dessus les valeurs. C'est ce qui a détruit
+ * l'affectation des données dans « Flux APS.xlsx », deux fois. Le complément
+ * n'écrit qu'UNE formule — un test le prouve — mais ce qu'il écrit et ce que le
+ * classeur porte ensuite sont deux choses différentes : la seule façon de le
+ * savoir est de relire.
+ *
+ * Ce qui est réparable l'est ici même : **les valeurs viennent du modèle**, on
+ * les repose toutes, et la colonne, entièrement en `.values`, perd sa formule —
+ * seule façon de faire abandonner à Excel sa colonne calculée. La formule de
+ * l'utilisatrice, elle, ne survit pas : on ne peut pas la garder sans que la
+ * recopie recommence. D'où l'alerte, qui le DIT.
+ *
+ * Coût : un aller-retour de plus, et seulement quand une formule est en jeu.
+ */
+async function verifierColonneValeur(
+  context: Excel.RequestContext, liens: TableauTrouve, linkRows: Cellule[][]
+): Promise<Remplissage | null> {
+  const iVal = liens.index.get("Valeur du flux");
+  const iNotre = LINK_COLS_ECRITES.indexOf("Valeur du flux");
+  if (iVal === undefined || iNotre < 0) return null;
+
+  const notre = (r: number): Cellule | undefined => (linkRows[r] || [])[iNotre];
+  const attendue = (r: number): string => {
+    const c = notre(r);
+    return c && c.t === "f" ? "=" + c.f : "";
+  };
+  let posees = 0;
+  for (let r = 0; r < linkRows.length; r++) if (attendue(r)) posees++;
+  if (!posees) return null;                     // aucune formule écrite : rien à surveiller
+
+  const hauteur = Math.max(MIN_LIGNES, linkRows.length);
+  const relue = colonneDuCorps(liens.table.getDataBodyRange(), iVal, hauteur);
+  relue.load("formulas");
+  await context.sync();                                          // sync 5 bis
+
+  const lues = relue.formulas || [];
+  const lue = (r: number): string => texte(lues[r] ? lues[r][0] : "");
+  let recopiee = "";
+  for (let r = 0; r < linkRows.length; r++) {
+    const f = lue(r);
+    if (f.charAt(0) === "=" && f !== attendue(r)) { recopiee = f; break; }
+  }
+  if (!recopiee) return null;                   // le classeur porte ce que nous avons écrit
+
+  // Excel a recopié. On repose TOUTES les valeurs — celles du modèle, intactes —
+  // et la colonne, sans plus aucune formule, cesse d'être une colonne calculée.
+  const valeurs: (string | number)[][] = [];
+  for (let r = 0; r < hauteur; r++) {
+    const c = notre(r);
+    valeurs.push([c ? valeurDe(c) : ""]);
+  }
+  colonneDuCorps(liens.table.getDataBodyRange(), iVal, hauteur).values = valeurs;
+  await context.sync();                                          // sync 5 ter
+
+  let occupes = 0;
+  for (let r = 0; r < linkRows.length; r++) if (lue(r) === recopiee) occupes++;
+  return { formule: recopiee, liens: occupes, aLEcriture: true };
 }
 
 /**
@@ -852,12 +942,50 @@ function ecrireColonnes(
     // `.formulas` seulement quand il y a vraiment une formule à poser. Les deux
     // effacent les formules déjà présentes (ce qui défait la colonne calculée) :
     // écrire des nombres en `.values` dit simplement ce qu'on fait.
-    if (formule && donnees.some(l => typeof l[0] === "string" && l[0].charAt(0) === "=")) {
+    if (formule && donnees.some(estUneFormule)) {
       colonne.formulas = donnees;
+      reposerLesNombres(corps, iClasseur, donnees);
     } else {
       colonne.values = donnees;
     }
   });
+}
+
+/** Cette cellule, telle qu'on s'apprête à l'écrire, est-elle une formule ? */
+function estUneFormule(ligne: (string | number)[]): boolean {
+  return typeof ligne[0] === "string" && ligne[0].charAt(0) === "=";
+}
+
+/**
+ * Repose les nombres sur les lignes SANS formule, aussitôt après l'affectation
+ * de la colonne — dans le même envoi, donc avant même le `sync`.
+ *
+ * POURQUOI. Une formule qui se pose dans une colonne de tableau peut décider
+ * Excel à en faire une COLONNE CALCULÉE : il l'étend alors à toutes les lignes,
+ * par-dessus les nombres que nous venons d'y écrire, et l'affectation des
+ * valeurs aux liens est détruite sans un mot. Cette seconde passe les remet,
+ * bloc contigu par bloc contigu. Elle ne coûte pas un aller-retour de plus —
+ * quelques affectations dans celui qui part déjà — et sur un Excel qui se tient
+ * tranquille elle réécrit à l'identique.
+ *
+ * Ce qu'elle ne peut PAS faire : effacer la colonne calculée elle-même, qui
+ * recommencerait à la première ligne ajoutée. C'est l'affaire de la
+ * vérification d'après-écriture (`verifierColonneValeur`).
+ */
+function reposerLesNombres(
+  corps: Excel.Range, c: number, donnees: (string | number)[][]
+): void {
+  let debut = -1;
+  for (let r = 0; r <= donnees.length; r++) {
+    if (r < donnees.length && !estUneFormule(donnees[r])) {
+      if (debut < 0) debut = r;
+      continue;
+    }
+    if (debut >= 0) {
+      blocDuCorps(corps, c, debut, r - debut).values = donnees.slice(debut, r);
+      debut = -1;
+    }
+  }
 }
 
 /* ------------------------------ ÉVÈNEMENTS ------------------------------ */

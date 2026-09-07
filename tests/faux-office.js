@@ -364,6 +364,73 @@ class FauxContexte {
         });
       });
     });
+    this._commeUnExcelQuiRecopie(op);
+  }
+
+  /**
+   * L'EXCEL QUI RECOPIE — le comportement qui a détruit deux fois l'affectation
+   * des valeurs dans « Flux APS.xlsx », et qu'aucun faux ne reproduisait.
+   *
+   * Une formule qui se pose dans une colonne de tableau peut décider Excel à en
+   * faire une COLONNE CALCULÉE : il l'étend aussitôt à toutes les lignes, par
+   * -dessus les nombres. Deux duretés, parce que nous ne savons pas laquelle est
+   * la vraie :
+   *
+   *  - `passagere` : la recopie a lieu, mais toute écriture ultérieure gagne.
+   *    Reposer les nombres dans le même envoi suffit alors à la défaire.
+   *  - `colonneCalculee` : Excel TIENT sa colonne. Une écriture de valeurs sur
+   *    une PARTIE de la colonne est aussitôt recouverte par la formule ; seule
+   *    une écriture de la colonne ENTIÈRE en valeurs, qui n'y laisse plus une
+   *    seule formule, la lui fait abandonner.
+   */
+  _commeUnExcelQuiRecopie(op) {
+    const mode = this._classeur.recopie;
+    if (!mode) return;
+    const p = op.plage;
+    for (let c = 0; c < p.colonnes; c++) {
+      const col = p.c0 + c;
+      const def = this._tableauDeLaCellule(p.grille, p.r0, col);
+      if (!def) continue;
+      const calculees = def.calculees || (def.calculees = new Map());
+
+      if (op.type === "formulas") {
+        let f = "";
+        for (let r = 0; r < p.lignes; r++) {
+          const v = (op.data[r] || [])[c];
+          if (typeof v === "string" && v.charAt(0) === "=") f = v;
+        }
+        if (!f) continue;
+        calculees.set(col, f);
+        this._etendreALaColonne(def, col, f);
+        continue;
+      }
+
+      const f = calculees.get(col);
+      if (!f) continue;
+      const couvreTout = p.r0 <= def.r0 + 1 && p.r0 + p.lignes >= def.r0 + 1 + def.lignes;
+      // Plus une seule formule dans la colonne : Excel abandonne la colonne calculée.
+      if (couvreTout) { calculees.delete(col); continue; }
+      if (mode === "colonneCalculee") this._etendreALaColonne(def, col, f);
+    }
+  }
+
+  /** Pose `f` sur toute la colonne du tableau, avec la valeur qu'elle produit. */
+  _etendreALaColonne(def, col, f) {
+    let v = "";
+    for (let r = 0; r < def.lignes; r++) {
+      const cel = def.grille.lire(def.r0 + 1 + r, col);
+      if (cel.f === f) { v = cel.v; break; }
+    }
+    for (let r = 0; r < def.lignes; r++) def.grille.ecrire(def.r0 + 1 + r, col, { v: v, f: f });
+  }
+
+  /** Le tableau dont le CORPS contient cette cellule, s'il y en a un. */
+  _tableauDeLaCellule(grille, r, c) {
+    return this._classeur.tables.find(
+      d => d.grille === grille &&
+           r >= d.r0 + 1 && r < d.r0 + 1 + d.lignes &&
+           c >= d.c0 && c < d.c0 + d.entetes.length
+    );
   }
 
   /** Quel tableau porte cette plage ? (pour tenir à jour son nombre de lignes) */
@@ -380,8 +447,10 @@ class FauxContexte {
  * Construit un classeur en mémoire et installe les globales `Excel`.
  * tables : [{ nom, feuille, entetes, lignes: [[...]], r0, c0 }]
  * Une cellule peut être une valeur, ou { f: "=..." , v: 12 } pour une formule.
+ * options.recopie : « passagere » ou « colonneCalculee » pour jouer un Excel
+ * qui transforme en colonne calculée toute colonne où une formule se pose.
  */
-function monterClasseur(tables) {
+function monterClasseur(tables, options) {
   // UNE GRILLE PAR FEUILLE. Deux tableaux d'une même feuille partagent la
   // leur — c'est ce qui fait que l'un peut décaler l'autre, l'invariant que
   // cette classe existe pour éprouver. Deux feuilles, elles, s'ignorent.
@@ -409,7 +478,11 @@ function monterClasseur(tables) {
 
   // Une feuille peut exister sans porter de tableau : `feuillesNues` les
   // déclare, pour éprouver le refus d'écrire sur une feuille déjà occupée.
-  const classeur = { tables: defs, grilles, grillePour, feuillesNues: [] };
+  const classeur = {
+    tables: defs, grilles, grillePour, feuillesNues: [],
+    // « passagere » ou « colonneCalculee » : voir _commeUnExcelQuiRecopie.
+    recopie: (options && options.recopie) || null
+  };
   let dernier = null;
 
   global.Excel = {
