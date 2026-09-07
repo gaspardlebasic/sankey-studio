@@ -71,7 +71,7 @@ function classeurType(opts) {
         ["Lait", "Lait cru", "Transformation", { f: "=Lentilles!C68", v: 95 }, "t", "n2", "n3"]
       ]
     }
-  ], { recopie: opts.recopie });
+  ], { recopie: opts.recopie, normalise: opts.normalise });
 }
 
 const MODELE = {
@@ -852,6 +852,31 @@ await test("écriture : une colonne calculée créée par notre écriture est d�
        "plus une seule formule : Excel abandonne sa colonne calculée");
   egal(c.lignesDe("Liens").map(l => l[iVal]), [15126461.6, 0, 0],
        "AUCUNE valeur n'est perdue — elles viennent du modèle");
+});
+
+await test("écriture : une formule qu'Excel réécrit à sa façon n'est pas prise pour une recopie", async () => {
+  // LE FAUX POSITIF DU 7 SEPTEMBRE 2026. Excel ne rend pas les formules telles
+  // qu'on les lui donne : il les range dans SA forme — noms de fonctions en
+  // anglais, lien vers un autre classeur réécrit avec son chemin. Vérifier
+  // l'écriture en comparant notre texte au sien, c'est crier au loup sur nos
+  // propres formules et les effacer TOUTES à chaque modification.
+  // Ce qui trahit une recopie, c'est une formule là où on a écrit un NOMBRE.
+  const c = classeurType({
+    normalise: f => f.replace("SOMME(", "SUM("),
+    liens: [
+      ["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2"],
+      ["Lait", "Lait cru", "Transformation", { f: "=SOMME(Lentilles!C68:C70)", v: 95 }, "t", "n2", "n3"]
+    ]
+  });
+  const r = await office.ecrireDiagramme(MODELE);
+  attendu(r.ok, "écriture réussie");
+  attendu(!r.remplissage, "la réécriture d'Excel n'est pas une recopie");
+  egal(r.formules, 1, "la formule est réémise");
+  const iVal = LINK_COLS.indexOf("Valeur du flux");
+  egal(c.formulesDe("Liens").map(l => l[iVal]),
+       ["", "=SUM(Lentilles!$C$68:$C$70)"],
+       "elle est toujours là, dans la forme qu'Excel lui donne");
+  egal(c.lignesDe("Liens").map(l => l[iVal]), [120, 95], "et les valeurs sont intactes");
 });
 
 await test("écriture : une seule formule dans la colonne reste une formule", async () => {

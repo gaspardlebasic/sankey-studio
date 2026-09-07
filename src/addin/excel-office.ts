@@ -865,12 +865,23 @@ async function verifierColonneValeur(
 
   const lues = relue.formulas || [];
   const lue = (r: number): string => texte(lues[r] ? lues[r][0] : "");
+
+  // LE SIGNE QUI NE TROMPE PAS : une formule là où nous avons écrit un NOMBRE.
+  // Surtout pas « la formule relue diffère de celle que nous avons posée » :
+  // Excel ne rend pas les formules telles qu'on les lui donne — noms de
+  // fonctions en anglais, liens vers un autre classeur réécrits avec leur
+  // chemin, espaces normalisés. Ce critère-là crie au loup sur NOS PROPRES
+  // formules et les efface toutes ; il l'a fait le 7 septembre 2026.
+  //
+  // Contrepartie assumée : une colonne dont TOUS les liens portent une formule
+  // ne peut pas trahir une recopie — il n'y reste aucun nombre à recouvrir.
+  // Il n'y a alors rien à sauver non plus : aucune valeur n'y était écrite.
   let recopiee = "";
   for (let r = 0; r < linkRows.length; r++) {
     const f = lue(r);
-    if (f.charAt(0) === "=" && f !== attendue(r)) { recopiee = f; break; }
+    if (f.charAt(0) === "=" && !attendue(r)) { recopiee = f; break; }
   }
-  if (!recopiee) return null;                   // le classeur porte ce que nous avons écrit
+  if (!recopiee) return null;                   // chaque formule est à sa place
 
   // Excel a recopié. On repose TOUTES les valeurs — celles du modèle, intactes —
   // et la colonne, sans plus aucune formule, cesse d'être une colonne calculée.

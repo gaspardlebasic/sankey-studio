@@ -566,6 +566,14 @@ un poste, c'est `npm run addin:install -- --enligne`.
        du modèle, aucune n'est perdue), la colonne perd sa dernière formule, Excel abandonne, et
        le résultat porte `remplissage: { …, aLEcriture: true }`. L'alerte du volet raconte alors
        l'autre histoire — rien n'est perdu, mais la formule n'a pas pu rester.
+       - **Le critère est « une formule là où nous avons écrit un NOMBRE »**, et surtout pas
+         « la formule relue diffère de celle que nous avons posée ». Excel ne rend pas les
+         formules telles qu'on les lui donne : il les range dans SA forme (noms de fonctions en
+         anglais, lien vers un autre classeur réécrit avec son chemin). Le second critère crie
+         au loup sur NOS PROPRES formules et les efface toutes à chaque modification — il l'a
+         fait le 2026-09-07, quelques heures après avoir été écrit. Contrepartie assumée : une
+         colonne dont *tous* les liens portent une formule ne peut pas trahir une recopie ; il
+         n'y a alors aucune valeur à y sauver non plus.
     Le faux Office sait jouer cet Excel-là : `monterClasseur(tables, { recopie: "passagere" })`
     pour la recopie qu'une écriture suivante défait, `{ recopie: "colonneCalculee" }` pour celle
     qui tient. Sans ces deux gardes, les deux tests correspondants rendent la colonne entière

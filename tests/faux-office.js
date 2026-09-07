@@ -358,9 +358,13 @@ class FauxContexte {
       ligne.forEach((v, c) => {
         const ancienne = p.grille.lire(p.r0 + r, p.c0 + c);
         const estFormule = op.type === "formulas" && typeof v === "string" && v.charAt(0) === "=";
+        // Excel ne garde pas la formule telle qu'on la lui donne : il la range
+        // dans SA forme (fonctions en anglais, lien vers un autre classeur
+        // réécrit avec son chemin). Le faux sait jouer cette réécriture.
+        const normalise = this._classeur.normalise;
         p.grille.ecrire(p.r0 + r, p.c0 + c, {
           v: estFormule ? ancienne.v : v,        // la valeur calculée ne bouge pas
-          f: estFormule ? v : ""
+          f: estFormule ? (normalise ? normalise(v) : v) : ""
         });
       });
     });
@@ -481,7 +485,9 @@ function monterClasseur(tables, options) {
   const classeur = {
     tables: defs, grilles, grillePour, feuillesNues: [],
     // « passagere » ou « colonneCalculee » : voir _commeUnExcelQuiRecopie.
-    recopie: (options && options.recopie) || null
+    recopie: (options && options.recopie) || null,
+    // Réécriture d'une formule par Excel au moment où il la range.
+    normalise: (options && options.normalise) || null
   };
   let dernier = null;
 
