@@ -577,6 +577,9 @@ function addNode(column?: number, rank?: number, lane?: number): void {
         // canevas. Un défaut unique se dit en un mot et se corrige en un clic.
         kind: "produit",
         filiere: currentFiliereForNew(),
+        // Couleur par défaut du diagramme (#d4d4d4 tant qu'on ne l'a pas
+        // changée) : « ＋ Nœud » ne part pas d'un nœud, il n'a rien à hériter.
+        // Le « + » d'un nœud, lui, hérite — cf. addLinkedNode.
         color: null,
         x: 0,
         y: 0
@@ -940,6 +943,11 @@ function renderEditor(): void {
         rect.setAttribute("width", String(NODE_W));
         rect.setAttribute("height", String(nodeH(n)));
         rect.setAttribute("rx", "0");
+        // Alt + glisser ne se voit pas : sans cette ligne, la duplication
+        // n'existerait que pour qui la connaît déjà.
+        rect.appendChild(svgTitle(
+            "Glisser pour déplacer · Alt + glisser pour dupliquer · "
+            + "Double-clic pour renommer"));
         g.appendChild(rect);
 
         g.appendChild(pastilleCouleur(n));
@@ -1170,6 +1178,8 @@ interface DragState {
     bandes: Bandes; // couloirs figés à l'instant du « mousedown »
     disp: Map<string, { x: number; y: number }>; // positions affichées (animées)
     raf: number;
+    /** Alt était enfoncé : c'est une COPIE qu'on emporte (cf. onDragMove). */
+    dupliquer: boolean;
 }
 let dragState: DragState | null = null;
 
@@ -1291,6 +1301,9 @@ function onNodeMouseDown(e: MouseEvent, n: FlowNode): void {
         dx: pt.x - n.x,
         dy: pt.y - n.y,
         moved: false,
+        // Alt relevé ICI, à l'enfoncement : relâcher la touche en cours de
+        // glisser ne doit pas transformer la copie en déplacement.
+        dupliquer: e.altKey,
         freeX: n.x,
         freeY: n.y,
         lastCol: n.column,
@@ -1311,11 +1324,26 @@ function currentRank(n: FlowNode): number {
 function onDragMove(e: MouseEvent): void {
     if (!dragState) return;
     const ds = dragState;
-    const n = nodeById(ds.id);
+    let n = nodeById(ds.id);
     if (!n) return;
     if (!ds.moved) {
         snapshot();
         ds.moved = true;
+        // Alt + glisser : c'est une copie qu'on emporte, l'original ne bouge
+        // pas. La duplication attend le PREMIER MOUVEMENT — un Alt+clic sans
+        // glisser ne doit rien créer — et vient après le `snapshot()` : une
+        // seule annulation efface la copie et son déplacement d'un coup.
+        if (ds.dupliquer) {
+            n = dupliquerNoeud(n);
+            ds.id = n.id;
+            selection = { type: "node", id: n.id };
+            // La copie n'a pas encore d'élément dans le canevas : sans ce
+            // rendu, le glisser n'aurait rien à faire suivre à la souris.
+            render();
+            buildSidebar();
+            ds.lastRank = currentRank(n);
+            setStatus("Nœud dupliqué, avec ses liens.");
+        }
         // Positions affichées initiales = grille actuelle
         layoutGrid();
         ds.bandes = new Map(laneBounds);
@@ -1534,7 +1562,11 @@ function addLinkedNode(src: FlowNode): void {
         lane: src.lane,
         kind: "produit",          // même défaut unique que « ＋ Nœud » (cf. addNode)
         filiere: src.filiere || "",
-        color: null,
+        // La couleur, elle, SE TRANSMET : le « + » prolonge une chaîne, et la
+        // couleur du nœud d'origine est celle qu'on a sous les yeux au moment
+        // du clic. Une couleur absente se recopie telle quelle : la suite du
+        // fil suit alors la couleur par défaut, comme son origine.
+        color: src.color,
         x: 0,
         y: 0
     };
@@ -1553,6 +1585,36 @@ function addLinkedNode(src: FlowNode): void {
     persist();
     // Ouvre directement l'édition du nom du nouveau nœud
     editNodeName(n);
+}
+
+/* --------------------------- duplication --------------------------- */
+
+/**
+ * Copie d'un nœud, **avec ses liens**.
+ *
+ * La copie se pose juste sous l'original, dans la même cellule : elle est là où
+ * on l'a prise, et le glisser l'emmène ensuite où l'on veut. Elle reprend tout
+ * du nœud d'origine (nom, type, couleur, filière, couloir) et se raccroche AUX
+ * MÊMES nœuds : chaque lien de l'original est recopié dans son sens, avec sa
+ * valeur, son unité et son apparence. Dupliquer une étape d'une filière, c'est
+ * la reprendre telle qu'elle est branchée, pas repartir d'un nœud nu.
+ */
+function dupliquerNoeud(src: FlowNode): FlowNode {
+    const copie: FlowNode = { ...src, id: newId("n") };
+    model.nodes.push(copie);
+    moveNodeToCell(copie, src.column, laneOf(src), currentRank(src) + 1);
+    // La liste des liens à recopier est figée AVANT d'écrire dans `model.links` :
+    // parcourir le tableau qu'on est en train d'allonger recopierait les copies.
+    const aRecopier = model.links.filter(l => l.source === src.id || l.target === src.id);
+    aRecopier.forEach(l => {
+        model.links.push({
+            ...l,
+            id: newId("l"),
+            source: l.source === src.id ? copie.id : l.source,
+            target: l.target === src.id ? copie.id : l.target
+        });
+    });
+    return copie;
 }
 
 /* ---------------------- édition inline du nom ---------------------- */

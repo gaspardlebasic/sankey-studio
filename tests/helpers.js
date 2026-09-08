@@ -83,6 +83,21 @@ const dragNode = async (id, cols, rows) => {
     await sleep(140);
 };
 
+/**
+ * Alt + glisser un nœud : le duplique et emporte la COPIE.
+ * Le mousedown porte altKey — c'est à l'enfoncement que l'éditeur le relève.
+ */
+const dupliquerParGlisser = async (id, cols, rows) => {
+    const el = elOf(id), p = centerOf(id);
+    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, altKey: true,
+        clientX: p.x, clientY: p.y }));
+    window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, altKey: true,
+        clientX: p.x + cols * 210 + 4, clientY: p.y + rows * 60 + 2 }));
+    await sleep(80);
+    window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    await sleep(140);
+};
+
 /** Glisser un nœud d'un nombre de PIXELS donné (pour viser une bande précise). */
 const dragNodePx = async (id, dx, dy) => {
     const el = elOf(id), p = centerOf(id);

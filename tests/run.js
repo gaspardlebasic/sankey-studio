@@ -92,6 +92,145 @@ test("bouton + : le nœud créé reste visible malgré une filière masquée", "
   attendu(r.visible, `le nœud créé (filière ${JSON.stringify(r.filiere)}) doit être rendu`);
 });
 
+test("couleur : le « + » d'un nœud transmet sa couleur", "complexe", async p => {
+  // On lit la couleur RÉELLEMENT peinte sur la pastille du nœud créé : c'est
+  // elle que l'utilisatrice voit, et elle seule dit ce que vaut l'héritage.
+  const r = await p(`
+    const src = one('Tri, décorticage, conditionnement');
+    await selectNode(src.id);
+    const avant = nodes().map(n => n.id);
+    await clickPlus();
+    const champ = document.querySelector('.inline-edit');
+    if (champ) champ.blur();
+    await sleep(140);
+    const cree = nodes().find(n => !avant.includes(n.id));
+    return {
+      couleurSource: byId(src.id).color,
+      couleurCreee: cree.color,
+      pastilleSource: elOf(src.id).querySelector('.node-color-dot').getAttribute('fill'),
+      pastilleCreee: elOf(cree.id).querySelector('.node-color-dot').getAttribute('fill')
+    };
+  `);
+  attendu(!!r.couleurSource, "le nœud d'origine doit avoir une couleur propre");
+  egal(r.couleurCreee, r.couleurSource, "le nœud créé par « + » doit hériter de la couleur");
+  egal(r.pastilleCreee, r.pastilleSource, "la couleur peinte doit être la même que celle du nœud d'origine");
+});
+
+test("couleur : « ＋ Nœud » crée un nœud gris, sans rien hériter", "complexe", async p => {
+  const r = await p(`
+    const src = one('Tri, décorticage, conditionnement');
+    await selectNode(src.id);
+    const avant = nodes().map(n => n.id);
+    document.querySelector('#toolbar button').click();   // ＋ Nœud
+    await sleep(200);
+    const cree = nodes().find(n => !avant.includes(n.id));
+    return {
+      couleurSource: byId(src.id).color,
+      couleurCreee: cree.color,
+      pastille: elOf(cree.id).querySelector('.node-color-dot').getAttribute('fill')
+    };
+  `);
+  attendu(r.couleurSource !== "#d4d4d4", "le nœud sélectionné doit avoir une autre couleur que le gris");
+  egal(r.pastille, "#d4d4d4", "« ＋ Nœud » doit peindre le nœud en #d4d4d4");
+});
+
+test("duplication : Alt + glisser copie le nœud et ses liens", "complexe", async p => {
+  const r = await p(`
+    const src = one('Tri, décorticage, conditionnement');   // entrant ET sortant
+    await selectNode(src.id);
+    const voisins = l => links().filter(x => x.source === l || x.target === l)
+      .map(x => (x.source === l ? '>' : '<') + (x.source === l ? x.target : x.source))
+      .sort();
+    const avantIds = nodes().map(n => n.id);
+    const voisinsSource = voisins(src.id);
+    const liensAvant = links().length;
+
+    await dupliquerParGlisser(src.id, 0, 2);
+
+    const copie = nodes().find(n => !avantIds.includes(n.id));
+    return {
+      creees: nodes().length - avantIds.length,
+      originalIntact: !!byId(src.id),
+      voisinsSource,
+      voisinsSourceApres: voisins(src.id),
+      voisinsCopie: copie ? voisins(copie.id) : null,
+      liensCrees: links().length - liensAvant,
+      nom: copie && copie.name,
+      couleur: copie && copie.color,
+      type: copie && copie.kind,
+      filiere: copie && copie.filiere,
+      nomSource: byId(src.id).name,
+      couleurSource: byId(src.id).color,
+      selection: copie && T.selection().id === copie.id
+    };
+  `);
+  egal(r.creees, 1, "Alt + glisser doit créer exactement un nœud");
+  attendu(r.originalIntact, "le nœud d'origine doit rester en place");
+  egal(r.voisinsSourceApres, r.voisinsSource, "les liens du nœud d'origine ne doivent pas bouger");
+  egal(r.voisinsCopie, r.voisinsSource, "la copie doit être reliée aux mêmes nœuds, dans le même sens");
+  egal(r.liensCrees, r.voisinsSource.length, "un lien recopié par lien du nœud d'origine, pas un de plus");
+  egal(r.nom, r.nomSource, "la copie doit reprendre le nom");
+  egal(r.couleur, r.couleurSource, "la copie doit reprendre la couleur");
+  egal(r.type, "produit", "la copie doit reprendre le type du nœud d'origine");
+  attendu(r.selection, "c'est la copie qui doit être sélectionnée, pas l'original");
+});
+
+test("duplication : la copie atterrit où on la lâche", "complexe", async p => {
+  const r = await p(`
+    const src = one('Tri, décorticage, conditionnement');
+    await selectNode(src.id);
+    const avantIds = nodes().map(n => n.id);
+    const colonneSource = byId(src.id).column;
+    await dupliquerParGlisser(src.id, 1, 0);
+    const copie = nodes().find(n => !avantIds.includes(n.id));
+    return {
+      colonneSource,
+      colonneSourceApres: byId(src.id).column,
+      colonneCopie: copie && copie.column,
+      peinte: !!(copie && elOf(copie.id))
+    };
+  `);
+  egal(r.colonneSourceApres, r.colonneSource, "le nœud d'origine ne doit pas changer de colonne");
+  egal(r.colonneCopie, r.colonneSource + 1, "la copie doit suivre la souris jusqu'à la colonne visée");
+  attendu(r.peinte, "la copie doit être dessinée dans le canevas");
+});
+
+test("duplication : Alt + clic sans glisser ne crée rien", "complexe", async p => {
+  const r = await p(`
+    const src = one('Tri, décorticage, conditionnement');
+    await selectNode(src.id);
+    const avant = nodes().length, liensAvant = links().length;
+    const el = elOf(src.id), pt = centerOf(src.id);
+    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, altKey: true,
+      clientX: pt.x, clientY: pt.y }));
+    window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: pt.x, clientY: pt.y }));
+    await sleep(140);
+    return { creees: nodes().length - avant, liens: links().length - liensAvant };
+  `);
+  egal(r.creees, 0, "un Alt+clic sans mouvement ne doit rien dupliquer");
+  egal(r.liens, 0, "ni créer de lien");
+});
+
+test("duplication : une seule annulation efface la copie et ses liens", "complexe", async p => {
+  const r = await p(`
+    const src = one('Tri, décorticage, conditionnement');
+    await selectNode(src.id);
+    const avant = nodes().length, liensAvant = links().length;
+    await dupliquerParGlisser(src.id, 1, 1);
+    const apres = nodes().length;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true }));
+    await sleep(200);
+    return {
+      creees: apres - avant,
+      noeudsApresAnnulation: nodes().length - avant,
+      liensApresAnnulation: links().length - liensAvant
+    };
+  `);
+  egal(r.creees, 1, "la copie doit d'abord exister");
+  egal(r.noeudsApresAnnulation, 0, "une seule annulation doit retirer la copie");
+  egal(r.liensApresAnnulation, 0, "et ses liens recopiés avec elle");
+});
+
 test("filière : modifier le champ met à jour le nœud", "complexe", async p => {
   const r = await p(`
     const n = one('Féverolle');

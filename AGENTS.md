@@ -434,6 +434,31 @@ un poste, c'est `npm run addin:install -- --enligne`.
   Il reprenait le type du nœud sélectionné : enchaîner deux industries en créait une, en
   silence, et la règle (« ça dépend de ce qui était sélectionné ») ne se voyait pas depuis le
   canevas. Un défaut unique se dit en un mot et se corrige en un clic.
+- **La couleur d'un nœud créé dépend du chemin de création**, et de lui seul :
+  - le **« + » d'un nœud** crée un nœud lié qui **hérite de la couleur** du nœud d'origine
+    (`color: src.color`, `addLinkedNode`). Le « + » prolonge une chaîne, et la couleur du nœud
+    dont on part est celle qu'on a sous les yeux au moment du clic. Une couleur absente se
+    recopie telle quelle : la suite du fil suit alors la couleur par défaut, comme son origine.
+  - **`＋ Nœud`** (barre d'outils) et le **double-clic dans le vide** créent un nœud **sans
+    couleur propre** (`color: null`, `addNode`) : il se peint donc avec la couleur par défaut du
+    diagramme — **`#d4d4d4`** tant qu'on ne l'a pas changée dans la carte « Nœuds ». Ces deux
+    chemins ne partent d'aucun nœud : il n'y a rien à hériter.
+- **Alt + glisser un nœud le duplique**, liens compris (`dupliquerNoeud`). La copie reprend tout
+  du nœud d'origine — nom, type, couleur, filière, couloir — et **se raccroche aux mêmes
+  nœuds** : chaque lien de l'original est recopié dans son sens, avec sa valeur, son unité et son
+  apparence. Dupliquer une étape, c'est la reprendre telle qu'elle est branchée.
+  - La copie se pose **juste sous l'original**, dans la même cellule : elle est là où on l'a
+    prise, et le glisser l'emmène ensuite où l'on veut. C'est elle qui est sélectionnée.
+  - La duplication attend le **premier mouvement**, jamais l'enfoncement : un Alt+clic sans
+    glisser ne crée rien. `altKey` est relevé au `mousedown` — relâcher la touche en cours de
+    route ne retransforme pas la copie en déplacement.
+  - Elle vient **après le `snapshot()`** du glisser : une seule annulation efface la copie, ses
+    liens et son déplacement d'un coup.
+  - La liste des liens à recopier est **figée avant** d'écrire dans `model.links` : parcourir le
+    tableau qu'on est en train d'allonger recopierait les copies.
+  - Le geste ne se voit pas : la boîte du nœud porte une infobulle qui l'annonce, et le bandeau
+    d'état dit « Nœud dupliqué, avec ses liens. » — une copie posée sous l'original se
+    confondrait sinon avec un simple déplacement.
 - **Types de nœuds (`kind`)** : un nœud est soit un **produit / commodité** qui circule, soit une
   **industrie** — étape de transformation ou de commercialisation. Le type vit dans Excel
   (colonne « Type ») et pilote l'apparence dans l'aperçu : largeur, police, position de
