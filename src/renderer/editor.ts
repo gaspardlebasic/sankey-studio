@@ -4,7 +4,8 @@
 import {
     FlowModel, FlowNode, FlowLink, SankeyOptions, defaultOptions,
     NodeKind, NodeTypeStyle, NodeLabelPosition, NODE_KINDS, NODE_LABEL_POSITIONS,
-    kindOf, defaultTypeStyle, TextStyle, texteAffiche, partBio, TailleExport
+    kindOf, defaultTypeStyle, TextStyle, texteAffiche, partBio, TailleExport,
+    MultiplicateurValeur, MULTIPLICATEURS_VALEUR
 } from "./types";
 import {
     renderSankey, renderSankeyGroups, wrapText, policeDuType, positionDuType
@@ -2342,6 +2343,28 @@ function carteLiens(rr: () => void): HTMLElement {
     b.appendChild(checkField("Afficher", vl.show, x => { vl.show = x; rr(); }));
     b.appendChild(textField("Unité (si aucune dans les données)", vl.unitText,
         x => { vl.unitText = x; rr(); }));
+    /* Le multiplicateur commande : dès qu'il agit, les valeurs s'écrivent
+       arrondies et les chiffres significatifs n'ont plus d'effet. On retire
+       alors le champ au lieu de le laisser répondre dans le vide — le panneau
+       se reconstruit donc à ce changement-là. */
+    b.appendChild(selectField("Multiplicateur de l'unité", vl.multiplicateur,
+        MULTIPLICATEURS_VALEUR.map(([v, t]) => [v, t] as [string, string]),
+        x => {
+            vl.multiplicateur = x as MultiplicateurValeur;
+            rr();
+            buildSidebar();
+        }));
+    if (vl.multiplicateur === "aucun") {
+        b.appendChild(numberField("Chiffres significatifs", vl.chiffresSignificatifs,
+            x => { vl.chiffresSignificatifs = Math.min(15, Math.max(1, Math.round(x))); rr(); }));
+    } else {
+        b.appendChild(hint(
+            "Les valeurs sont divisées par "
+            + (vl.multiplicateur === "millions" ? "1 000 000" : "1 000")
+            + " et écrites arrondies : le nombre de chiffres significatifs "
+            + "n'a plus d'effet. À dire dans l'unité — « milliers de tonnes »."
+        ));
+    }
     fontControls(b, vl, rr);
     return b.parentElement as HTMLElement;
 }
@@ -2887,6 +2910,25 @@ function normaliserLiens(): void {
     // `Object.assign` ne fusionne que le premier niveau : un projet écrit avant
     // le bandeau bio arrive sans `links.bio` du tout.
     L.bio = Object.assign({}, d.bio, L.bio || {});
+    normaliserValeursDeLiens();
+}
+/**
+ * Complète le format des valeurs écrites sur les rubans. Une apparence rangée
+ * avant ces deux réglages arrive sans eux, et `String(undefined)` finirait dans
+ * le SVG. Les valeurs relues viennent du classeur : un multiplicateur inconnu
+ * (apparence retouchée à la main, version plus récente) retombe sur « aucun »
+ * plutôt que de ne rien diviser du tout en silence.
+ */
+function normaliserValeursDeLiens(): void {
+    const V = options.linkValueLabels;
+    const d = defaultOptions().linkValueLabels;
+    if (!MULTIPLICATEURS_VALEUR.some(([m]) => m === V.multiplicateur)) {
+        V.multiplicateur = d.multiplicateur;
+    }
+    const n = Number(V.chiffresSignificatifs);
+    V.chiffresSignificatifs = isFinite(n) && n >= 1
+        ? Math.min(15, Math.max(1, Math.round(n)))
+        : d.chiffresSignificatifs;
 }
 /**
  * Complète les dimensions d'export, pour la même raison qu'au-dessus : une
@@ -3161,6 +3203,40 @@ function cleFilieresAffichees(): string {
     return JSON.stringify(visibles.slice().sort());
 }
 
+/**
+ * Le nom du fichier exporté : celui des filières AFFICHÉES.
+ *
+ * On exporte le dessin qu'on a sous les yeux, et ce qui le distingue d'un autre
+ * export du même classeur, c'est justement la combinaison de filières cochées.
+ * « sankey.png », « sankey (1).png », « sankey (2).png » dans le dossier des
+ * téléchargements ne disaient plus lequel était lequel.
+ *
+ * Le nom est ASSAINI (les caractères interdits par Windows et macOS retirés) et
+ * BORNÉ : une dizaine de filières cochées feraient un nom qu'aucun système
+ * n'accepte. Sans filière nommée, on retombe sur « sankey ».
+ */
+function nomFichierExport(format: "png" | "svg"): string {
+    const visibles = distinctFilieres().filter(f => !hiddenFilieres.has(f));
+    const base = visibles.map(assainirNomFichier).filter(n => n !== "").join(" - ");
+    return (base ? tronquer(base, 80) : "sankey") + "." + format;
+}
+
+/** Un nom de filière ramené à ce qu'un système de fichiers accepte. */
+function assainirNomFichier(nom: string): string {
+    return nom
+        .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
+        .replace(/\s+/g, " ")
+        .replace(/^[\s.]+|[\s.]+$/g, "");
+}
+
+/** Coupe au dernier mot entier avant `max` signes (jamais au milieu d'un nom). */
+function tronquer(texte: string, max: number): string {
+    if (texte.length <= max) return texte;
+    const coupe = texte.slice(0, max);
+    const espace = coupe.lastIndexOf(" ");
+    return (espace > 0 ? coupe.slice(0, espace) : coupe).replace(/[\s-]+$/, "");
+}
+
 /** Ce que la carte « Cadre du graphique » annonce comme portée du réglage. */
 function libelleFilieresAffichees(): string {
     const visibles = distinctFilieres().filter(f => !hiddenFilieres.has(f));
@@ -3236,7 +3312,7 @@ async function exportImage(format: "png" | "svg", taille: TailleExport): Promise
         new XMLSerializer().serializeToString(tmp);
 
     if (format === "svg") {
-        await saveExport("sankey.svg", "image/svg+xml", svgString, false);
+        await saveExport(nomFichierExport("svg"), "image/svg+xml", svgString, false);
         return;
     }
 
@@ -3256,7 +3332,7 @@ async function exportImage(format: "png" | "svg", taille: TailleExport): Promise
     ctx.scale(scale, scale);
     ctx.drawImage(img, 0, 0);
     const base64 = c.toDataURL("image/png").split(",")[1];
-    await saveExport("sankey.png", "image/png", base64, true);
+    await saveExport(nomFichierExport("png"), "image/png", base64, true);
 }
 
 /** Le navigateur d'Office télécharge le fichier : pas de dialogue natif ici. */

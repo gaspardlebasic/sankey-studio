@@ -2468,7 +2468,8 @@ test("export : « Taille de la fenêtre » rend un SVG aux dimensions de la fen�
       };
     } finally { c.rendre(); }
   `);
-  egal(r.nom, "sankey.svg", "le fichier exporté est un SVG");
+  egal(r.nom, "Lentilles.svg",
+       "le fichier exporté est un SVG nommé d'après la filière affichée");
   egal(r.taille, r.fenetre, "le SVG porte les dimensions de la fenêtre");
 });
 
@@ -2560,6 +2561,88 @@ test("export : « Reprendre la taille de la fenêtre » efface le réglage", "co
   attendu(r.apres.indexOf(r.fenetre) === 0,
     `après remise à zéro, la taille personnalisée repart de la fenêtre `
     + `(obtenu « ${r.apres} », attendu « ${r.fenetre} »)`);
+});
+
+test("export : le fichier prend le nom des filières affichées", "complexe", async p => {
+  // La fixture masque « Blé tendre » : on part donc de « Lentilles » seule,
+  // puis on affiche les deux — le nom du fichier doit suivre la case cochée.
+  const r = await p(`
+    const c = capterExport();
+    try {
+      await ouvrirMenuExport('SVG');
+      await choisirDansMenu('Taille de la fenêtre');
+      const seule = c.fichiers[c.fichiers.length - 1].nom;
+
+      await basculerFiliere('Blé tendre');
+      await ouvrirMenuExport('PNG');
+      await choisirDansMenu('Taille de la fenêtre');
+      const deux = c.fichiers[c.fichiers.length - 1].nom;
+      return { seule, deux };
+    } finally { c.rendre(); }
+  `);
+  egal(r.seule, "Lentilles.svg",
+       "une seule filière affichée donne son nom au fichier");
+  egal(r.deux, "Blé tendre - Lentilles.png",
+       "deux filières affichées se retrouvent toutes les deux dans le nom");
+});
+
+test("valeurs des liens : les chiffres significatifs arrondissent le chiffre peint", "complexe", async p => {
+  const r = await p(`
+    // Une valeur qui a des chiffres à perdre : la fixture n'en a que de rondes.
+    links().find(l => l.id === 'l40').value = 1234567;
+    T.refresh();
+    await cocher('Liens', 'Afficher');
+    await versApercu();
+    const lire = () => {
+      const t = document.querySelector('#canvas text.link-value[data-source="n45"]');
+      return t ? t.textContent.replace(/[\\u202f\\u00a0]/g, ' ') : null;
+    };
+    const trois = lire();
+    await reglerCarte('Liens', 'Chiffres significatifs', 1);
+    const un = lire();
+    await reglerCarte('Liens', 'Chiffres significatifs', 6);
+    const six = lire();
+    return { trois, un, six };
+  `);
+  // Le chiffre lu est celui du DESSIN, pas celui du modèle : c'est le seul
+  // endroit où l'on voit ce qui est réellement écrit sur le ruban.
+  egal(r.trois, "1 230 000 t", "trois chiffres significatifs par défaut");
+  egal(r.un, "1 000 000 t", "un seul chiffre significatif");
+  egal(r.six, "1 234 570 t", "six chiffres significatifs");
+});
+
+test("valeurs des liens : le multiplicateur divise tout et arrondit", "complexe", async p => {
+  const r = await p(`
+    links().find(l => l.id === 'l40').value = 1234567;
+    T.refresh();
+    await cocher('Liens', 'Afficher');
+    await versApercu();
+    const lire = () => {
+      const t = document.querySelector('#canvas text.link-value[data-source="n45"]');
+      return t ? t.textContent.replace(/[\\u202f\\u00a0]/g, ' ') : null;
+    };
+    const aucun = lire();
+    await reglerCarte('Liens', "Multiplicateur de l'unité", 'milliers');
+    const milliers = lire();
+    const champApresMilliers = [...(await carteDuPanneau('Liens')).querySelectorAll('.field span')]
+      .some(s => s.textContent.trim() === 'Chiffres significatifs');
+    await reglerCarte('Liens', "Multiplicateur de l'unité", 'millions');
+    const millions = lire();
+    await reglerCarte('Liens', "Multiplicateur de l'unité", 'aucun');
+    const retour = lire();
+    const champApresRetour = [...(await carteDuPanneau('Liens')).querySelectorAll('.field span')]
+      .some(s => s.textContent.trim() === 'Chiffres significatifs');
+    return { aucun, milliers, millions, retour, champApresMilliers, champApresRetour };
+  `);
+  egal(r.aucun, "1 230 000 t", "sans multiplicateur, la valeur garde son ordre de grandeur");
+  egal(r.milliers, "1 235 t", "en milliers, la valeur est divisée par 1 000 et arrondie");
+  egal(r.millions, "1 t", "en millions, elle est divisée par 1 000 000 et arrondie");
+  egal(r.retour, "1 230 000 t", "revenir à « aucun » rend ses chiffres significatifs");
+  // Un réglage sans effet ne doit pas rester affiché : il répondrait dans le vide.
+  attendu(r.champApresMilliers === false,
+    "« Chiffres significatifs » disparaît dès qu'un multiplicateur agit");
+  attendu(r.champApresRetour === true,
+    "et revient quand le multiplicateur est « aucun »");
 });
 
 /* -------------------------------- exécution ------------------------------ */

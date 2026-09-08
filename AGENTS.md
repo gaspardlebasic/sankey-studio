@@ -687,6 +687,12 @@ un poste, c'est `npm run addin:install -- --enligne`.
     Calculer la taille attendue depuis le modèle reproduirait la formule de l'app, et un écart
     entre le choix et le fichier passerait inaperçu. Trois mutations vérifiées (clé de
     combinaison constante, export qui ignore la taille demandée, panneau non reconstruit).
+  - **Le fichier porte le nom des filières AFFICHÉES** (`nomFichierExport`), joint par « - » :
+    « Lentilles.svg », « Blé tendre - Lentilles.png ». C'est ce qui distingue deux exports du
+    même classeur ; « sankey (1).png » et « sankey (2).png » ne le disaient plus. Le nom est
+    assaini (caractères interdits par Windows et macOS) et borné à 80 signes — dix filières
+    cochées feraient un nom qu'aucun système n'accepte. Sans filière nommée : « sankey ».
+    Mutation vérifiée (nom constant).
 - **Hauteur des nœuds variable** : en édition, le nom passe à la ligne (`wrapText`, 18 caractères,
   4 lignes max) et la boîte grandit — `nodeH(n)` fait autorité, il n'y a plus de pas vertical
   régulier. Toute mesure verticale passe par `nodeH()` et `rankAtY()`, jamais par `NODE_H`/`ROW_H`.
@@ -736,6 +742,25 @@ un poste, c'est `npm run addin:install -- --enligne`.
     « Étiquettes des nœuds » vit dans « Nœuds ». L'épaisseur d'un ruban et le chiffre qui
     l'annonce se règlent d'un même regard. L'intertitre garde le groupe **nommé** : c'est sous
     ce nom qu'on le cherchait quand il faisait carte à part.
+    - **Le format du chiffre s'y règle, il ne se devine plus** (`formatValeurLien`,
+      engine.ts). Deux réglages, et un seul agit à la fois : un **multiplicateur de l'unité**
+      (aucun · milliers · millions) divise TOUTES les valeurs et les écrit arrondies à
+      l'entier ; sans lui, la valeur garde son ordre de grandeur et n'est arrondie qu'à N
+      **chiffres significatifs**. Le champ des chiffres significatifs **disparaît** dès qu'un
+      multiplicateur agit — un réglage sans effet ne reste pas à l'écran —, donc ce choix-là
+      **reconstruit le panneau**.
+    - L'ancien format automatique (« k », « M », « Md ») est parti d'ici : il abrégeait chaque
+      valeur pour elle-même, et « 999 » à côté de « 1,0 k » ne se comparait plus d'un regard.
+      `formatNumber` le garde pour l'infobulle d'un ruban et la valeur écrite dans l'étiquette
+      d'un nœud, où l'on lit une valeur à la fois.
+    - L'unité, elle, **reste celle de l'utilisatrice** : coller un « k » devant « tonnes »
+      qu'elle vient d'écrire au long ferait un libellé faux. Une note du panneau le rappelle.
+    - Les décimales gardées se déduisent de l'ordre de grandeur du nombre **arrondi**, pas de
+      l'original : 9,99 à deux chiffres fait 10, et la décimale de 9,99 écrirait « 10,0 ».
+    - Les valeurs peintes portent `class="link-value"` et `data-source`/`data-target`, comme
+      les rubans : un test lit le chiffre **réellement écrit sur le dessin**, jamais le modèle.
+      Quatre mutations vérifiées (multiplicateur ignoré, chiffres significatifs ignorés, nom de
+      fichier constant, panneau non reconstruit).
   - **« Export » a disparu dans « Cadre du graphique »**, parce qu'elle ne portait *que* la
     taille du canevas. Deux cartes obligeaient à l'aller-retour pour une seule question : quelle
     place occupe le dessin. Marges et taille y sont séparées par un `subhead()`.

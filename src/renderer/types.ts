@@ -111,6 +111,34 @@ export function texteAffiche(texte: string, s: { uppercase?: boolean } | null | 
 }
 
 /**
+ * Multiplicateur de l'unité des valeurs de liens : les chiffres écrits sur les
+ * rubans sont divisés par 1, 1 000 ou 1 000 000.
+ *
+ * C'est un choix, pas une devinette. Le format automatique d'avant abrégeait
+ * chaque valeur pour elle-même (« 999 » à côté de « 1,0 k ») : deux rubans
+ * voisins ne se comparaient plus d'un regard. Le multiplicateur s'applique à
+ * TOUS les liens, ou à aucun.
+ *
+ * L'unité écrite à côté du chiffre, elle, reste celle de l'utilisatrice
+ * (« milliers de tonnes ») : la deviner ici collerait un « k » devant une
+ * unité qu'elle vient d'écrire au long.
+ */
+export type MultiplicateurValeur = "aucun" | "milliers" | "millions";
+
+export const MULTIPLICATEURS_VALEUR: [MultiplicateurValeur, string][] = [
+    ["aucun", "Aucun"],
+    ["milliers", "Milliers (÷ 1 000)"],
+    ["millions", "Millions (÷ 1 000 000)"]
+];
+
+/** Ce par quoi diviser les valeurs, pour chaque multiplicateur. */
+export function diviseurDe(m: MultiplicateurValeur | string | null | undefined): number {
+    if (m === "milliers") return 1e3;
+    if (m === "millions") return 1e6;
+    return 1;
+}
+
+/**
  * Où se pose l'étiquette d'un nœud : à côté de sa boîte, en dessous, ou
  * centrée dessus (les nœuds des colonnes de bord se calant alors sur le côté
  * tourné vers l'intérieur du graphique).
@@ -249,6 +277,14 @@ export interface SankeyOptions {
     linkValueLabels: {
         show: boolean;
         unitText: string;
+        /** Diviseur appliqué à toutes les valeurs (voir `MultiplicateurValeur`). */
+        multiplicateur: MultiplicateurValeur;
+        /**
+         * Chiffres significatifs des valeurs écrites sur les rubans. Sans
+         * effet dès qu'un multiplicateur est choisi : les valeurs divisées
+         * s'écrivent arrondies à l'entier.
+         */
+        chiffresSignificatifs: number;
         fontColor: string;
         fontFamily: string;
         fontSize: number;
@@ -327,7 +363,7 @@ export function defaultOptions(): SankeyOptions {
             borderWidth: 1
         },
         nodes: {
-            nodeColor: "#000000",
+            nodeColor: "#d4d4d4",
             nodeWidth: 16,
             nodePadding: 14
         },
@@ -366,6 +402,8 @@ export function defaultOptions(): SankeyOptions {
         linkValueLabels: {
             show: false,
             unitText: "",
+            multiplicateur: "aucun",
+            chiffresSignificatifs: 3,
             fontColor: "#000000",
             fontFamily: FONT,
             fontSize: 10,

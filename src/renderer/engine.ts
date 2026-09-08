@@ -6,7 +6,7 @@ import { sankey } from "d3-sankey";
 import {
     FlowModel, SankeyOptions, NodeKind, NodeTypeStyle, NodeTypeFont, NodeOutline,
     NodeMosaique, NodeLabelPosition, NODE_LABEL_POSITIONS, kindOf, defaultTypeStyle,
-    texteAffiche, partBio
+    texteAffiche, partBio, diviseurDe
 } from "./types";
 
 interface ENode {
@@ -1194,6 +1194,12 @@ function drawSankey(
             .data(liens.filter(l => (l.width ?? 0) >= vfs * 0.9))
             .enter()
             .append("text")
+            // Classe et extrémités : la valeur écrite se retrouve dans le
+            // dessin PEINT — c'est là, et pas dans le modèle, qu'un test lit
+            // le chiffre réellement obtenu.
+            .attr("class", "link-value")
+            .attr("data-source", (d: ELink) => (d.source as ENode).id)
+            .attr("data-target", (d: ELink) => (d.target as ENode).id)
             .attr("x", (d: ELink) => mx(d))
             .attr("y", (d: ELink) => my(d))
             .attr("dy", "0.35em")
@@ -1210,7 +1216,7 @@ function drawSankey(
             .style("pointer-events", "none")
             .text((d: ELink) => {
                 const unit = (d.unit || fallbackUnit).trim();
-                const v = formatNumber(d.value);
+                const v = formatValeurLien(d.value, V.multiplicateur, V.chiffresSignificatifs);
                 return texteAffiche(unit ? `${v} ${unit}` : v, V);
             });
     }
@@ -1520,6 +1526,51 @@ function linkMidAngle(link: ELink, curveType: string, curvature: number): number
     if (curveType === "droite") dx = tx - sx;
     else dx = (tx - sx) * (1 - (0.15 + curvature * 0.35));
     return (Math.atan2(ty - sy, dx) * 180) / Math.PI;
+}
+
+/**
+ * La valeur d'un lien, telle qu'elle s'écrit sur son ruban.
+ *
+ * Deux réglages, et un seul des deux agit à la fois :
+ *  - **un multiplicateur** (milliers, millions) divise TOUTES les valeurs et
+ *    les écrit arrondies à l'entier. C'est le mode « je change d'unité » : les
+ *    décimales n'ont plus de sens une fois qu'on lit en millions.
+ *  - **sans multiplicateur**, la valeur garde son ordre de grandeur et n'est
+ *    arrondie qu'à N chiffres significatifs.
+ *
+ * Ni l'un ni l'autre n'abrège plus tout seul en « k »/« M » : ce format-là se
+ * décidait valeur par valeur, et deux rubans voisins (« 999 » et « 1,0 k »)
+ * ne se comparaient plus. Le multiplicateur porte ce choix, une fois pour tout
+ * le diagramme.
+ */
+function formatValeurLien(
+    v: number,
+    multiplicateur: string,
+    chiffresSignificatifs: number
+): string {
+    if (!isFinite(v)) return "";
+    const diviseur = diviseurDe(multiplicateur);
+    if (diviseur > 1) {
+        return Math.round(v / diviseur).toLocaleString("fr-FR", { maximumFractionDigits: 0 });
+    }
+    return arrondiSignificatif(v, chiffresSignificatifs);
+}
+
+/**
+ * Un nombre ramené à `n` chiffres significatifs, écrit à la française.
+ *
+ * Les décimales à conserver se déduisent de l'ordre de grandeur du nombre
+ * ARRONDI, pas du nombre d'origine : arrondir 9,99 à deux chiffres donne 10, et
+ * lui laisser la décimale de 9,99 écrirait « 10,0 » — un chiffre significatif
+ * de trop. `maximumFractionDigits` n'ayant pas de minimum en face, un entier
+ * reste écrit sans virgule.
+ */
+function arrondiSignificatif(v: number, n: number): string {
+    const chiffres = clamp(Math.round(n) || 0, 1, 15);
+    if (v === 0) return "0";
+    const r = Number(v.toPrecision(chiffres));
+    const dec = clamp(chiffres - 1 - Math.floor(Math.log10(Math.abs(r))), 0, 20);
+    return r.toLocaleString("fr-FR", { maximumFractionDigits: dec });
 }
 
 function formatNumber(v: number): string {
