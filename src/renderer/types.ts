@@ -292,10 +292,18 @@ export interface SankeyOptions {
         italic: boolean;
         uppercase: boolean;
     };
-    /** Marges extérieures du graphique (aperçu et export). */
+    /**
+     * Marges extérieures du graphique (aperçu et export).
+     *
+     * Celles de gauche et de droite servent surtout aux libellés : un nom
+     * centré sur un nœud de la première ou de la dernière colonne déborde du
+     * cadre et se retrouve coupé au bord. La marge lui rend cette place.
+     */
     chart: {
         marginTop: number;
         marginBottom: number;
+        marginLeft: number;
+        marginRight: number;
     };
     /**
      * Dimensions du canevas d'export, **une par combinaison de filières
@@ -413,7 +421,9 @@ export function defaultOptions(): SankeyOptions {
         },
         chart: {
             marginTop: 0,
-            marginBottom: 0
+            marginBottom: 0,
+            marginLeft: 0,
+            marginRight: 0
         },
         exportation: {
             tailles: {}

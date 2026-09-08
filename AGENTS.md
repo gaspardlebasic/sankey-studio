@@ -753,10 +753,20 @@ un poste, c'est `npm run addin:install -- --enligne`.
 - **Hauteur des nœuds variable** : en édition, le nom passe à la ligne (`wrapText`, 18 caractères,
   4 lignes max) et la boîte grandit — `nodeH(n)` fait autorité, il n'y a plus de pas vertical
   régulier. Toute mesure verticale passe par `nodeH()` et `rankAtY()`, jamais par `NODE_H`/`ROW_H`.
+- **Marges du cadre (`options.chart`, carte « Cadre du graphique »)** : quatre marges — haut,
+  bas, gauche, droite. Elles **rétrécissent le cadre**, elles n'agrandissent pas le canevas :
+  `margesDuCadre()` (engine.ts) rend l'origine et la taille utiles, et le fond couvre toujours
+  toute la surface. Les deux latérales existent pour les libellés — un nom **centré sur un
+  nœud** de la première ou de la dernière colonne déborde de la moitié de sa longueur et se
+  fait couper par le bord. Deux pièges : des marges plus larges que le canevas sont rognées à
+  proportion (40 px de dessin restent garantis), et le décalage à gauche doit s'accompagner du
+  rétrécissement de la largeur — sinon le dessin sort du cadre par la droite sans que rien ne
+  le montre dans une fixture dont la dernière colonne est vide. Le test le vérifie par le
+  **pas entre colonnes**, pas par la position du dernier nœud (trois mutations vérifiées).
 - **Aperçu par filière** : `options.filieres.split` empile un Sankey par filière sous son nom
   (`renderSankeyGroups` dans engine.ts ; `drawSankey` dessine un diagramme dans un `<g>` fourni
   et **renvoie l'échelle obtenue** en pixels par unité de flux). Réglages dans la carte
-  « Cadre du graphique » (marges haut/bas via `options.chart`). Les liens qui traversent deux
+  « Cadre du graphique » (marges du cadre via `options.chart`). Les liens qui traversent deux
   filières n'appartiennent à aucun bloc et disparaissent dans ce mode.
 - **Échelle commune (`filieres.sameScale`)** : ne pas tenter de prédire l'échelle de d3-sankey
   analytiquement — la colonne contraignante n'est pas celle qu'on croit, et les marges internes

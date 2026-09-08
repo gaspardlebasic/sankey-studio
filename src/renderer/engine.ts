@@ -208,10 +208,47 @@ export function renderSankey(
         return;
     }
 
+    const m = margesDuCadre(opt, width, height);
+    drawSankey(
+        svg.append("g").attr("transform", `translate(${m.gauche},${m.haut})`),
+        model, opt, m.largeur, m.hauteur
+    );
+}
+
+/**
+ * Marges extérieures, ramenées à ce que le cadre peut leur donner. Le fond
+ * couvre toute la surface : la marge n'agrandit pas le canevas, elle réserve
+ * une bande où le dessin ne va pas.
+ *
+ * Les marges latérales existent pour les libellés — un nom centré sur un nœud
+ * de la première ou de la dernière colonne déborde de la moitié de sa longueur
+ * et se fait couper par le bord. Sans borne, une marge plus large que le
+ * canevas donnerait une largeur utile négative : on garde toujours 40 px de
+ * dessin, quitte à rogner les marges à proportion.
+ */
+function margesDuCadre(
+    opt: SankeyOptions,
+    width: number,
+    height: number
+): { gauche: number; haut: number; largeur: number; hauteur: number } {
     const haut = clamp(opt.chart.marginTop, 0, 2000);
     const bas = clamp(opt.chart.marginBottom, 0, 2000);
-    const utile = Math.max(40, height - haut - bas);
-    drawSankey(svg.append("g").attr("transform", `translate(0,${haut})`), model, opt, width, utile);
+    let gauche = clamp(opt.chart.marginLeft, 0, 2000);
+    let droite = clamp(opt.chart.marginRight, 0, 2000);
+    const restant = width - 40;
+    if (gauche + droite > restant) {
+        /* À proportion, pour qu'une marge demandée deux fois plus large reste
+           deux fois plus large une fois rognée — le dessin garde sa place. */
+        const k = gauche + droite > 0 ? Math.max(0, restant) / (gauche + droite) : 0;
+        gauche = gauche * k;
+        droite = droite * k;
+    }
+    return {
+        gauche,
+        haut,
+        largeur: Math.max(40, width - gauche - droite),
+        hauteur: Math.max(40, height - haut - bas)
+    };
 }
 
 /**
@@ -273,11 +310,11 @@ export function renderSankeyGroups(
     const taille = clamp(F.fontSize, 4, 60);
     const sousTitre = clamp(F.titleSpace, 0, 200);
     const ecart = clamp(F.gap, 0, 400);
-    const margeHaut = clamp(opt.chart.marginTop, 0, 2000);
-    const margeBas = clamp(opt.chart.marginBottom, 0, 2000);
+    const m = margesDuCadre(opt, width, height);
+    const largeur = m.largeur;
     const hauteurTitre = F.showTitle ? taille + sousTitre : 0;
     const dispo =
-        height - margeHaut - margeBas
+        m.hauteur
         - utiles.length * hauteurTitre
         - (utiles.length - 1) * ecart;
 
@@ -294,8 +331,8 @@ export function renderSankeyGroups(
         const H1 = 300;
         const H2 = 600;
         const coef = utiles.map(g => {
-            const e1 = mesurerEchelle(g.model, opt, width, H1, grille);
-            const e2 = mesurerEchelle(g.model, opt, width, H2, grille);
+            const e1 = mesurerEchelle(g.model, opt, largeur, H1, grille);
+            const e2 = mesurerEchelle(g.model, opt, largeur, H2, grille);
             const a = (e2 - e1) / (H2 - H1);
             return { a, b: e1 - a * H1 };
         });
@@ -312,9 +349,13 @@ export function renderSankeyGroups(
     }
 
     const ancre = F.align === "centre" ? "middle" : F.align === "droite" ? "end" : "start";
-    const xTitre = F.align === "centre" ? width / 2 : F.align === "droite" ? width - 12 : 12;
+    /* Les titres de filière suivent les marges latérales, comme les diagrammes :
+       un titre aligné à droite passerait sinon sous le libellé auquel la marge
+       vient justement de faire place. */
+    const xTitre = m.gauche
+        + (F.align === "centre" ? largeur / 2 : F.align === "droite" ? largeur - 12 : 12);
 
-    let y = margeHaut;
+    let y = m.haut;
     utiles.forEach((g, i) => {
         if (F.showTitle) {
             svg.append("text")
@@ -329,8 +370,8 @@ export function renderSankeyGroups(
                 .text(texteAffiche(g.nom || "(sans filière)", F));
             y += hauteurTitre;
         }
-        const bloc = svg.append("g").attr("transform", `translate(0,${y})`);
-        drawSankey(bloc, g.model, opt, width, hauteurs[i], grille);
+        const bloc = svg.append("g").attr("transform", `translate(${m.gauche},${y})`);
+        drawSankey(bloc, g.model, opt, largeur, hauteurs[i], grille);
         y += hauteurs[i];
         if (i < utiles.length - 1) y += ecart;
     });

@@ -2212,6 +2212,61 @@ test("marges du graphique : le haut décale le rendu", "complexe", async p => {
   egal(r.apres, 90, "la marge en haut doit décaler le rendu d'autant");
 });
 
+test("marges du graphique : les côtés resserrent le dessin", "complexe", async p => {
+  const r = await p(`
+    // La marge en haut peut traîner d'un test précédent : on part de zéro.
+    await reglerCarte('Cadre du graphique', 'Marge en haut', '0');
+    const marges = async (gauche, droite) => {
+      await reglerCarte('Cadre du graphique', 'Marge à gauche', String(gauche));
+      await reglerCarte('Cadre du graphique', 'Marge à droite', String(droite));
+      await versApercu();
+      const rects = rectsApercu();
+      const largeur = parseFloat(document.querySelector('#canvas').getAttribute('width'));
+      await versEdition();
+      if (!rects.length) throw new Error('aucun nœud peint dans l\\'aperçu');
+      // Le pas entre colonnes mesure la LARGEUR du cadre : un dessin
+      // simplement décalé garderait le même pas.
+      const axes = [...new Set(rects.map(x => Math.round((x.gauche + x.droite) / 2 * 10) / 10))]
+        .sort((a, b) => a - b);
+      if (axes.length < 2) throw new Error('une seule colonne peinte : rien à mesurer');
+      return {
+        largeur,
+        gauche: Math.min(...rects.map(x => x.gauche)),
+        droite: Math.max(...rects.map(x => x.droite)),
+        pas: axes[1] - axes[0]
+      };
+    };
+    const nu = await marges(0, 0);
+    const aGauche = await marges(120, 0);
+    const aDroite = await marges(0, 120);
+    const deuxFois = await marges(0, 240);
+    const rendu = await marges(0, 0);
+    return { nu, aGauche, aDroite, deuxFois, rendu };
+  `);
+  attendu(Math.abs((r.aGauche.gauche - r.nu.gauche) - 120) < 1.5,
+    "la marge à gauche doit repousser le premier nœud d'autant " +
+    "(décalage : " + (r.aGauche.gauche - r.nu.gauche).toFixed(1) + ")");
+  attendu(r.nu.pas - r.aGauche.pas > 1,
+    "la marge à gauche doit rétrécir le cadre, pas seulement décaler le dessin " +
+    "(pas entre colonnes : " + r.nu.pas + " puis " + r.aGauche.pas + ")");
+  attendu(Math.abs(r.aGauche.pas - r.aDroite.pas) < 0.5,
+    "deux marges de même largeur, à gauche ou à droite, doivent rétrécir le cadre pareil");
+  // La marge à droite ne déplace pas le premier nœud : elle rétrécit le cadre
+  // par la droite, et le dessin s'y redistribue.
+  attendu(Math.abs(r.aDroite.gauche - r.nu.gauche) < 1.5,
+    "la marge à droite ne doit pas bouger le premier nœud");
+  const recul = r.nu.droite - r.aDroite.droite;
+  attendu(recul > 1, "la marge à droite doit ramener le dernier nœud vers la gauche");
+  attendu(Math.abs((r.nu.droite - r.deuxFois.droite) - 2 * recul) < 1.5,
+    "une marge deux fois plus large doit reculer le dessin deux fois plus " +
+    "(" + recul.toFixed(1) + " puis " + (r.nu.droite - r.deuxFois.droite).toFixed(1) + ")");
+  attendu(r.deuxFois.droite <= r.deuxFois.largeur - 240 + 1.5,
+    "rien ne doit être peint dans la marge de droite");
+  attendu(Math.abs(r.rendu.gauche - r.nu.gauche) < 1.5
+    && Math.abs(r.rendu.droite - r.nu.droite) < 1.5,
+    "des marges remises à zéro doivent rendre le cadre entier");
+});
+
 test("panneau : une section reste ouverte quand on change une option", "complexe", async p => {
   const r = await p(`
     const parTitre = re => [...document.querySelectorAll('#sidebar details')]

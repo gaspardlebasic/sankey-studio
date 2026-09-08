@@ -2640,6 +2640,13 @@ function carteCadre(): HTMLElement {
     const c = options.chart;
     b.appendChild(numberField("Marge en haut", c.marginTop, v => { c.marginTop = v; rr(); }));
     b.appendChild(numberField("Marge en bas", c.marginBottom, v => { c.marginBottom = v; rr(); }));
+    b.appendChild(numberField("Marge à gauche", c.marginLeft, v => { c.marginLeft = v; rr(); }));
+    b.appendChild(numberField("Marge à droite", c.marginRight, v => { c.marginRight = v; rr(); }));
+    b.appendChild(hint(
+        "Les marges latérales servent surtout aux libellés : un nom centré sur un nœud "
+        + "de la première ou de la dernière colonne déborde du cadre et se fait couper "
+        + "par le bord. La marge lui rend cette place."
+    ));
 
     b.appendChild(divider());
     b.appendChild(subhead("Taille du canevas"));
@@ -3027,6 +3034,7 @@ function applyProject(p: ProjectFile): void {
     normaliserPolices();
     normaliserLiens();
     normaliserExport();
+    normaliserCadre();
     // Le compteur du fichier n'est jamais cru sur parole : on prend le plus grand
     // entre lui et le maximum réellement utilisé.
     idCounter = Math.max(p.idCounter || 0, guessCounter());
@@ -3074,6 +3082,28 @@ function normaliserValeursDeLiens(): void {
         ? Math.min(15, Math.max(1, Math.round(n)))
         : d.chiffresSignificatifs;
 }
+/**
+ * Complète les marges du cadre. `Object.assign` ne fusionne que le premier
+ * niveau : une apparence rangée avant les marges latérales arrive avec un
+ * `chart` complet de deux champs, qui remplace le défaut de quatre — les deux
+ * nouveaux vaudraient `undefined`, et le moteur décalerait le dessin de `NaN`
+ * pixels, c'est-à-dire nulle part.
+ */
+function normaliserCadre(): void {
+    const d = defaultOptions().chart;
+    const relu = (options.chart || {}) as Record<string, unknown>;
+    const nombre = (v: unknown, defaut: number) => {
+        const n = Number(v);
+        return isFinite(n) ? n : defaut;
+    };
+    options.chart = {
+        marginTop: nombre(relu.marginTop, d.marginTop),
+        marginBottom: nombre(relu.marginBottom, d.marginBottom),
+        marginLeft: nombre(relu.marginLeft, d.marginLeft),
+        marginRight: nombre(relu.marginRight, d.marginRight)
+    };
+}
+
 /**
  * Complète les dimensions d'export, pour la même raison qu'au-dessus : une
  * apparence écrite avant ce réglage arrive sans `exportation` du tout.
@@ -3240,6 +3270,7 @@ function appliquerApparence(json: string): void {
     normaliserPolices();
     normaliserLiens();
     normaliserExport();
+    normaliserCadre();
     idCounter = Math.max(a.idCounter || 0, idCounter);
     hiddenFilieres = new Set(a.hiddenFilieres || []);
     // Les liens n'existent pas encore : ils viendront du classeur.
