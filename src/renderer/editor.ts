@@ -1717,15 +1717,61 @@ function toCanvas(e: MouseEvent): { x: number; y: number } {
 /* --------------------------- panneau latéral ----------------------- */
 
 /**
+ * Repère STABLE d'un contrôle du panneau, qui survit à une reconstruction :
+ * le titre de sa carte, son intitulé, et son rang parmi ses homonymes.
+ *
+ * Le titre de carte est indispensable : « Contour », « Largeur », « Police »
+ * existent à l'identique dans « Produits / commodités » et dans
+ * « Industries / étapes ». Le rang ne sert qu'en dernier recours.
+ */
+function repereDuControle(el: Element): string | null {
+    const champ = el.closest(".field");
+    if (!champ) return null;
+    const carte = el.closest(".panel");
+    const titre = carte
+        ? (carte.querySelector("summary, h3")?.textContent || "").trim()
+        : "";
+    const intitule = (champ.querySelector("span")?.textContent || "").trim();
+    const parents = carte ? carte.querySelectorAll(".field") : sidebar.querySelectorAll(".field");
+    const memes = Array.prototype.slice.call(parents).filter(
+        (f: Element) => (f.querySelector("span")?.textContent || "").trim() === intitule
+    );
+    return titre + " ‖ " + intitule + " ‖ " + memes.indexOf(champ as Element);
+}
+
+/** Le contrôle que désigne un repère, dans le panneau tel qu'il est maintenant. */
+function controleDuRepere(repere: string): HTMLElement | null {
+    const el = Array.prototype.slice.call(sidebar.querySelectorAll(".field"))
+        .map((f: Element) => f.querySelector("input, select, textarea"))
+        .find((c: Element | null) => c && repereDuControle(c) === repere);
+    return (el as HTMLElement) || null;
+}
+
+/**
  * Reconstruit le panneau en entier — c'est ce que font tous les gestionnaires
- * de réglage. Vider `#sidebar` remet son défilement à zéro : la carte qu'on
- * était en train de régler remontait hors champ à chaque clic. La position est
- * donc relevée avant, et reposée après : le contenu a la même hauteur, il
- * retombe exactement où il était. Le navigateur borne lui-même la valeur si le
- * panneau a raccourci entre-temps.
+ * de réglage, mais aussi l'écriture automatique vers Excel, 300 ms après la
+ * dernière frappe. Vider `#sidebar` détruit donc le champ en cours de saisie,
+ * et remet le défilement à zéro : le panneau sautait en haut et le curseur
+ * quittait le champ, en plein milieu d'un mot.
+ *
+ * Deux choses sont donc relevées avant, et reposées après : la position du
+ * défilement, et le champ qui avait le focus (avec son curseur). Le contenu a
+ * la même hauteur et la même structure, tout retombe où c'était. Le navigateur
+ * borne lui-même le défilement si le panneau a raccourci entre-temps.
+ *
+ * Ce n'est PAS une raison de reconstruire le panneau à chaque frappe : un
+ * gestionnaire de saisie ne doit toujours pas appeler `buildSidebar()`
+ * (cf. `textField`, dont l'`onCommit` attend la validation). Le filet est là
+ * pour les reconstructions qui ne viennent pas du champ lui-même.
  */
 function buildSidebar(): void {
     const defilement = sidebar.scrollTop;
+    const actif = document.activeElement;
+    const repere = actif && sidebar.contains(actif) ? repereDuControle(actif) : null;
+    const curseur = saisieEnCours(actif)
+        ? { debut: (actif as HTMLInputElement).selectionStart,
+            fin: (actif as HTMLInputElement).selectionEnd }
+        : null;
     sidebar.innerHTML = "";
 
     const ap = buildAlertePanel();
@@ -1843,7 +1889,29 @@ function buildSidebar(): void {
     // Section apparence globale
     sidebar.appendChild(buildAppearance());
 
+    // Le focus d'abord, le défilement ensuite : `focus()` défile de lui-même
+    // pour amener le champ en vue, et défairait la position qu'on vient de poser.
+    if (repere) {
+        const c = controleDuRepere(repere);
+        if (c) {
+            c.focus({ preventScroll: true });
+            if (curseur && curseur.debut !== null && saisieEnCours(c)) {
+                // Un `input[type=number]` refuse `setSelectionRange` : le curseur
+                // y retombe en fin de champ, ce qui est le bon endroit pour un
+                // nombre qu'on est en train de taper.
+                try { (c as HTMLInputElement).setSelectionRange(curseur.debut, curseur.fin); }
+                catch { /* champ qui n'expose pas de sélection */ }
+            }
+        }
+    }
     sidebar.scrollTop = defilement;
+}
+
+/** Un champ où un curseur de texte a un sens (et donc une position à garder). */
+function saisieEnCours(el: Element | null): boolean {
+    if (!el || el.tagName !== "INPUT") return false;
+    const t = (el as HTMLInputElement).type;
+    return t === "text" || t === "number" || t === "search";
 }
 
 function buildFilierePanel(): HTMLElement | null {

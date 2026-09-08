@@ -37,9 +37,13 @@ git push                # pousser sur main publie le complément (.github/workfl
 npm run excel:cache     # les pages HTML ne portent pas d'empreinte : Excel sert l'ancienne sinon
 ```
 
-Deux réserves, et deux seulement :
+Trois réserves, et trois seulement :
 
 - **Rien ne part si une suite échoue.** Un travail inachevé se signale, il ne se pousse pas.
+- **Jamais `git add -A`.** Le dépôt porte parfois le travail en cours d'une autre session, et
+  un `git status` propre au démarrage ne le garantit pas : il apparaît en cours de route.
+  Nommer les fichiers qu'on a soi-même touchés. Déjà vu : un `add -A` avait emporté 800 lignes
+  d'un chantier voisin dans un commit qui n'avait rien à voir.
 - **Pousser publie.** `main` déclenche la mise en ligne du complément (DIFFUSION.md) : ce
   qui est poussé est servi aux postes qui l'ont installé. Raison de plus pour que les
   suites soient vertes — pas pour attendre un feu vert.

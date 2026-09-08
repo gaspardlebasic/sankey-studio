@@ -128,6 +128,63 @@ test("nom : la saisie au clavier n'est pas interrompue", "complexe", async p => 
   egal(r.surLeNoeud, "Féverole de printemps", "le nœud doit porter le nom saisi");
 });
 
+test("nom : une reconstruction du panneau ne vole pas le champ en cours de saisie",
+     "complexe", async p => {
+  // Le cas signalé : l'écriture automatique vers Excel arrive 300 ms après la
+  // dernière frappe et refait le panneau (`render()` + `buildSidebar()`, ce que
+  // fait `T.refresh()`). Le champ était détruit sous les doigts.
+  const r = await p(`
+    const n = one('Féverolle');
+    await selectNode(n.id);
+    const i = field('Nom');
+    i.focus();
+    i.value = 'Féverole';
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+    i.setSelectionRange(3, 3);   // curseur au milieu du mot, pas à la fin
+    T.refresh();                 // la reconstruction qui arrivait pendant la frappe
+    await sleep(80);
+    const apres = field('Nom');
+    return {
+      focusGarde: document.activeElement === apres,
+      dansLePanneau: !!(document.activeElement && document.activeElement.closest('#sidebar')),
+      valeur: apres ? apres.value : null,
+      curseur: apres ? apres.selectionStart : null
+    };
+  `);
+  attendu(r.dansLePanneau, "le focus ne doit pas quitter le panneau");
+  attendu(r.focusGarde, "le champ « Nom » doit garder le focus après la reconstruction");
+  egal(r.valeur, "Féverole", "le texte déjà saisi doit être intact");
+  egal(r.curseur, 3, "le curseur doit rester où il était, pas sauter en fin de champ");
+});
+
+test("panneau : la reconstruction rend le focus au bon champ, pas à son homonyme",
+     "complexe", async p => {
+  // « Contour » existe à l'identique dans les deux cartes de type : un repère
+  // qui ne tiendrait pas compte de la carte rendrait le focus au mauvais champ.
+  const r = await p(`
+    // Les DEUX cartes doivent porter un champ « Largeur », sans quoi il n'y a
+    // pas d'homonyme et le test ne prouverait rien.
+    await cocher('Produits / commodités', 'Largeur propre à ce type');
+    await cocher('Industries / étapes', 'Largeur propre à ce type');
+    const carte = await carteDuPanneau('Industries / étapes');
+    const champ = [...carte.querySelectorAll('.field')]
+      .find(f => f.querySelector('span') && f.querySelector('span').textContent.trim() === 'Largeur');
+    const i = champ.querySelector('input');
+    i.focus();
+    T.refresh();
+    await sleep(80);
+    const actif = document.activeElement;
+    const sonTitre = actif && actif.closest('details')
+      ? actif.closest('details').querySelector('summary').textContent.trim() : null;
+    const sonLabel = actif && actif.closest('.field')
+      ? actif.closest('.field').querySelector('span').textContent.trim() : null;
+    return { sonTitre, sonLabel };
+  `);
+  egal(r.sonLabel, "Largeur", "le focus doit revenir sur le champ « Largeur »");
+  egal(r.sonTitre, "Industries / étapes",
+       "…et sur celui de la bonne carte, pas sur son homonyme de l'autre type");
+});
+
 test("filière : basculer un nœud vers une filière masquée le retire de la vue", "complexe", async p => {
   const r = await p(`
     const n = one('Féverolle');
