@@ -815,7 +815,7 @@ await test("écriture : une colonne calculée d'Excel n'est pas prise pour des d
 await test("écriture : un unique lien à formule n'est pas une colonne calculée", async () => {
   // Le cas limite de la détection : quand le tableau ne compte qu'UNE ligne,
   // « toutes les lignes portent la même formule » est vrai par construction.
-  // Il faut au moins deux lignes concordantes pour parler de remplissage,
+  // Il faut au moins trois lignes concordantes pour parler de remplissage,
   // sinon le premier lien d'un diagramme naissant perdrait sa formule.
   const c = classeurType({
     noeuds: [
@@ -978,6 +978,32 @@ await test("écriture : une seule formule dans la colonne reste une formule", as
        "=Lentilles!$C$68", "et elle est toujours là");
 });
 
+await test("écriture : deux liens qui visent la MÊME cellule gardent leur formule", async () => {
+  // Le geste courant qu'il ne faut pas confondre avec une recopie : le flux qui
+  // sort d'un nœud vaut celui qui y entre, et la même référence est écrite sur
+  // les deux liens — même formule, même valeur. À deux lignes concordantes, la
+  // détection prenait ce geste pour une colonne calculée et effaçait les deux
+  // formules. Le seuil est à TROIS : une recopie d'Excel s'étend à toute la
+  // colonne, jamais à un couple.
+  const c = classeurType({
+    noeuds: RANGS_QUATRE,
+    liens: [
+      ["Lait", "Production bio", "Lait cru", { f: "='Blé tendre'!$C$8", v: 42 }, "t", "n1", "n2"],
+      ["Lait", "Lait cru", "Transformation", { f: "='Blé tendre'!$C$8", v: 42 }, "t", "n2", "n3"],
+      ["Lait", "Transformation", "Beurre", 30, "t", "n3", "n4"]
+    ]
+  });
+  const r = await office.ecrireDiagramme({ nodes: QUATRE, links: LIENS_QUATRE });
+  attendu(r.ok, "écriture réussie");
+  attendu(!r.remplissage, "deux lignes concordantes ne prouvent rien");
+  egal(r.formules, 2, "les deux formules sont réémises");
+
+  const iVal = LINK_COLS.indexOf("Valeur du flux");
+  egal(c.formulesDe("Liens").map(l => l[iVal]),
+       ["='Blé tendre'!$C$8", "='Blé tendre'!$C$8", ""],
+       "les deux formules de l'utilisatrice sont rendues telles quelles");
+});
+
 await test("écriture : un remplissage PARTIEL n'emporte pas les lignes rescapées", async () => {
   // Le trou que la première correction laissait. Après une restauration — ou une
   // correction faite à la main sur quelques lignes — la colonne porte des lignes
@@ -985,24 +1011,30 @@ await test("écriture : un remplissage PARTIEL n'emporte pas les lignes rescapé
   // même formule ») déclarait la colonne saine, le complément réémettait la
   // recopie, et Excel recréait la colonne calculée : les rescapées mouraient au
   // tour suivant. On juge donc ligne par ligne.
+  const cinq = QUATRE.concat([{
+    id: "n5", name: "Poudre de lait", column: 5, title: "Aval", order: 1,
+    lane: 1, kind: "produit", filiere: "Lait", color: null
+  }]);
+  const liensCinq = LIENS_QUATRE.concat([{ source: "n4", target: "n5", value: 12, unit: "t" }]);
   const c = classeurType({
-    noeuds: RANGS_QUATRE,
+    noeuds: RANGS_QUATRE.concat([["Lait", "Poudre de lait", 5, "Aval", 1, "", "n5", 1, "Produit"]]),
     liens: [
       ["Lait", "Production bio", "Lait cru", { f: "='Blé tendre'!$C$8", v: 42 }, "t", "n1", "n2"],
       ["Lait", "Lait cru", "Transformation", { f: "='Blé tendre'!$C$8", v: 42 }, "t", "n2", "n3"],
-      ["Lait", "Transformation", "Beurre", { f: "=Lentilles!$C$68", v: 30 }, "t", "n3", "n4"]
+      ["Lait", "Transformation", "Beurre", { f: "='Blé tendre'!$C$8", v: 42 }, "t", "n3", "n4"],
+      ["Lait", "Beurre", "Poudre de lait", { f: "=Lentilles!$C$68", v: 30 }, "t", "n4", "n5"]
     ]
   });
-  const r = await office.ecrireDiagramme({ nodes: QUATRE, links: LIENS_QUATRE });
+  const r = await office.ecrireDiagramme({ nodes: cinq, links: liensCinq });
   attendu(r.ok, "écriture réussie");
-  egal(r.remplissage, { formule: "='Blé tendre'!$C$8", liens: 2 },
-       "les deux lignes recopiées sont reconnues, malgré la troisième qui ne l'est pas");
+  egal(r.remplissage, { formule: "='Blé tendre'!$C$8", liens: 3 },
+       "les trois lignes recopiées sont reconnues, malgré la quatrième qui ne l'est pas");
   egal(r.formules, 1, "seule la formule de la ligne rescapée est réémise");
 
   const iVal = LINK_COLS.indexOf("Valeur du flux");
   egal(c.formulesDe("Liens").map(l => l[iVal]),
-       ["", "", "=Lentilles!$C$68"],
-       "la recopie est effacée, la formule du troisième lien est intacte");
+       ["", "", "", "=Lentilles!$C$68"],
+       "la recopie est effacée, la formule du quatrième lien est intacte");
 });
 
 await test("écriture : une vraie colonne calculée n'est pas prise pour un remplissage", async () => {
