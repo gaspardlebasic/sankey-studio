@@ -890,9 +890,12 @@ function drawSankey(
     const gouttiere =
         couloirsModele.length > 1
             ? couloirsModele.reduce(
+                /* Largeur mesurée, pas devinée : une gouttière trop courte
+                   laisse le nom du couloir mordre sur le premier nœud, une
+                   gouttière trop large vole cette place au dessin. */
                 (m, l) => Math.max(m, nomCouloir(l)
-                    ? estimateTextWidth(nomCouloir(l), tailleCouloir,
-                        opt.lanes.weight >= 600, opt.lanes.uppercase) + 14
+                    ? mesureTexte(nomCouloir(l), tailleCouloir, opt.lanes.weight,
+                        opt.lanes.italic, opt.lanes.fontFamily) + 14
                     : 0),
                 0
             )
@@ -1239,9 +1242,14 @@ function drawSankey(
                 police
             );
             const lines = NL.wrap ? wrapText(labelText, maxChars) : [labelText];
+            /* Le bloc fait la largeur de sa LIGNE LA PLUS LARGE, mesurée pour de
+               bon : « IAA » garde un fond à sa taille, et « Importation de
+               bovins finis » coupé en deux lignes prend la largeur de
+               « Importation de », pas celle du nom entier. */
             const maxLineW = Math.max(
                 ...lines.map(ln =>
-                    estimateTextWidth(ln, fs, police.weight >= 600, police.uppercase))
+                    mesureTexte(ln, fs, police.weight, police.italic,
+                        police.fontFamily))
             );
             const centerY = ((d.y0 ?? 0) + (d.y1 ?? 0)) / 2;
             const nodeCenterX = ((d.x0 ?? 0) + (d.x1 ?? 0)) / 2;
@@ -1358,11 +1366,16 @@ function drawSankey(
         titleByLayer.forEach((title, layer) => {
             const nodeCenterX = axeColonne(layer);
             const titre = texteAffiche(title, H);
-            const textW = estimateTextWidth(titre, headerFontSize,
-                H.weight >= 600, H.uppercase);
+            // Le bandeau fait la largeur du titre réellement peint, plus ses
+            // marges : un intitulé court n'a pas à traîner un bandeau large.
+            const textW = mesureTexte(titre, headerFontSize, H.weight,
+                H.italic, H.fontFamily);
             const rectW = textW + padX * 2;
             const rectX = clamp(nodeCenterX - rectW / 2, 0, Math.max(0, width - rectW));
-            const g = gHeaders.append("g");
+            // Repère stable — comme `data-id` sur un nœud : c'est par lui que
+            // les tests retrouvent le bandeau d'une colonne sans le deviner à
+            // son intitulé.
+            const g = gHeaders.append("g").attr("data-header-for", layer);
             g.append("rect")
                 .attr("x", rectX)
                 .attr("y", headerMarginTop)
@@ -1519,15 +1532,63 @@ function formatNumber(v: number): string {
 }
 
 /**
- * Largeur approchée d'un texte DÉJÀ mis en forme : on lui passe la chaîne telle
- * qu'elle sera peinte (capitales comprises). `majuscules` ne dit donc pas quoi
- * transformer, mais que ces glyphes-là sont des capitales — plus larges d'environ
- * un dixième que les bas-de-casse à nombre de signes égal.
+ * Largeur approchée d'un texte, comptée en signes. Filet de secours de
+ * `mesureTexte` là où le canevas manque : à nombre de signes égal, « IAA » et
+ * « lili » n'occupent pourtant pas la même place, et c'est bien ce défaut-là
+ * qui a fait remplacer cette formule partout où l'on pose un fond ou réserve
+ * une marge. Elle ne sert donc plus qu'à ne pas rendre un dessin vide.
  */
-function estimateTextWidth(
-    text: string, fontSize: number, gras: boolean, majuscules = false
+function estimateTextWidth(text: string, fontSize: number, gras: boolean): number {
+    return text.length * fontSize * (gras ? 0.62 : 0.55);
+}
+
+/**
+ * Largeur RÉELLEMENT peinte d'un texte, mesurée dans sa propre police.
+ *
+ * Tout ce qui épouse un texte passe par ici — le fond d'une étiquette de nœud,
+ * le bandeau d'un titre de colonne, la gouttière des noms de couloirs : deviner
+ * cette largeur au nombre de signes laisse le fond flotter autour d'un mot court
+ * et déborder d'un mot long. Le canevas, lui, mesure la vraie chaîne dans la
+ * vraie police — et il la mesure HORS du document, donc aussi pendant un rendu
+ * détaché (mesure d'échelle, export) où `getBBox` ne rendrait que zéro.
+ *
+ * Le texte arrive DÉJÀ mis en forme, capitales comprises : rien à transformer
+ * ici. Faute de canevas (environnement sans DOM), on retombe sur l'estimation —
+ * un fond un peu large vaut mieux qu'un dessin qui échoue.
+ */
+let ctxMesure: CanvasRenderingContext2D | null | undefined;
+const cacheMesure = new Map<string, number>();
+
+function mesureTexte(
+    text: string,
+    fontSize: number,
+    graisse: number,
+    italique: boolean,
+    famille: string
 ): number {
-    return text.length * fontSize * (gras ? 0.62 : 0.55) * (majuscules ? 1.08 : 1);
+    if (!text) return 0;
+    // La graisse EXACTE, pas « gras ou non » : une demi-graisse (500, 600) ne
+    // s'écrit pas à la largeur du 400 ni à celle du 700.
+    const font = `${italique ? "italic " : ""}${graisse} ${fontSize}px ${famille}`;
+    const cle = font + "\u0000" + text;
+    const connu = cacheMesure.get(cle);
+    if (connu !== undefined) return connu;
+    if (ctxMesure === undefined) {
+        try {
+            ctxMesure = document.createElement("canvas").getContext("2d");
+        } catch {
+            ctxMesure = null;
+        }
+    }
+    if (!ctxMesure) return estimateTextWidth(text, fontSize, graisse >= 600);
+    ctxMesure.font = font;
+    const w = ctxMesure.measureText(text).width;
+    /* Un cache sans fin retiendrait tous les libellés d'un gros classeur : au
+       delà d'un millier d'entrées on repart de zéro, une mesure ne coûtant
+       presque rien. */
+    if (cacheMesure.size > 1000) cacheMesure.clear();
+    cacheMesure.set(cle, w);
+    return w;
 }
 
 export function wrapText(text: string, maxChars: number): string[] {

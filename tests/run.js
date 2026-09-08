@@ -2093,6 +2093,11 @@ test("part bio : la carte « Liens » sait éteindre le bandeau", "complexe", as
     const avant = document.querySelectorAll('#canvas path.lien-bio').length;
     await cocher('Liens', 'Part bio / durable');
     const apres = document.querySelectorAll('#canvas path.lien-bio').length;
+    /* Le banc ne recharge pas la page entre deux tests : un test qui s'arrête
+       en aperçu laisse le suivant sans vue d'édition — donc sans nœud
+       d'édition à sélectionner. On rend la vue comme on l'a trouvée.
+       (Pas d'accent grave dans ce commentaire : il fermerait le gabarit.) */
+    await versEdition();
     return { avant, apres };
   `);
   attendu(r.avant > 0, "des bandeaux sont peints tant que l'option est cochée");
@@ -2155,6 +2160,162 @@ test("aperçu : le repère de sélection suit le libellé et disparaît avec lui
   egal(r.combien, 1, "jamais deux repères à la fois");
   egal(r.apres.type, null, "un clic dans le vide désélectionne");
   egal(r.restant, 0, "et retire le repère");
+});
+
+test("aperçu : l'arrière-plan d'un libellé fait la largeur du texte peint", "complexe", async p => {
+  const r = await p(`
+    /* Deux noms taillés pour la question : un court, et un long qui se coupe
+       en deux lignes à 18 signes. Le fond du second doit faire la largeur de
+       « Importation de », pas celle du nom entier. */
+    const court = one('Féverolle');
+    const long = one('Lentilles sèches');
+    byId(court.id).name = 'IAA';
+    byId(long.id).name = 'Importation de bovins finis';
+    T.refresh();
+    await sleep(140);
+    await cocher('Nœuds', 'Arrière-plan');
+    await cocher('Nœuds', 'Retour à la ligne');
+    await reglerCarte('Nœuds', 'Longueur max. par ligne', '18');
+    await versApercu();
+
+    /* Le fond peint et le texte peint, jamais une largeur recalculée d'après le
+       nom : c'est l'écart entre les deux qu'on mesure. Le premier rect du
+       groupe est le fond ; le second est la zone de prise. */
+    const bloc = id => {
+      const g = [...document.querySelectorAll('#canvas g[data-label-for]')]
+        .find(x => x.getAttribute('data-label-for') === id);
+      if (!g) throw new Error('étiquette non peinte : ' + id);
+      const fond = g.querySelector('rect:not(.node-label-hit)');
+      if (!fond) throw new Error('pas de fond derrière : ' + id);
+      const f = fond.getBoundingClientRect();
+      const t = g.querySelector('text').getBoundingClientRect();
+      const lignes = [...g.querySelectorAll('tspan')].map(ts => ({
+        texte: ts.textContent, largeur: ts.getBoundingClientRect().width
+      }));
+      return { fond: f.width, texte: t.width,
+               margeG: t.left - f.left, margeD: f.right - t.right, lignes };
+    };
+    const a = bloc(court.id);
+    const b = bloc(long.id);
+    await versEdition();
+    return { a, b };
+  `);
+  egal(r.a.lignes.map(l => l.texte), ["IAA"], "le nom court tient sur une ligne");
+  egal(r.b.lignes.map(l => l.texte), ["Importation de", "bovins finis"],
+    "le nom long se coupe à 18 signes");
+  // Marges symétriques et fines : le fond épouse le texte au lieu de flotter.
+  attendu(Math.abs(r.a.margeG - r.a.margeD) < 1.5 && r.a.margeG > 0 && r.a.margeG < 7,
+    `« IAA » : fond ${r.a.fond.toFixed(1)} pour un texte de ${r.a.texte.toFixed(1)} `
+    + `(marges ${r.a.margeG.toFixed(1)} / ${r.a.margeD.toFixed(1)})`);
+  attendu(Math.abs(r.b.margeG - r.b.margeD) < 1.5 && r.b.margeG > 0 && r.b.margeG < 7,
+    `nom long : marges ${r.b.margeG.toFixed(1)} / ${r.b.margeD.toFixed(1)}`);
+  // La largeur suit le texte : un nom court a un fond nettement plus étroit.
+  attendu(r.a.fond < r.b.fond * 0.6,
+    `le fond du nom court (${r.a.fond.toFixed(1)}) est bien plus étroit que celui du `
+    + `nom long (${r.b.fond.toFixed(1)})`);
+  // Et c'est la LIGNE la plus large qui fait la largeur, pas le nom entier.
+  const plusLarge = Math.max(...r.b.lignes.map(l => l.largeur));
+  attendu(Math.abs(r.b.fond - plusLarge - r.b.margeG - r.b.margeD) < 1.5,
+    `le fond (${r.b.fond.toFixed(1)}) fait la largeur de la ligne la plus large `
+    + `(${plusLarge.toFixed(1)}) plus ses marges`);
+});
+
+test("aperçu : le bandeau d'un titre de colonne fait la largeur du texte peint",
+    "complexe", async p => {
+  const r = await p(`
+    /* Deux intitulés de longueurs opposées, sur deux colonnes voisines : le
+       bandeau doit suivre chacun, au lieu de leur donner la même laize. */
+    const court = one('Féverolle');                       // colonne 2
+    const long = one('Tri, décorticage, conditionnement'); // colonne 3
+    await selectNode(court.id);
+    await setField('Intitulé de colonne', 'Amont');
+    await selectNode(long.id);
+    await setField('Intitulé de colonne', 'Transformation à la ferme');
+    await versApercu();
+
+    // Le bandeau peint et son texte peint, retrouvés par le repère de colonne.
+    const bandeau = colonne => {
+      const g = document.querySelector('#canvas g[data-header-for="' + colonne + '"]');
+      if (!g) throw new Error('bandeau non peint pour la colonne ' + colonne);
+      const f = g.querySelector('rect').getBoundingClientRect();
+      const t = g.querySelector('text').getBoundingClientRect();
+      return { titre: g.querySelector('text').textContent, fond: f.width, texte: t.width,
+               margeG: t.left - f.left, margeD: f.right - t.right };
+    };
+    /* La colonne du modèle est numérotée à partir de 1, la couche du dessin à
+       partir de 0 — et d3 tasse les couches vides : on lit le repère du bandeau
+       dont le texte est celui qu'on vient de poser, plutôt que de recalculer
+       cette correspondance ici. */
+    const layerDe = titre => {
+      const g = [...document.querySelectorAll('#canvas g[data-header-for]')]
+        .find(x => x.querySelector('text').textContent === titre);
+      if (!g) throw new Error('titre non peint : ' + titre);
+      return g.getAttribute('data-header-for');
+    };
+    const a = bandeau(layerDe('Amont'));
+    const b = bandeau(layerDe('Transformation à la ferme'));
+    await versEdition();
+    return { a, b };
+  `);
+  attendu(Math.abs(r.a.margeG - r.a.margeD) < 1.5 && r.a.margeG > 0 && r.a.margeG < 12,
+    `« Amont » : bandeau ${r.a.fond.toFixed(1)} pour un texte de ${r.a.texte.toFixed(1)} `
+    + `(marges ${r.a.margeG.toFixed(1)} / ${r.a.margeD.toFixed(1)})`);
+  attendu(Math.abs(r.b.margeG - r.b.margeD) < 1.5 && r.b.margeG > 0 && r.b.margeG < 12,
+    `titre long : marges ${r.b.margeG.toFixed(1)} / ${r.b.margeD.toFixed(1)}`);
+  attendu(r.a.fond < r.b.fond * 0.6,
+    `le bandeau du titre court (${r.a.fond.toFixed(1)}) est bien plus étroit que celui `
+    + `du titre long (${r.b.fond.toFixed(1)})`);
+});
+
+test("couloirs (aperçu) : la gouttière suit les glyphes, pas le nombre de signes",
+    "complexe", async p => {
+  const r = await p(`
+    const m = T.model();
+    m.nodes.forEach(n => { n.lane = n.column >= 4 ? 2 : 1; });
+    T.refresh();
+    await sleep(120);
+    const carte = [...document.querySelectorAll('#sidebar details')]
+      .find(d => /Couloirs/.test(d.querySelector('summary').textContent));
+    carte.open = true;
+    await sleep(60);
+    const saisir = (libelle, valeur) => {
+      const f = [...carte.querySelectorAll('.field')]
+        .find(x => x.textContent.trim().startsWith(libelle));
+      const i = f.querySelector('input');
+      i.focus(); i.value = valeur;
+      i.dispatchEvent(new Event('input', { bubbles: true }));
+      i.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    /* Deux jeux de noms de MÊME longueur en signes, mais pas en encre : une
+       largeur comptée en signes rendrait la même gouttière pour les deux. */
+    const essai = async (n1, n2) => {
+      saisir('Couloir 1', n1);
+      saisir('Couloir 2', n2);
+      await sleep(150);
+      await versApercu();
+      const noms = [...document.querySelectorAll('#canvas text')]
+        .filter(t => t.textContent === n1 || t.textContent === n2);
+      if (noms.length !== 2) throw new Error('noms de couloirs non peints : ' + noms.length);
+      const droite = Math.max(...noms.map(t => t.getBoundingClientRect().right));
+      const bordDessin = Math.min(...[...document.querySelectorAll('#canvas rect[data-id]')]
+        .map(rc => rc.getBoundingClientRect().left));
+      await versEdition();
+      return { droite, bordDessin, ecart: bordDessin - droite };
+    };
+    const large = await essai('MMMMMMMM', 'WWWWWWWW');
+    const etroit = await essai('llllllll', 'iiiiiiii');
+    return { large, etroit };
+  `);
+  // La gouttière se mesure : des glyphes larges la creusent davantage.
+  attendu(r.large.bordDessin > r.etroit.bordDessin + 20,
+    `huit « M » doivent réserver plus de place que huit « l » `
+    + `(${r.large.bordDessin.toFixed(1)} contre ${r.etroit.bordDessin.toFixed(1)})`);
+  // Et dans les deux cas le dessin commence juste après le nom : même respiration.
+  attendu(Math.abs(r.large.ecart - r.etroit.ecart) < 3,
+    `l'écart entre le nom et le dessin doit être le même `
+    + `(${r.large.ecart.toFixed(1)} contre ${r.etroit.ecart.toFixed(1)})`);
+  attendu(r.etroit.ecart > 0 && r.etroit.ecart < 20,
+    `le nom ne doit ni mordre sur le dessin ni le repousser loin (${r.etroit.ecart.toFixed(1)})`);
 });
 
 /* -------------------------------- exécution ------------------------------ */
