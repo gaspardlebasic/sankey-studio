@@ -1716,7 +1716,16 @@ function toCanvas(e: MouseEvent): { x: number; y: number } {
 
 /* --------------------------- panneau latéral ----------------------- */
 
+/**
+ * Reconstruit le panneau en entier — c'est ce que font tous les gestionnaires
+ * de réglage. Vider `#sidebar` remet son défilement à zéro : la carte qu'on
+ * était en train de régler remontait hors champ à chaque clic. La position est
+ * donc relevée avant, et reposée après : le contenu a la même hauteur, il
+ * retombe exactement où il était. Le navigateur borne lui-même la valeur si le
+ * panneau a raccourci entre-temps.
+ */
 function buildSidebar(): void {
+    const defilement = sidebar.scrollTop;
     sidebar.innerHTML = "";
 
     const ap = buildAlertePanel();
@@ -1833,6 +1842,8 @@ function buildSidebar(): void {
 
     // Section apparence globale
     sidebar.appendChild(buildAppearance());
+
+    sidebar.scrollTop = defilement;
 }
 
 function buildFilierePanel(): HTMLElement | null {
@@ -1905,6 +1916,9 @@ function signalerRemplissage(r: Remplissage | undefined): void {
     if (a && a.formule === r.formule && a.liens === r.liens) return;
     alerteRemplissage = r;
     buildSidebar();
+    // La seule reconstruction qui doit défaire le défilement : l'alerte se pose
+    // en haut du panneau, la garder hors champ reviendrait à ne pas l'afficher.
+    sidebar.scrollTop = 0;
 }
 
 function buildAlertePanel(): HTMLElement | null {

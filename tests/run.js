@@ -1009,6 +1009,27 @@ test("panneau : la carte « Nœuds » réunit la boîte et son étiquette", "com
   });
 });
 
+test("panneau : régler une option ne renvoie pas le panneau en haut", "complexe", async p => {
+  // Chaque réglage reconstruit le panneau ; vider #sidebar remet son
+  // défilement à zéro. La carte réglée remontait alors hors champ à chaque clic.
+  const r = await p(`
+    const sb = document.querySelector('#sidebar');
+    // Ouvrir une carte du bas donne de quoi défiler, et de quoi cliquer en bas.
+    await carteDuPanneau('Produits / commodités');
+    sb.scrollTop = sb.scrollHeight;
+    await sleep(60);
+    const avant = sb.scrollTop;
+    await cocher('Produits / commodités', 'Contour');
+    return { avant, apres: sb.scrollTop, debordement: sb.scrollHeight - sb.clientHeight };
+  `);
+  attendu(r.debordement > 40,
+          "le panneau doit déborder pour que ce test ait un sens (débordement : "
+          + r.debordement + " px)");
+  attendu(r.avant > 0, "le panneau doit être défilé avant le réglage");
+  attendu(Math.abs(r.apres - r.avant) <= 2,
+          "le panneau a sauté : " + r.avant + " px avant le réglage, " + r.apres + " px après");
+});
+
 test("types : sans réglage propre, la mise en page ne bouge pas d'un pixel", "complexe", async p => {
   const r = await p(`
     const releve = () => rectsApercu()

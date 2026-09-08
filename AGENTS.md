@@ -22,6 +22,32 @@ npm run excel:cache  # vide le cache d'Excel pour Mac après une publication
 Avant de proposer un changement : `npx tsc --noEmit -p tsconfig.json`, puis `npm test` et
 `npm run smoke`.
 
+## Clore une tâche : commiter et pousser, sans le demander
+
+**À la fin de chaque tâche, commite et pousse sur `main` de ta propre initiative.** Ne
+t'arrête pas pour demander l'autorisation : c'est la règle du dépôt, elle vaut accord une
+fois pour toutes.
+
+L'ordre est toujours le même :
+
+```bash
+npx tsc --noEmit -p tsconfig.json && npm test && npm run smoke   # tout doit être vert
+git commit
+git push                # pousser sur main publie le complément (.github/workflows/complement.yml)
+npm run excel:cache     # les pages HTML ne portent pas d'empreinte : Excel sert l'ancienne sinon
+```
+
+Deux réserves, et deux seulement :
+
+- **Rien ne part si une suite échoue.** Un travail inachevé se signale, il ne se pousse pas.
+- **Pousser publie.** `main` déclenche la mise en ligne du complément (DIFFUSION.md) : ce
+  qui est poussé est servi aux postes qui l'ont installé. Raison de plus pour que les
+  suites soient vertes — pas pour attendre un feu vert.
+
+Le message de commit suit l'usage du dépôt : une ligne en français, au présent, qui dit ce
+que le changement fait pour l'utilisatrice — « Le panneau des réglages ne saute plus »,
+pas « fix: preserve scrollTop ».
+
 ## Vérifier une fonctionnalité
 
 On ne peut pas cliquer dans le ruban d'Excel depuis un agent. Tout le reste s'éprouve, et
