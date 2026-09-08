@@ -168,6 +168,12 @@ export function defaultTypeStyle(): NodeTypeStyle {
     };
 }
 
+/** Dimensions du canevas d'export, en pixels. */
+export interface TailleExport {
+    width: number;
+    height: number;
+}
+
 export interface SankeyOptions {
     links: {
         defaultColor: string; // repli quand le nœud d'origine n'a pas de couleur
@@ -254,6 +260,18 @@ export interface SankeyOptions {
     chart: {
         marginTop: number;
         marginBottom: number;
+    };
+    /**
+     * Dimensions du canevas d'export, **une par combinaison de filières
+     * affichées**. Un diagramme de trois filières n'a pas la forme du même
+     * diagramme réduit à une seule : la taille qui lui va se règle une fois,
+     * puis revient d'elle-même quand on retrouve la même combinaison.
+     *
+     * Une combinaison absente de la table n'a pas de taille propre : l'export
+     * personnalisé prend alors celle de la fenêtre, comme il l'a toujours fait.
+     */
+    exportation: {
+        tailles: Record<string, TailleExport>;
     };
     /**
      * Couloirs horizontaux : bandes empilées dans lesquelles les nœuds se rangent
@@ -358,6 +376,9 @@ export function defaultOptions(): SankeyOptions {
         chart: {
             marginTop: 0,
             marginBottom: 0
+        },
+        exportation: {
+            tailles: {}
         },
         lanes: {
             gap: 28,

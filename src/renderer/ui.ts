@@ -1,7 +1,11 @@
 /**
- * Briques d'interface partagées : boîtes de dialogue modales et sélecteur de
- * couleurs en surcouche (grille type Word/Excel — une teinte par colonne,
- * les nuances en lignes).
+ * Briques d'interface partagées : surcouches ancrées sur un bouton — sélecteur
+ * de couleurs (grille type Word/Excel, une teinte par colonne et les nuances en
+ * lignes) et petit menu de choix (la taille d'un export, par exemple).
+ *
+ * Les deux partagent la même coquille (`ouvrirSurcouche`) : le voile qui ferme
+ * au clic dehors, Échap, le replacement au redimensionnement, et une seule
+ * surcouche ouverte à la fois.
  */
 
 /* --------------------------- couleurs de base --------------------------- */
@@ -114,125 +118,36 @@ export interface ColorPopoverOptions {
 
 let closeCurrentPopover: (() => void) | null = null;
 
-/** Ouvre la palette au-dessus de l'interface, ancrée sur le bouton cliqué. */
-export function openColorPopover(o: ColorPopoverOptions): void {
+/**
+ * Coquille commune à toutes les surcouches ancrées sur un bouton.
+ *
+ * Ce qui change d'une surcouche à l'autre, c'est ce qu'il y a dedans : `remplir`
+ * reçoit la boîte à garnir et de quoi la fermer. Tout le reste — voile, Échap,
+ * clic dehors, replacement, exclusion mutuelle — est le même partout, et le
+ * dupliquer laisserait deux fermetures diverger sans qu'on le voie.
+ *
+ * Le garnissage a lieu AVANT la mise en page : le placement se décide sur la
+ * taille réelle de la boîte, qu'une boîte vide ne donnerait pas.
+ */
+function ouvrirSurcouche(
+    anchor: Element,
+    classe: string,
+    placement: "sous" | "libre",
+    remplir: (pop: HTMLElement, fermer: () => void) => void
+): void {
     if (closeCurrentPopover) closeCurrentPopover();
-
-    let snapped = false;
-    const beforeChange = () => {
-        if (!snapped && o.onBeforeChange) o.onBeforeChange();
-        snapped = true;
-    };
 
     const back = document.createElement("div");
     back.className = "cp-backdrop";
     const pop = document.createElement("div");
-    pop.className = "cp-pop";
+    pop.className = classe;
     pop.setAttribute("role", "dialog");
 
-    const head = document.createElement("div");
-    head.className = "cp-head";
-    head.textContent = o.label;
-    pop.appendChild(head);
+    remplir(pop, () => done());
 
-    const swatches: HTMLButtonElement[] = [];
-    let current = normalizeHex(o.value) || "#000000";
-
-    const refresh = () => {
-        swatches.forEach(sw => sw.classList.toggle("selected", sw.dataset.hex === current));
-    };
-    const apply = (hex: string, close: boolean) => {
-        beforeChange();
-        current = hex.toLowerCase();
-        hexInput.value = current;
-        native.value = current;
-        o.onPick(current);
-        refresh();
-        if (close) done();
-    };
-    const mkSwatch = (hex: string, title: string): HTMLButtonElement => {
-        const sw = document.createElement("button");
-        sw.type = "button";
-        sw.className = "cp-swatch";
-        sw.dataset.hex = hex.toLowerCase();
-        sw.title = title;
-        sw.style.background = hex;
-        sw.addEventListener("click", () => apply(hex, true));
-        swatches.push(sw);
-        return sw;
-    };
-
-    // Une colonne par teinte, une ligne par nuance.
-    const grid = document.createElement("div");
-    grid.className = "cp-grid";
-    DESIGN_COLORS.forEach(hue => {
-        const col = document.createElement("div");
-        col.className = "cp-col";
-        shadesOf(hue).forEach((hex, i) => {
-            col.appendChild(mkSwatch(hex, `${hue.name} — ${SHADE_LABELS[i]}`));
-        });
-        grid.appendChild(col);
-    });
-    pop.appendChild(grid);
-
-    // Couleurs du document : ce sont celles qu'on veut réutiliser le plus souvent.
-    const utilisees = (o.usedColors || [])
-        .map(normalizeHex)
-        .filter((h): h is string => !!h);
-    const uniques = Array.from(new Set(utilisees));
-    if (uniques.length) {
-        const sousTitre = document.createElement("div");
-        sousTitre.className = "cp-sub";
-        sousTitre.textContent = "Couleurs utilisées dans le document";
-        pop.appendChild(sousTitre);
-        const ligne = document.createElement("div");
-        ligne.className = "cp-row cp-row-wrap";
-        uniques.forEach(hex => ligne.appendChild(mkSwatch(hex, hex + " — déjà utilisée")));
-        pop.appendChild(ligne);
-    }
-
-    const sub = document.createElement("div");
-    sub.className = "cp-sub";
-    sub.textContent = "Neutres";
-    pop.appendChild(sub);
-
-    const row = document.createElement("div");
-    row.className = "cp-row";
-    NEUTRALS.forEach(hex => row.appendChild(mkSwatch(hex, hex)));
-    pop.appendChild(row);
-
-    // Couleur libre + saisie hexadécimale
-    const foot = document.createElement("div");
-    foot.className = "cp-foot";
-    const native = document.createElement("input");
-    native.type = "color";
-    native.value = current;
-    native.title = "Couleur personnalisée";
-    native.addEventListener("input", () => apply(native.value, false));
-    const hexInput = document.createElement("input");
-    hexInput.type = "text";
-    hexInput.className = "cp-hex";
-    hexInput.value = current;
-    hexInput.spellcheck = false;
-    hexInput.addEventListener("input", () => {
-        const n = normalizeHex(hexInput.value);
-        if (n) { beforeChange(); current = n; native.value = n; o.onPick(n); refresh(); }
-    });
-    const close = document.createElement("button");
-    close.type = "button";
-    close.className = "cp-close";
-    close.textContent = "Fermer";
-    close.addEventListener("click", () => done());
-    foot.appendChild(native);
-    foot.appendChild(hexInput);
-    foot.appendChild(close);
-    pop.appendChild(foot);
-
-    refresh();
     back.appendChild(pop);
     document.body.appendChild(back);
-    const placer = () =>
-        (o.placement === "libre" ? placeLibre : place)(pop, o.anchor);
+    const placer = () => (placement === "libre" ? placeLibre : place)(pop, anchor);
     placer();
 
     function done(): void {
@@ -246,12 +161,173 @@ export function openColorPopover(o: ColorPopoverOptions): void {
         if (e.key === "Escape") { e.stopPropagation(); done(); }
     };
     // L'ancre du canevas est refaite à chaque rendu : sans elle, ne rien bouger
-    // plutôt que de renvoyer la palette dans un coin sur un rectangle vide.
-    const reposition = () => { if (o.anchor.isConnected) placer(); };
+    // plutôt que de renvoyer la surcouche dans un coin sur un rectangle vide.
+    const reposition = () => { if (anchor.isConnected) placer(); };
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("resize", reposition);
     back.addEventListener("mousedown", e => { if (e.target === back) done(); });
     closeCurrentPopover = done;
+}
+
+/** Une ligne d'un menu : son intitulé, une précision facultative, son action. */
+export interface MenuItem {
+    label: string;
+    /** Seconde ligne, en petit — les dimensions d'un export, par exemple. */
+    detail?: string;
+    onPick: () => void;
+}
+
+export interface MenuPopoverOptions {
+    anchor: Element;
+    /** Titre du menu (« Exporter en PNG »). */
+    label: string;
+    items: MenuItem[];
+    /** Comme pour la palette ; « libre » par défaut — un menu ne fait pas défiler. */
+    placement?: "sous" | "libre";
+}
+
+/**
+ * Petit menu ancré sur un bouton : une ligne par choix.
+ *
+ * Le menu se ferme AVANT d'exécuter le choix : une action longue (l'export
+ * rastérise un SVG hors écran) le laisserait sinon ouvert pendant tout ce
+ * temps, sans qu'on sache si le clic a été pris.
+ */
+export function openMenuPopover(o: MenuPopoverOptions): void {
+    ouvrirSurcouche(o.anchor, "mp-pop", o.placement === "libre" ? "libre" : "sous", (pop, fermer) => {
+        const head = document.createElement("div");
+        head.className = "cp-head";
+        head.textContent = o.label;
+        pop.appendChild(head);
+        o.items.forEach(it => {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "mp-item";
+            const t = document.createElement("span");
+            t.className = "mp-label";
+            t.textContent = it.label;
+            b.appendChild(t);
+            if (it.detail) {
+                const d = document.createElement("span");
+                d.className = "mp-detail";
+                d.textContent = it.detail;
+                b.appendChild(d);
+            }
+            b.addEventListener("click", () => { fermer(); it.onPick(); });
+            pop.appendChild(b);
+        });
+    });
+}
+
+/** Ouvre la palette au-dessus de l'interface, ancrée sur le bouton cliqué. */
+export function openColorPopover(o: ColorPopoverOptions): void {
+    ouvrirSurcouche(o.anchor, "cp-pop", o.placement === "libre" ? "libre" : "sous", (pop, done) => {
+        let snapped = false;
+        const beforeChange = () => {
+            if (!snapped && o.onBeforeChange) o.onBeforeChange();
+            snapped = true;
+        };
+
+        const head = document.createElement("div");
+        head.className = "cp-head";
+        head.textContent = o.label;
+        pop.appendChild(head);
+
+        const swatches: HTMLButtonElement[] = [];
+        let current = normalizeHex(o.value) || "#000000";
+
+        const refresh = () => {
+            swatches.forEach(sw => sw.classList.toggle("selected", sw.dataset.hex === current));
+        };
+        const apply = (hex: string, close: boolean) => {
+            beforeChange();
+            current = hex.toLowerCase();
+            hexInput.value = current;
+            native.value = current;
+            o.onPick(current);
+            refresh();
+            if (close) done();
+        };
+        const mkSwatch = (hex: string, title: string): HTMLButtonElement => {
+            const sw = document.createElement("button");
+            sw.type = "button";
+            sw.className = "cp-swatch";
+            sw.dataset.hex = hex.toLowerCase();
+            sw.title = title;
+            sw.style.background = hex;
+            sw.addEventListener("click", () => apply(hex, true));
+            swatches.push(sw);
+            return sw;
+        };
+
+        // Une colonne par teinte, une ligne par nuance.
+        const grid = document.createElement("div");
+        grid.className = "cp-grid";
+        DESIGN_COLORS.forEach(hue => {
+            const col = document.createElement("div");
+            col.className = "cp-col";
+            shadesOf(hue).forEach((hex, i) => {
+                col.appendChild(mkSwatch(hex, `${hue.name} — ${SHADE_LABELS[i]}`));
+            });
+            grid.appendChild(col);
+        });
+        pop.appendChild(grid);
+
+        // Couleurs du document : ce sont celles qu'on veut réutiliser le plus souvent.
+        const utilisees = (o.usedColors || [])
+            .map(normalizeHex)
+            .filter((h): h is string => !!h);
+        const uniques = Array.from(new Set(utilisees));
+        if (uniques.length) {
+            const sousTitre = document.createElement("div");
+            sousTitre.className = "cp-sub";
+            sousTitre.textContent = "Couleurs utilisées dans le document";
+            pop.appendChild(sousTitre);
+            const ligne = document.createElement("div");
+            ligne.className = "cp-row cp-row-wrap";
+            uniques.forEach(hex => ligne.appendChild(mkSwatch(hex, hex + " — déjà utilisée")));
+            pop.appendChild(ligne);
+        }
+
+        const sub = document.createElement("div");
+        sub.className = "cp-sub";
+        sub.textContent = "Neutres";
+        pop.appendChild(sub);
+
+        const row = document.createElement("div");
+        row.className = "cp-row";
+        NEUTRALS.forEach(hex => row.appendChild(mkSwatch(hex, hex)));
+        pop.appendChild(row);
+
+        // Couleur libre + saisie hexadécimale
+        const foot = document.createElement("div");
+        foot.className = "cp-foot";
+        const native = document.createElement("input");
+        native.type = "color";
+        native.value = current;
+        native.title = "Couleur personnalisée";
+        native.addEventListener("input", () => apply(native.value, false));
+        const hexInput = document.createElement("input");
+        hexInput.type = "text";
+        hexInput.className = "cp-hex";
+        hexInput.value = current;
+        hexInput.spellcheck = false;
+        hexInput.addEventListener("input", () => {
+            const n = normalizeHex(hexInput.value);
+            if (n) { beforeChange(); current = n; native.value = n; o.onPick(n); refresh(); }
+        });
+        const close = document.createElement("button");
+        close.type = "button";
+        close.className = "cp-close";
+        close.textContent = "Fermer";
+        close.addEventListener("click", () => done());
+        foot.appendChild(native);
+        foot.appendChild(hexInput);
+        foot.appendChild(close);
+        pop.appendChild(foot);
+
+        refresh();
+    });
 }
 
 /**

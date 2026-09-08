@@ -467,4 +467,74 @@ const desc = l => {
     const s = byId(l.source), t = byId(l.target);
     return (s ? s.name : '?') + ' -> ' + (t ? t.name : '?');
 };
+
+/* ------------------------------- export ------------------------------- */
+
+/**
+ * Intercepte le fichier que l'export remet au navigateur, au lieu de le laisser
+ * partir en téléchargement — Electron ouvrirait une boîte d'enregistrement et
+ * le test resterait planté dessus.
+ *
+ * On saisit le blob lui-même : c'est le SEUL endroit où l'on voit ce qui est
+ * réellement exporté. Mesurer la taille sur le modèle reproduirait la formule
+ * de l'app, et un écart entre le choix et le fichier passerait inaperçu.
+ */
+const capterExport = () => {
+    const urlOrigine = URL.createObjectURL;
+    const clicOrigine = HTMLAnchorElement.prototype.click;
+    const fichiers = [];
+    let dernier = null;
+    URL.createObjectURL = blob => { dernier = blob; return 'blob:essai'; };
+    HTMLAnchorElement.prototype.click = function () {
+        fichiers.push({ nom: this.download, blob: dernier });
+    };
+    return {
+        fichiers,
+        rendre: () => {
+            URL.createObjectURL = urlOrigine;
+            HTMLAnchorElement.prototype.click = clicOrigine;
+        }
+    };
+};
+
+/** Dimensions annoncées par le SVG exporté, telles qu'elles y sont écrites. */
+const tailleDuSvgExporte = async blob => {
+    const texte = await blob.text();
+    const w = texte.match(/width="([0-9.]+)"/);
+    const h = texte.match(/height="([0-9.]+)"/);
+    return { width: w ? Number(w[1]) : null, height: h ? Number(h[1]) : null };
+};
+
+/** Ouvre le menu d'un bouton d'export (« PNG » ou « SVG ») et rend ses lignes. */
+const ouvrirMenuExport = async format => {
+    const b = [...document.querySelectorAll('#toolbar button.export-btn')]
+        .find(x => x.textContent.trim() === format);
+    if (!b) throw new Error('bouton export introuvable : ' + format);
+    b.click();
+    await sleep(100);
+    return [...document.querySelectorAll('.mp-pop .mp-item')].map(it => ({
+        label: it.querySelector('.mp-label').textContent.trim(),
+        detail: it.querySelector('.mp-detail') ? it.querySelector('.mp-detail').textContent.trim() : ''
+    }));
+};
+
+/** Clique une ligne du menu ouvert, et laisse l'export aboutir. */
+const choisirDansMenu = async label => {
+    const it = [...document.querySelectorAll('.mp-pop .mp-item')]
+        .find(x => x.querySelector('.mp-label').textContent.trim() === label);
+    if (!it) throw new Error('ligne de menu introuvable : ' + label);
+    it.click();
+    await sleep(500);
+};
+
+/** Coche ou décoche une filière du panneau « Filières affichées ». */
+const basculerFiliere = async nom => {
+    const s = [...document.querySelectorAll('#sidebar .panel')]
+        .find(x => x.querySelector('h3') && x.querySelector('h3').textContent.trim() === 'Filières affichées');
+    if (!s) throw new Error('panneau des filières absent');
+    const f = [...s.querySelectorAll('.field.check')].find(x => x.textContent.trim() === nom);
+    if (!f) throw new Error('filière introuvable : ' + nom);
+    f.querySelector('input').click();
+    await sleep(200);
+};
 `;

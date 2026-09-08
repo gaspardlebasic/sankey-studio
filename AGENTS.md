@@ -274,7 +274,11 @@ Mesures de la phase 0 dans `RESULTATS-PHASE-0.md`, fonctionnement dans « La coq
     phase 6 (H · poids et délai des messages du tunnel, I · polices dans la webview).
     `sonde-fenetre.html` est la fenêtre qu'ouvre H — elle n'utilise pas `protocole.ts`, dont les
     délais de garde masqueraient justement ce qu'on mesure.
-  - `src/renderer/ui.ts` — sélecteur de couleurs en surcouche (grille teintes × nuances).
+  - `src/renderer/ui.ts` — surcouches ancrées sur un bouton : sélecteur de couleurs (grille
+    teintes × nuances) et menu de choix (`openMenuPopover`, employé par les exports). Les deux
+    passent par la même coquille `ouvrirSurcouche` — voile, Échap, clic dehors, replacement,
+    une seule ouverte à la fois : dupliquer ça laisserait deux fermetures diverger sans qu'on
+    le voie.
   - `tests/pont-essai.js` — `window.desktop` **pour les bancs Electron**, aux mêmes capacités
     que le volet. Ce n'est pas une coquille du produit : c'est un décor de test.
 
@@ -656,13 +660,40 @@ un poste, c'est `npm run addin:install -- --enligne`.
   dans le classeur, rien d'autre : le diagramme, lui, vit déjà dans les tableaux. Ni « Enregistrer
   sous… » ni « Ouvrir » : il n'y a pas de fichier projet. Ni diagramme d'exemple : un modèle qui
   ne viendrait pas du classeur finirait par l'écraser.
+- **Export : la taille se demande, elle ne se devine pas.** Les boutons PNG et SVG n'exportent
+  plus au clic — ils ouvrent un menu (`ouvrirMenuExport`, `openMenuPopover` dans `ui.ts`) à deux
+  lignes : **« Taille de la fenêtre »** (ce que l'export a toujours produit, minima 1280 × 720)
+  et **« Dimensions personnalisées »**. Les deux annoncent leurs dimensions **en chiffres** :
+  sans elles, « personnalisées » ne dirait ni si quelque chose a été réglé, ni quoi.
+  - Les dimensions personnalisées se règlent dans la carte **« Cadre du graphique »** du
+    panneau, sous l'intertitre « Taille du canevas », et sont
+    gardées **par combinaison de filières AFFICHÉES** (`options.exportation.tailles`, donc dans
+    l'apparence du classeur). Un diagramme de trois filières n'a pas la forme du même diagramme
+    réduit à une seule : la taille qui lui va se règle une fois et revient d'elle-même.
+  - La clé de la combinaison (`cleFilieresAffichees`) est la liste des filières visibles,
+    **triée** — masquer A puis B doit retrouver le réglage fait en masquant B puis A — et
+    **sérialisée en JSON** : un nom de filière peut contenir n'importe quel caractère, un
+    séparateur choisi à la main finirait par s'y trouver et deux combinaisons porteraient la
+    même clé.
+  - Cocher une filière **reconstruit le panneau** : sans ça la carte montrerait
+    encore les dimensions de la combinaison précédente. Une mutation le vérifie.
+  - Sans réglage, la carte et le menu partent de la **taille de la fenêtre** : le point de
+    départ est ce qu'on voit, et une combinaison n'hérite jamais du réglage d'une autre.
+  - Le PNG reste rastérisé au **double** (`EXPORT_ECHELLE_PNG`) ; les dimensions réglées sont
+    celles du canevas de dessin, pas celles du fichier PNG.
+  - Les tests mesurent le **fichier réellement produit** : `capterExport()` (tests/helpers.js)
+    intercepte `URL.createObjectURL` et le clic de l'ancre — sinon Electron ouvrirait une boîte
+    d'enregistrement et le test resterait dessus — puis on lit `width`/`height` dans le SVG.
+    Calculer la taille attendue depuis le modèle reproduirait la formule de l'app, et un écart
+    entre le choix et le fichier passerait inaperçu. Trois mutations vérifiées (clé de
+    combinaison constante, export qui ignore la taille demandée, panneau non reconstruit).
 - **Hauteur des nœuds variable** : en édition, le nom passe à la ligne (`wrapText`, 18 caractères,
   4 lignes max) et la boîte grandit — `nodeH(n)` fait autorité, il n'y a plus de pas vertical
   régulier. Toute mesure verticale passe par `nodeH()` et `rankAtY()`, jamais par `NODE_H`/`ROW_H`.
 - **Aperçu par filière** : `options.filieres.split` empile un Sankey par filière sous son nom
   (`renderSankeyGroups` dans engine.ts ; `drawSankey` dessine un diagramme dans un `<g>` fourni
   et **renvoie l'échelle obtenue** en pixels par unité de flux). Réglages dans la carte
-  « Marges du graphique » (marges haut/bas via `options.chart`). Les liens qui traversent deux
+  « Cadre du graphique » (marges haut/bas via `options.chart`). Les liens qui traversent deux
   filières n'appartiennent à aucun bloc et disparaissent dans ce mode.
 - **Échelle commune (`filieres.sameScale`)** : ne pas tenter de prédire l'échelle de d3-sankey
   analytiquement — la colonne contraignante n'est pas celle qu'on croit, et les marges internes
@@ -680,6 +711,38 @@ un poste, c'est `npm run addin:install -- --enligne`.
   `colorField` posent la classe `half`. `buildSidebar()` reconstruit tout à chaque changement
   d'option : `card()` mémorise l'état plié/déplié par titre (`cartesOuvertes`), sinon les sections
   se replient sous les doigts de l'utilisatrice.
+- **Ordre des cartes de réglages** : `buildAppearance()` ne construit plus rien lui-même, il
+  **appelle une fonction par carte**. Cette liste de sept lignes EST l'ordre du panneau, et le
+  réordonner tient en une ligne déplacée — avant, l'ordre se déduisait de trois cents lignes de
+  construction, et il était celui de l'écriture du code (on exportait en premier, on réglait les
+  nœuds en sixième). L'ordre retenu va de ce qu'on dessine à la page qui le porte :
+  **Nœuds → Produits → Industries → Liens → Colonnes → Couloirs → Empilement par filière →
+  Cadre du graphique**.
+  - **Colonnes avant Couloirs**, comme dans le panneau d'un nœud sélectionné (*Colonne*, puis
+    *Couloir*, puis *Ordre vertical*) : la colonne existe toujours, le couloir est facultatif.
+  - **Produits avant Industries**, l'ordre de `NODE_KINDS` et donc de la liste « Type ». Une
+    carte et une liste qui se contredisent, ça se remarque.
+  - **Ne pas imbriquer les cartes.** Toutes naissent repliées : le panneau est déjà une liste de
+    huit titres. Imbriquer « Produits » dans « Nœuds » coûterait un clic de plus sans économiser
+    une ligne à l'écran.
+  - **« Empilement par filière »** et non « Filières empilées » : le panneau porte déjà, plus
+    haut, « Filières affichées ». Deux intitulés qui commencent pareil, dans la même colonne, et
+    qui ne font pas la même chose, se confondent.
+  - **« Colonnes »** ne règle aujourd'hui que l'entête de colonne. Le titre court a été préféré
+    à « Titres de colonnes » pour la symétrie avec « Couloirs » ; s'il faut un jour un réglage
+    de largeur ou d'écart entre colonnes, c'est là qu'il ira.
+- **Deux fusions, une seule raison** : une carte par objet réglé, pas par groupe d'options.
+  - **« Valeurs des liens » vit dans la carte « Liens »**, sous un `subhead()`, comme
+    « Étiquettes des nœuds » vit dans « Nœuds ». L'épaisseur d'un ruban et le chiffre qui
+    l'annonce se règlent d'un même regard. L'intertitre garde le groupe **nommé** : c'est sous
+    ce nom qu'on le cherchait quand il faisait carte à part.
+  - **« Export » a disparu dans « Cadre du graphique »**, parce qu'elle ne portait *que* la
+    taille du canevas. Deux cartes obligeaient à l'aller-retour pour une seule question : quelle
+    place occupe le dessin. Marges et taille y sont séparées par un `subhead()`.
+  - Conséquence pour les tests : `carteDuPanneau()` cherche par **sous-chaîne du titre**. Un
+    test qui a besoin d'une carte « laissée fermée » comme témoin doit la **refermer
+    lui-même** — les cartes gardent leur état d'ouverture pendant toute la session, donc un
+    test précédent a pu ouvrir n'importe laquelle d'entre elles.
 - **Identifiants SVG uniques par diagramme** : en mode « par filière » plusieurs Sankey partagent
   le même SVG. `drawSankey` préfixe donc ses `id` de dégradés (`d<n>-grad<i>`) ; sans cela tous les
   `url(#grad0)` pointent vers le premier bloc et les couleurs partent en vrille. **Ne pas mettre la grille sur un `<details>`** : le contenu

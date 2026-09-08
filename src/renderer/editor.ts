@@ -4,12 +4,12 @@
 import {
     FlowModel, FlowNode, FlowLink, SankeyOptions, defaultOptions,
     NodeKind, NodeTypeStyle, NodeLabelPosition, NODE_KINDS, NODE_LABEL_POSITIONS,
-    kindOf, defaultTypeStyle, TextStyle, texteAffiche, partBio
+    kindOf, defaultTypeStyle, TextStyle, texteAffiche, partBio, TailleExport
 } from "./types";
 import {
     renderSankey, renderSankeyGroups, wrapText, policeDuType, positionDuType
 } from "./engine";
-import { openColorPopover, normalizeHex } from "./ui";
+import { openColorPopover, openMenuPopover, normalizeHex } from "./ui";
 
 const NODE_W = 132;
 const NODE_H = 38; // hauteur d'un nœud dont le nom tient sur une ligne
@@ -479,10 +479,12 @@ function buildToolbar(): void {
         toolbar.appendChild(resyncEl);
     }
 
-    const pngBtn = exportBtn("PNG", () => exportImage("png"));
+    // Les deux boutons ouvrent un menu plutôt que d'exporter tout de suite : la
+    // taille de l'image se décide au moment de l'export, pas avant.
+    const pngBtn = exportBtn("PNG", b => ouvrirMenuExport(b, "png"));
     pngBtn.title = "Exporter le Sankey en image PNG";
     toolbar.appendChild(pngBtn);
-    const svgBtn = exportBtn("SVG", () => exportImage("svg"));
+    const svgBtn = exportBtn("SVG", b => ouvrirMenuExport(b, "svg"));
     svgBtn.title = "Exporter le Sankey en SVG vectoriel";
     toolbar.appendChild(svgBtn);
 
@@ -1842,6 +1844,10 @@ function buildFilierePanel(): HTMLElement | null {
             if (v) hiddenFilieres.delete(f);
             else hiddenFilieres.add(f);
             render();
+            // Le panneau se refait : « Cadre du graphique » porte les dimensions de
+            // la combinaison de filières AFFICHÉES, qui vient de changer. Sans
+            // ça elle montrerait encore celles de la combinaison précédente.
+            buildSidebar();
             persist();
         }));
     });
@@ -2121,315 +2127,388 @@ function toggleBtn(
     return b;
 }
 
+/**
+ * Les cartes de réglages, dans l'ordre où l'on travaille : ce qu'on dessine
+ * (les nœuds, puis les liens), l'espace qui les range (colonnes, couloirs,
+ * filières empilées), et pour finir la page elle-même.
+ *
+ * Chaque carte est une fonction, et cette liste EST l'ordre du panneau : le
+ * réordonner tient en une ligne déplacée, au lieu de trois cents lignes de
+ * construction à faire glisser.
+ */
 function buildAppearance(): DocumentFragment {
     const frag = document.createDocumentFragment();
     const rr = () => { render(); persist(); };
 
-    // ---- Marges du graphique ----
-    {
-        const b = card("Marges du graphique", false);
-        const c = options.chart;
-        b.appendChild(numberField("Marge en haut", c.marginTop, v => { c.marginTop = v; rr(); }));
-        b.appendChild(numberField("Marge en bas", c.marginBottom, v => { c.marginBottom = v; rr(); }));
-        frag.appendChild(b.parentElement as HTMLElement);
-    }
-
-    // ---- Filières empilées ----
-    {
-        const b = card("Filières empilées", false);
-        const f = options.filieres;
-
-        b.appendChild(checkField("Un Sankey par filière", f.split, v => {
-            f.split = v;
-            rr();
-            buildSidebar();
-        }));
-        const note = document.createElement("p");
-        note.className = "hint";
-        note.textContent =
-            "Empile un diagramme par filière, chacun sous son nom. Les liens qui traversent "
-            + "deux filières n'apparaissent pas dans ce mode.";
-        b.appendChild(note);
-
-        b.appendChild(numberField("Marge entre les graphiques", f.gap, v => { f.gap = v; rr(); }));
-        b.appendChild(numberField("Espace sous le titre", f.titleSpace, v => {
-            f.titleSpace = v; rr();
-        }));
-        b.appendChild(checkField("Même échelle pour tous", f.sameScale, v => {
-            f.sameScale = v; rr();
-        }));
-        const note2 = document.createElement("p");
-        note2.className = "hint";
-        note2.textContent = f.sameScale
-            ? "Une même unité de flux occupe la même épaisseur dans tous les diagrammes : "
-              + "leurs hauteurs sont proportionnelles aux volumes."
-            : "Chaque diagramme remplit sa case : les épaisseurs ne sont pas comparables "
-              + "d'une filière à l'autre.";
-        b.appendChild(note2);
-
-        const sep2 = document.createElement("div");
-        sep2.className = "divider";
-        b.appendChild(sep2);
-
-        b.appendChild(checkField("Afficher le nom de la filière", f.showTitle, v => {
-            f.showTitle = v; rr(); buildSidebar();
-        }));
-        if (f.showTitle) {
-            b.appendChild(selectField("Alignement du nom", f.align,
-                [["gauche", "À gauche"], ["centre", "Centré"], ["droite", "À droite"]],
-                v => { f.align = v as "gauche" | "centre" | "droite"; rr(); }));
-            fontControls(b, f, rr);
-        }
-        frag.appendChild(b.parentElement as HTMLElement);
-    }
-
-    // ---- Couloirs ----
-    {
-        const b = card("Couloirs", false);
-        const C = options.lanes;
-        const lanes = couloirs();
-        const intro = document.createElement("p");
-        intro.className = "hint";
-        intro.textContent =
-            "Les couloirs sont des bandes horizontales : chaque nœud se range dans celui "
-            + "que porte son champ « Couloir ». De quoi isoler les flux entrants ou sortants "
-            + "du périmètre, par exemple.";
-        b.appendChild(intro);
-
-        if (lanes.length < 2) {
-            const p2 = document.createElement("p");
-            p2.className = "hint";
-            p2.textContent =
-                "Tous les nœuds sont dans le couloir 1 : la mise en page ne change pas. "
-                + "Donne le couloir 2 à un nœud pour créer une deuxième bande.";
-            b.appendChild(p2);
-        } else {
-            b.appendChild(numberField("Espace entre couloirs", C.gap, v => { C.gap = v; rr(); }));
-            b.appendChild(checkField("Afficher les noms", C.showTitles, v => {
-                C.showTitles = v; rr(); buildSidebar();
-            }));
-            if (C.showTitles) {
-                lanes.forEach(lane => {
-                    b.appendChild(textField(
-                        "Couloir " + lane,
-                        laneTitle(lane),
-                        v => { setLaneTitle(lane, v); rr(); }
-                    ));
-                });
-                fontControls(b, C, rr);
-            }
-        }
-        frag.appendChild(b.parentElement as HTMLElement);
-    }
-
-    // ---- Titres de colonnes ----
-    {
-        const b = card("Titres de colonnes", false);
-        const h = options.columnHeaders;
-        b.appendChild(checkField("Afficher", h.show, v => { h.show = v; rr(); }));
-        fontControls(b, h, rr);
-        b.appendChild(colorField("Couleur de fond", h.backgroundColor, v => { h.backgroundColor = v; rr(); }));
-        b.appendChild(numberField("Marge au-dessus", h.marginTop, v => { h.marginTop = v; rr(); }));
-        b.appendChild(numberField("Marge en dessous", h.marginBottom, v => { h.marginBottom = v; rr(); }));
-        frag.appendChild(b.parentElement as HTMLElement);
-    }
-
-    /* ---- Nœuds : la boîte ET son étiquette ----
-       Les deux faisaient deux cartes. Elles réglaient pourtant un seul objet —
-       on ne choisit pas la largeur d'un nœud sans regarder le nom qui va
-       dessus — et l'aller-retour entre les deux cartes coûtait à chaque essai.
-       Une seule carte, dans l'ordre où on la lit : la boîte, puis le nom. */
-    {
-        const b = card("Nœuds", false);
-        b.appendChild(colorField("Couleur par défaut", options.nodes.nodeColor,
-            v => { options.nodes.nodeColor = v; rr(); }));
-        b.appendChild(numberField("Largeur des nœuds", options.nodes.nodeWidth,
-            v => { options.nodes.nodeWidth = v; rr(); }));
-        b.appendChild(rangeField("Espacement vertical", options.nodes.nodePadding, 0, 60,
-            v => { options.nodes.nodePadding = v; rr(); }));
-
-        const nl = options.nodeLabels;
-        b.appendChild(divider());
-        b.appendChild(checkField("Afficher l'étiquette", nl.show, v => { nl.show = v; rr(); }));
-        b.appendChild(selectField("Position", nl.position,
-            NODE_LABEL_POSITIONS as [string, string][],
-            v => { nl.position = v as NodeLabelPosition; rr(); }));
-        if (nl.position === "centre") {
-            b.appendChild(hint(
-                "L'étiquette se pose sur la boîte du nœud ; aux colonnes de bord elle "
-                + "se cale sur le côté tourné vers l'intérieur pour ne pas sortir du cadre."
-            ));
-        }
-        fontControls(b, nl, rr);
-        b.appendChild(checkField("Afficher la valeur", nl.showValue, v => { nl.showValue = v; rr(); }));
-        b.appendChild(divider());
-        b.appendChild(checkField("Arrière-plan", nl.showBackground, v => { nl.showBackground = v; rr(); }));
-        b.appendChild(colorField("Couleur d'arrière-plan", nl.backgroundColor,
-            v => { nl.backgroundColor = v; rr(); }));
-        b.appendChild(rangeField("Opacité de l'arrière-plan (%)", nl.backgroundOpacity, 0, 100,
-            v => { nl.backgroundOpacity = v; rr(); }));
-        b.appendChild(divider());
-        b.appendChild(checkField("Retour à la ligne", nl.wrap, v => { nl.wrap = v; rr(); }));
-        b.appendChild(numberField("Longueur max. par ligne", nl.maxChars, v => { nl.maxChars = v; rr(); }));
-
-        b.appendChild(divider());
-        b.appendChild(hint(
-            "Produits et industries peuvent avoir leur propre largeur, leur propre police, "
-            + "leur propre position d'étiquette, leur propre contour et leur propre "
-            + "mosaïque : voir les deux cartes qui suivent."
-        ));
-        frag.appendChild(b.parentElement as HTMLElement);
-    }
-
-    /* ---- Une carte par type de nœud ----
-       Une seule carte porterait deux fois les mêmes intitulés (« Largeur »,
-       « Contour »…), impossibles à distinguer — pour l'utilisatrice comme pour
-       les tests. Chaque type a donc sa carte, repliable indépendamment. */
-    NODE_KINDS.forEach(([kind]) => {
-        const t = options.nodeTypes[kind];
-        const b = card(TITRES_TYPES[kind], false);
-        b.appendChild(hint(
-            kind === "produit"
-                ? "Les commodités qui circulent. Une largeur nulle les réduit à un trait : "
-                  + "seuls leur nom et les rubans restent visibles."
-                : "Les étapes de transformation ou de commercialisation qui font circuler "
-                  + "les produits. C'est souvent à elles qu'on donne une boîte large."
-        ));
-        b.appendChild(hint(
-            "Tant qu'une case n'est pas cochée, ce type suit les options générales "
-            + "de la carte « Nœuds » ; la cocher reprend la valeur en cours."
-        ));
-
-        b.appendChild(checkField("Largeur propre à ce type", t.width !== null, v => {
-            t.width = v ? options.nodes.nodeWidth : null;
-            rr();
-            buildSidebar();
-        }));
-        if (t.width !== null) {
-            b.appendChild(numberField("Largeur", t.width, v => {
-                t.width = Math.max(0, v); rr();
-            }));
-            if (t.width === 0) {
-                b.appendChild(hint("Largeur nulle : le nœud disparaît, seul son nom reste."));
-            }
-        }
-
-        b.appendChild(divider());
-        b.appendChild(checkField("Police propre à ce type", t.font !== null, v => {
-            // On part de la police EFFECTIVE du type : cocher la case ne change
-            // rien à l'écran, elle ne fait qu'ouvrir les réglages.
-            t.font = v ? policeDuType(options, kind) : null;
-            rr();
-            buildSidebar();
-        }));
-        if (t.font) fontControls(b, t.font, rr);
-
-        /* Position de l'étiquette : un type peut décoller ses noms des boîtes
-           (« En dessous ») pendant que l'autre les garde dessus (« Centré »). */
-        b.appendChild(divider());
-        b.appendChild(checkField("Position d'étiquette propre à ce type", t.position !== null, v => {
-            // On part de la position EFFECTIVE : cocher n'change rien à l'écran.
-            t.position = v ? positionDuType(options, kind) : null;
-            rr();
-            buildSidebar();
-        }));
-        if (t.position !== null) {
-            b.appendChild(selectField("Position de l'étiquette", t.position,
-                NODE_LABEL_POSITIONS as [string, string][],
-                v => { t.position = v as NodeLabelPosition; rr(); }));
-        }
-
-        /* Contour : un liseré qui entoure le nœud sans le toucher. */
-        b.appendChild(divider());
-        const o = t.outline;
-        b.appendChild(checkField("Contour", o.show, v => { o.show = v; rr(); buildSidebar(); }));
-        if (o.show) {
-            b.appendChild(numberField("Écart au nœud", o.distance,
-                v => { o.distance = Math.max(0, v); rr(); }));
-            b.appendChild(numberField("Épaisseur du contour", o.width,
-                v => { o.width = Math.max(0, v); rr(); }));
-            b.appendChild(numberField("Arrondi", o.radius,
-                v => { o.radius = Math.max(0, v); rr(); }));
-            b.appendChild(selectField("Couleur du contour", o.mode,
-                [["fonce", "Celle du nœud, assombrie"], ["noir", "Noir transparent"]],
-                v => { o.mode = v as "fonce" | "noir"; rr(); buildSidebar(); }));
-            b.appendChild(rangeField(
-                o.mode === "noir" ? "Opacité du contour (%)" : "Assombrissement (%)",
-                o.intensity, 0, 100, v => { o.intensity = v; rr(); }
-            ));
-        }
-
-        /* Mosaïque : le nœud garde sa couleur, mais la porte en damier. */
-        b.appendChild(divider());
-        const mo = t.mosaique;
-        b.appendChild(checkField("Mosaïque", mo.show, v => {
-            mo.show = v; rr(); buildSidebar();
-        }));
-        if (mo.show) {
-            b.appendChild(hint(
-                "Un carré sur deux garde la couleur du nœud, l'autre est blanc. "
-                + "Visible dans l'aperçu et les exports ; la vue d'édition, elle, "
-                + "garde ses boîtes pleines."
-            ));
-            b.appendChild(numberField("Côté d'un carré", mo.taille,
-                v => { mo.taille = Math.max(1, v); rr(); }));
-        }
-        frag.appendChild(b.parentElement as HTMLElement);
-    });
-
-    // ---- Liens ----
-    {
-        const b = card("Liens", false);
-        b.appendChild(colorField("Couleur par défaut", options.links.defaultColor,
-            v => { options.links.defaultColor = v; rr(); }));
-        b.appendChild(checkField("Dégradé départ → arrivée", options.links.useGradient,
-            v => { options.links.useGradient = v; rr(); }));
-        b.appendChild(rangeField("Opacité (%)", options.links.opacity, 0, 100,
-            v => { options.links.opacity = v; rr(); }));
-        b.appendChild(selectField("Type de courbe", options.links.curveType,
-            [["courbe", "Courbe"], ["droite", "Ligne droite"], ["marches", "Marches"]],
-            v => { options.links.curveType = v as any; rr(); }));
-        b.appendChild(rangeField("Courbure", options.links.curvature, 0, 100,
-            v => { options.links.curvature = v; rr(); }));
-        b.appendChild(selectField("Colonnes sautées", options.links.traversee,
-            [["passage", "Réserver un passage"], ["direct", "Tracer tout droit"]],
-            v => { options.links.traversee = v as any; rr(); }));
-        if (options.links.traversee !== "direct") {
-            b.appendChild(hint(
-                "Un lien qui saute une colonne (de la 1 à la 3) s'y réserve une place : "
-                + "il se faufile entre les nœuds traversés au lieu de passer dessus."
-            ));
-        }
-        b.appendChild(checkField("Bordure", options.links.showBorder,
-            v => { options.links.showBorder = v; rr(); }));
-        b.appendChild(colorField("Couleur de bordure", options.links.borderColor,
-            v => { options.links.borderColor = v; rr(); }));
-        b.appendChild(numberField("Épaisseur de bordure", options.links.borderWidth,
-            v => { options.links.borderWidth = v; rr(); }));
-        b.appendChild(checkField("Part bio / durable", options.links.bio.show,
-            v => { options.links.bio.show = v; rr(); }));
-        b.appendChild(colorField("Couleur du bio / durable", options.links.bio.color,
-            v => { options.links.bio.color = v; rr(); }));
-        b.appendChild(hint(
-            "Un bandeau recouvre la part bio de chaque ruban, depuis son bord "
-            + "supérieur. Elle se saisit dans le classeur, colonne « Part bio / "
-            + "durable » du tableau des liens : 0,5 ou 50 pour la moitié du flux."
-        ));
-        frag.appendChild(b.parentElement as HTMLElement);
-    }
-
-    // ---- Valeurs des liens ----
-    {
-        const b = card("Valeurs des liens", false);
-        const v = options.linkValueLabels;
-        b.appendChild(checkField("Afficher", v.show, x => { v.show = x; rr(); }));
-        b.appendChild(textField("Unité (si aucune dans les données)", v.unitText,
-            x => { v.unitText = x; rr(); }));
-        fontControls(b, v, rr);
-        frag.appendChild(b.parentElement as HTMLElement);
-    }
+    frag.appendChild(carteNoeuds(rr));
+    NODE_KINDS.forEach(([kind]) => frag.appendChild(carteTypeDeNoeud(kind, rr)));
+    frag.appendChild(carteLiens(rr));
+    frag.appendChild(carteColonnes(rr));
+    frag.appendChild(carteCouloirs(rr));
+    frag.appendChild(carteFilieres(rr));
+    frag.appendChild(carteCadre());
 
     return frag;
+}
+
+/* ---- Nœuds : la boîte ET son étiquette ----
+   Les deux faisaient deux cartes. Elles réglaient pourtant un seul objet —
+   on ne choisit pas la largeur d'un nœud sans regarder le nom qui va
+   dessus — et l'aller-retour entre les deux cartes coûtait à chaque essai.
+   Une seule carte, dans l'ordre où on la lit : la boîte, puis le nom. */
+function carteNoeuds(rr: () => void): HTMLElement {
+    const b = card("Nœuds", false);
+    b.appendChild(colorField("Couleur par défaut", options.nodes.nodeColor,
+        v => { options.nodes.nodeColor = v; rr(); }));
+    b.appendChild(numberField("Largeur des nœuds", options.nodes.nodeWidth,
+        v => { options.nodes.nodeWidth = v; rr(); }));
+    b.appendChild(rangeField("Espacement vertical", options.nodes.nodePadding, 0, 60,
+        v => { options.nodes.nodePadding = v; rr(); }));
+
+    const nl = options.nodeLabels;
+    b.appendChild(divider());
+    b.appendChild(checkField("Afficher l'étiquette", nl.show, v => { nl.show = v; rr(); }));
+    b.appendChild(selectField("Position", nl.position,
+        NODE_LABEL_POSITIONS as [string, string][],
+        v => { nl.position = v as NodeLabelPosition; rr(); }));
+    if (nl.position === "centre") {
+        b.appendChild(hint(
+            "L'étiquette se pose sur la boîte du nœud ; aux colonnes de bord elle "
+            + "se cale sur le côté tourné vers l'intérieur pour ne pas sortir du cadre."
+        ));
+    }
+    fontControls(b, nl, rr);
+    b.appendChild(checkField("Afficher la valeur", nl.showValue, v => { nl.showValue = v; rr(); }));
+    b.appendChild(divider());
+    b.appendChild(checkField("Arrière-plan", nl.showBackground, v => { nl.showBackground = v; rr(); }));
+    b.appendChild(colorField("Couleur d'arrière-plan", nl.backgroundColor,
+        v => { nl.backgroundColor = v; rr(); }));
+    b.appendChild(rangeField("Opacité de l'arrière-plan (%)", nl.backgroundOpacity, 0, 100,
+        v => { nl.backgroundOpacity = v; rr(); }));
+    b.appendChild(divider());
+    b.appendChild(checkField("Retour à la ligne", nl.wrap, v => { nl.wrap = v; rr(); }));
+    b.appendChild(numberField("Longueur max. par ligne", nl.maxChars, v => { nl.maxChars = v; rr(); }));
+
+    b.appendChild(divider());
+    b.appendChild(hint(
+        "Produits et industries peuvent avoir leur propre largeur, leur propre police, "
+        + "leur propre position d'étiquette, leur propre contour et leur propre "
+        + "mosaïque : voir les deux cartes qui suivent."
+    ));
+    return b.parentElement as HTMLElement;
+}
+
+/* ---- Une carte par type de nœud ----
+   Une seule carte porterait deux fois les mêmes intitulés (« Largeur »,
+   « Contour »…), impossibles à distinguer — pour l'utilisatrice comme pour
+   les tests. Chaque type a donc sa carte, repliable indépendamment. */
+function carteTypeDeNoeud(kind: NodeKind, rr: () => void): HTMLElement {
+    const t = options.nodeTypes[kind];
+    const b = card(TITRES_TYPES[kind], false);
+    b.appendChild(hint(
+        kind === "produit"
+            ? "Les commodités qui circulent. Une largeur nulle les réduit à un trait : "
+              + "seuls leur nom et les rubans restent visibles."
+            : "Les étapes de transformation ou de commercialisation qui font circuler "
+              + "les produits. C'est souvent à elles qu'on donne une boîte large."
+    ));
+    b.appendChild(hint(
+        "Tant qu'une case n'est pas cochée, ce type suit les options générales "
+        + "de la carte « Nœuds » ; la cocher reprend la valeur en cours."
+    ));
+
+    b.appendChild(checkField("Largeur propre à ce type", t.width !== null, v => {
+        t.width = v ? options.nodes.nodeWidth : null;
+        rr();
+        buildSidebar();
+    }));
+    if (t.width !== null) {
+        b.appendChild(numberField("Largeur", t.width, v => {
+            t.width = Math.max(0, v); rr();
+        }));
+        if (t.width === 0) {
+            b.appendChild(hint("Largeur nulle : le nœud disparaît, seul son nom reste."));
+        }
+    }
+
+    b.appendChild(divider());
+    b.appendChild(checkField("Police propre à ce type", t.font !== null, v => {
+        // On part de la police EFFECTIVE du type : cocher la case ne change
+        // rien à l'écran, elle ne fait qu'ouvrir les réglages.
+        t.font = v ? policeDuType(options, kind) : null;
+        rr();
+        buildSidebar();
+    }));
+    if (t.font) fontControls(b, t.font, rr);
+
+    /* Position de l'étiquette : un type peut décoller ses noms des boîtes
+       (« En dessous ») pendant que l'autre les garde dessus (« Centré »). */
+    b.appendChild(divider());
+    b.appendChild(checkField("Position d'étiquette propre à ce type", t.position !== null, v => {
+        // On part de la position EFFECTIVE : cocher n'change rien à l'écran.
+        t.position = v ? positionDuType(options, kind) : null;
+        rr();
+        buildSidebar();
+    }));
+    if (t.position !== null) {
+        b.appendChild(selectField("Position de l'étiquette", t.position,
+            NODE_LABEL_POSITIONS as [string, string][],
+            v => { t.position = v as NodeLabelPosition; rr(); }));
+    }
+
+    /* Contour : un liseré qui entoure le nœud sans le toucher. */
+    b.appendChild(divider());
+    const o = t.outline;
+    b.appendChild(checkField("Contour", o.show, v => { o.show = v; rr(); buildSidebar(); }));
+    if (o.show) {
+        b.appendChild(numberField("Écart au nœud", o.distance,
+            v => { o.distance = Math.max(0, v); rr(); }));
+        b.appendChild(numberField("Épaisseur du contour", o.width,
+            v => { o.width = Math.max(0, v); rr(); }));
+        b.appendChild(numberField("Arrondi", o.radius,
+            v => { o.radius = Math.max(0, v); rr(); }));
+        b.appendChild(selectField("Couleur du contour", o.mode,
+            [["fonce", "Celle du nœud, assombrie"], ["noir", "Noir transparent"]],
+            v => { o.mode = v as "fonce" | "noir"; rr(); buildSidebar(); }));
+        b.appendChild(rangeField(
+            o.mode === "noir" ? "Opacité du contour (%)" : "Assombrissement (%)",
+            o.intensity, 0, 100, v => { o.intensity = v; rr(); }
+        ));
+    }
+
+    /* Mosaïque : le nœud garde sa couleur, mais la porte en damier. */
+    b.appendChild(divider());
+    const mo = t.mosaique;
+    b.appendChild(checkField("Mosaïque", mo.show, v => {
+        mo.show = v; rr(); buildSidebar();
+    }));
+    if (mo.show) {
+        b.appendChild(hint(
+            "Un carré sur deux garde la couleur du nœud, l'autre est blanc. "
+            + "Visible dans l'aperçu et les exports ; la vue d'édition, elle, "
+            + "garde ses boîtes pleines."
+        ));
+        b.appendChild(numberField("Côté d'un carré", mo.taille,
+            v => { mo.taille = Math.max(1, v); rr(); }));
+    }
+    return b.parentElement as HTMLElement;
+}
+
+/* ---- Liens : le ruban ET la valeur écrite dessus ----
+   Même raison que pour « Nœuds » : l'épaisseur d'un ruban et le chiffre qui
+   l'annonce se règlent d'un même regard. L'intertitre garde le groupe
+   nommé — c'est ainsi qu'on le cherchait quand il faisait carte à part. */
+function carteLiens(rr: () => void): HTMLElement {
+    const b = card("Liens", false);
+    b.appendChild(colorField("Couleur par défaut", options.links.defaultColor,
+        v => { options.links.defaultColor = v; rr(); }));
+    b.appendChild(checkField("Dégradé départ → arrivée", options.links.useGradient,
+        v => { options.links.useGradient = v; rr(); }));
+    b.appendChild(rangeField("Opacité (%)", options.links.opacity, 0, 100,
+        v => { options.links.opacity = v; rr(); }));
+    b.appendChild(selectField("Type de courbe", options.links.curveType,
+        [["courbe", "Courbe"], ["droite", "Ligne droite"], ["marches", "Marches"]],
+        v => { options.links.curveType = v as any; rr(); }));
+    b.appendChild(rangeField("Courbure", options.links.curvature, 0, 100,
+        v => { options.links.curvature = v; rr(); }));
+    b.appendChild(selectField("Colonnes sautées", options.links.traversee,
+        [["passage", "Réserver un passage"], ["direct", "Tracer tout droit"]],
+        v => { options.links.traversee = v as any; rr(); }));
+    if (options.links.traversee !== "direct") {
+        b.appendChild(hint(
+            "Un lien qui saute une colonne (de la 1 à la 3) s'y réserve une place : "
+            + "il se faufile entre les nœuds traversés au lieu de passer dessus."
+        ));
+    }
+    b.appendChild(checkField("Bordure", options.links.showBorder,
+        v => { options.links.showBorder = v; rr(); }));
+    b.appendChild(colorField("Couleur de bordure", options.links.borderColor,
+        v => { options.links.borderColor = v; rr(); }));
+    b.appendChild(numberField("Épaisseur de bordure", options.links.borderWidth,
+        v => { options.links.borderWidth = v; rr(); }));
+    b.appendChild(checkField("Part bio / durable", options.links.bio.show,
+        v => { options.links.bio.show = v; rr(); }));
+    b.appendChild(colorField("Couleur du bio / durable", options.links.bio.color,
+        v => { options.links.bio.color = v; rr(); }));
+    b.appendChild(hint(
+        "Un bandeau recouvre la part bio de chaque ruban, depuis son bord "
+        + "supérieur. Elle se saisit dans le classeur, colonne « Part bio / "
+        + "durable » du tableau des liens : 0,5 ou 50 pour la moitié du flux."
+    ));
+
+    b.appendChild(divider());
+    b.appendChild(subhead("Valeurs des liens"));
+    const vl = options.linkValueLabels;
+    b.appendChild(checkField("Afficher", vl.show, x => { vl.show = x; rr(); }));
+    b.appendChild(textField("Unité (si aucune dans les données)", vl.unitText,
+        x => { vl.unitText = x; rr(); }));
+    fontControls(b, vl, rr);
+    return b.parentElement as HTMLElement;
+}
+
+/* ---- Colonnes ----
+   La colonne est le premier rangement d'un nœud ; ce qui se règle ici, c'est
+   son entête. La carte se lit juste avant « Couloirs », l'autre coordonnée. */
+function carteColonnes(rr: () => void): HTMLElement {
+    const b = card("Colonnes", false);
+    const h = options.columnHeaders;
+    b.appendChild(checkField("Afficher", h.show, v => { h.show = v; rr(); }));
+    fontControls(b, h, rr);
+    b.appendChild(colorField("Couleur de fond", h.backgroundColor, v => { h.backgroundColor = v; rr(); }));
+    b.appendChild(numberField("Marge au-dessus", h.marginTop, v => { h.marginTop = v; rr(); }));
+    b.appendChild(numberField("Marge en dessous", h.marginBottom, v => { h.marginBottom = v; rr(); }));
+    return b.parentElement as HTMLElement;
+}
+
+/* ---- Couloirs ---- */
+function carteCouloirs(rr: () => void): HTMLElement {
+    const b = card("Couloirs", false);
+    const C = options.lanes;
+    const lanes = couloirs();
+    const intro = document.createElement("p");
+    intro.className = "hint";
+    intro.textContent =
+        "Les couloirs sont des bandes horizontales : chaque nœud se range dans celui "
+        + "que porte son champ « Couloir ». De quoi isoler les flux entrants ou sortants "
+        + "du périmètre, par exemple.";
+    b.appendChild(intro);
+
+    if (lanes.length < 2) {
+        const p2 = document.createElement("p");
+        p2.className = "hint";
+        p2.textContent =
+            "Tous les nœuds sont dans le couloir 1 : la mise en page ne change pas. "
+            + "Donne le couloir 2 à un nœud pour créer une deuxième bande.";
+        b.appendChild(p2);
+    } else {
+        b.appendChild(numberField("Espace entre couloirs", C.gap, v => { C.gap = v; rr(); }));
+        b.appendChild(checkField("Afficher les noms", C.showTitles, v => {
+            C.showTitles = v; rr(); buildSidebar();
+        }));
+        if (C.showTitles) {
+            lanes.forEach(lane => {
+                b.appendChild(textField(
+                    "Couloir " + lane,
+                    laneTitle(lane),
+                    v => { setLaneTitle(lane, v); rr(); }
+                ));
+            });
+            fontControls(b, C, rr);
+        }
+    }
+    return b.parentElement as HTMLElement;
+}
+
+/* ---- Empilement par filière ----
+   Le titre ne dit plus « Filières empilées » : le panneau porte déjà, plus
+   haut, « Filières affichées ». Deux intitulés qui commencent pareil et ne
+   font pas la même chose, dans la même colonne, se confondent. */
+function carteFilieres(rr: () => void): HTMLElement {
+    const b = card("Empilement par filière", false);
+    const f = options.filieres;
+
+    b.appendChild(checkField("Un Sankey par filière", f.split, v => {
+        f.split = v;
+        rr();
+        buildSidebar();
+    }));
+    const note = document.createElement("p");
+    note.className = "hint";
+    note.textContent =
+        "Empile un diagramme par filière, chacun sous son nom. Les liens qui traversent "
+        + "deux filières n'apparaissent pas dans ce mode.";
+    b.appendChild(note);
+
+    b.appendChild(numberField("Marge entre les graphiques", f.gap, v => { f.gap = v; rr(); }));
+    b.appendChild(numberField("Espace sous le titre", f.titleSpace, v => {
+        f.titleSpace = v; rr();
+    }));
+    b.appendChild(checkField("Même échelle pour tous", f.sameScale, v => {
+        f.sameScale = v; rr();
+    }));
+    const note2 = document.createElement("p");
+    note2.className = "hint";
+    note2.textContent = f.sameScale
+        ? "Une même unité de flux occupe la même épaisseur dans tous les diagrammes : "
+          + "leurs hauteurs sont proportionnelles aux volumes."
+        : "Chaque diagramme remplit sa case : les épaisseurs ne sont pas comparables "
+          + "d'une filière à l'autre.";
+    b.appendChild(note2);
+
+    const sep2 = document.createElement("div");
+    sep2.className = "divider";
+    b.appendChild(sep2);
+
+    b.appendChild(checkField("Afficher le nom de la filière", f.showTitle, v => {
+        f.showTitle = v; rr(); buildSidebar();
+    }));
+    if (f.showTitle) {
+        b.appendChild(selectField("Alignement du nom", f.align,
+            [["gauche", "À gauche"], ["centre", "Centré"], ["droite", "À droite"]],
+            v => { f.align = v as "gauche" | "centre" | "droite"; rr(); }));
+        fontControls(b, f, rr);
+    }
+    return b.parentElement as HTMLElement;
+}
+
+/**
+ * Carte « Cadre du graphique » : la forme de la page — ses marges, et les
+ * dimensions du canevas d'export, propres à la combinaison de filières
+ * affichées.
+ *
+ * Les deux vivaient dans deux cartes, dont l'une ne portait que la taille.
+ * Séparées, elles obligeaient à faire l'aller-retour pour une seule question :
+ * quelle place occupe le dessin.
+ *
+ * Aucun `render()` sur la taille — elle ne change rien à ce qui est peint à
+ * l'écran ; seul `persist()` la range dans le classeur. Et aucun
+ * `buildSidebar()` dans les gestionnaires de champ : le panneau reconstruit à
+ * chaque frappe ferait perdre le focus dès le premier chiffre. C'est pourquoi
+ * le lien de remise à zéro est là en permanence plutôt que d'apparaître avec le
+ * premier réglage.
+ */
+function carteCadre(): HTMLElement {
+    const b = card("Cadre du graphique", false);
+    const rr = () => { render(); persist(); };
+    const c = options.chart;
+    b.appendChild(numberField("Marge en haut", c.marginTop, v => { c.marginTop = v; rr(); }));
+    b.appendChild(numberField("Marge en bas", c.marginBottom, v => { c.marginBottom = v; rr(); }));
+
+    b.appendChild(divider());
+    b.appendChild(subhead("Taille du canevas"));
+    const t = taillePersonnalisee();
+
+    b.appendChild(hint(
+        "Dimensions du canevas choisies par « Dimensions personnalisées », dans le menu "
+        + "des boutons PNG et SVG. Le PNG est rastérisé au double pour rester net."
+    ));
+    b.appendChild(numberField("Largeur (px)", t.width, v => {
+        reglerTaillePersonnalisee("width", v);
+        persist();
+    }));
+    b.appendChild(numberField("Hauteur (px)", t.height, v => {
+        reglerTaillePersonnalisee("height", v);
+        persist();
+    }));
+    b.appendChild(hint(
+        "Ces dimensions valent pour les filières affichées en ce moment — "
+        + libelleFilieresAffichees() + ". Une autre combinaison retrouve les siennes."
+    ));
+    const reprendre = document.createElement("button");
+    reprendre.className = "linklike";
+    reprendre.textContent = "Reprendre la taille de la fenêtre";
+    reprendre.addEventListener("click", () => {
+        oublierTaillePersonnalisee();
+        buildSidebar();
+        persist();
+    });
+    // Dans une rangée, comme les liens du panneau des filières : seul, un bouton
+    // occupe toute la largeur de la grille et son libellé se retrouve centré.
+    const rangee = document.createElement("div");
+    rangee.className = "check-row";
+    rangee.appendChild(reprendre);
+    b.appendChild(rangee);
+    return b.parentElement as HTMLElement;
 }
 
 /** Crée une carte repliable ; renvoie le corps où empiler les contrôles. */
@@ -2500,10 +2579,15 @@ function resyncBtn(onClick: () => void): HTMLButtonElement {
     b.addEventListener("click", onClick);
     return b;
 }
-/** Bouton d'export : icône « flèche vers un plateau » + format. */
-function exportBtn(label: string, onClick: () => void): HTMLButtonElement {
+/**
+ * Bouton d'export : icône « flèche vers un plateau », format, et le chevron qui
+ * dit qu'un menu s'ouvre — le bouton n'exporte plus, il demande la taille.
+ * Le gestionnaire reçoit le bouton : c'est sur lui que le menu s'ancre.
+ */
+function exportBtn(label: string, onClick: (b: HTMLButtonElement) => void): HTMLButtonElement {
     const b = document.createElement("button");
     b.className = "export-btn";
+    b.setAttribute("aria-haspopup", "menu");
     const icon = document.createElementNS(SVGNS, "svg");
     icon.setAttribute("viewBox", "0 0 16 16");
     icon.setAttribute("width", "14");
@@ -2519,7 +2603,22 @@ function exportBtn(label: string, onClick: () => void): HTMLButtonElement {
     icon.appendChild(p);
     b.appendChild(icon);
     b.appendChild(document.createTextNode(label));
-    b.addEventListener("click", onClick);
+    const caret = document.createElementNS(SVGNS, "svg");
+    caret.setAttribute("viewBox", "0 0 10 10");
+    caret.setAttribute("width", "9");
+    caret.setAttribute("height", "9");
+    caret.setAttribute("class", "caret");
+    caret.setAttribute("aria-hidden", "true");
+    const cp = document.createElementNS(SVGNS, "path");
+    cp.setAttribute("d", "M1.5 3.5 5 7l3.5-3.5");
+    cp.setAttribute("fill", "none");
+    cp.setAttribute("stroke", "currentColor");
+    cp.setAttribute("stroke-width", "1.6");
+    cp.setAttribute("stroke-linecap", "round");
+    cp.setAttribute("stroke-linejoin", "round");
+    caret.appendChild(cp);
+    b.appendChild(caret);
+    b.addEventListener("click", () => onClick(b));
     return b;
 }
 function sep(): HTMLElement {
@@ -2760,6 +2859,7 @@ function applyProject(p: ProjectFile): void {
     normaliserTypesDeNoeuds();
     normaliserPolices();
     normaliserLiens();
+    normaliserExport();
     // Le compteur du fichier n'est jamais cru sur parole : on prend le plus grand
     // entre lui et le maximum réellement utilisé.
     idCounter = Math.max(p.idCounter || 0, guessCounter());
@@ -2788,6 +2888,31 @@ function normaliserLiens(): void {
     // le bandeau bio arrive sans `links.bio` du tout.
     L.bio = Object.assign({}, d.bio, L.bio || {});
 }
+/**
+ * Complète les dimensions d'export, pour la même raison qu'au-dessus : une
+ * apparence écrite avant ce réglage arrive sans `exportation` du tout.
+ *
+ * Les tailles relues sont **contrôlées une à une** : elles viennent d'un JSON
+ * du classeur, que rien n'empêche d'avoir été édité à la main ou écrit par une
+ * version plus ancienne. Une hauteur nulle rendrait un export vide, sans dire
+ * pourquoi ; on préfère l'ignorer et retomber sur la taille de la fenêtre.
+ */
+function normaliserExport(): void {
+    const relu = (options.exportation || {}).tailles;
+    const tailles: Record<string, TailleExport> = {};
+    if (relu && typeof relu === "object") {
+        Object.keys(relu).forEach(cle => {
+            const t = (relu as Record<string, Partial<TailleExport>>)[cle];
+            const w = Number(t && t.width);
+            const h = Number(t && t.height);
+            if (isFinite(w) && isFinite(h) && w > 0 && h > 0) {
+                tailles[cle] = { width: borneExport(w), height: borneExport(h) };
+            }
+        });
+    }
+    options.exportation = { tailles };
+}
+
 /**
  * Complète les réglages de police d'un projet écrit avant la graisse fine et
  * les capitales. `Object.assign` ne fusionne que le premier niveau : une carte
@@ -2928,6 +3053,7 @@ function appliquerApparence(json: string): void {
     normaliserTypesDeNoeuds();
     normaliserPolices();
     normaliserLiens();
+    normaliserExport();
     idCounter = Math.max(a.idCounter || 0, idCounter);
     hiddenFilieres = new Set(a.hiddenFilieres || []);
     // Les liens n'existent pas encore : ils viendront du classeur.
@@ -2984,10 +3110,122 @@ function planifierEnvoiExcel(): void {
 }
 /* ------------------------------ Export ----------------------------- */
 
-async function exportImage(format: "png" | "svg"): Promise<void> {
+/**
+ * Bornes d'une dimension d'export. En deçà du minimum le diagramme n'est plus
+ * lisible ; au-delà du maximum le canevas du PNG (rendu au double) dépasse ce
+ * qu'une webview accepte d'allouer, et l'export rendrait une image vide.
+ */
+const EXPORT_MIN = 100;
+const EXPORT_MAX = 8000;
+
+/** Le PNG est rastérisé au double des dimensions demandées, pour rester net. */
+const EXPORT_ECHELLE_PNG = 2;
+
+/** Dimension d'export ramenée à un entier tenable. */
+function borneExport(v: number): number {
+    if (!isFinite(v)) return EXPORT_MIN;
+    return Math.round(Math.max(EXPORT_MIN, Math.min(EXPORT_MAX, v)));
+}
+
+/** Les dimensions telles qu'on les annonce dans le menu et le panneau. */
+function libelleTaille(t: TailleExport): string {
+    return t.width + " × " + t.height + " px";
+}
+
+/**
+ * Taille de la fenêtre : ce que l'export a toujours produit. Les minima sont
+ * ceux d'avant le choix — un volet étroit ne doit pas rendre une image étroite.
+ */
+function tailleFenetre(): TailleExport {
     const wrap = canvas.parentElement as HTMLElement;
-    const w = Math.max(1280, Math.round(wrap.clientWidth));
-    const h = Math.max(720, Math.round(wrap.clientHeight));
+    return {
+        width: Math.max(1280, Math.round(wrap.clientWidth)),
+        height: Math.max(720, Math.round(wrap.clientHeight))
+    };
+}
+
+/**
+ * Clé de la combinaison de filières AFFICHÉES.
+ *
+ * Triée, donc indépendante de l'ordre dans lequel les cases ont été décochées :
+ * masquer A puis B doit retrouver la taille réglée en masquant B puis A. Et
+ * sérialisée en JSON, parce qu'un nom de filière peut contenir n'importe quel
+ * caractère — un séparateur choisi à la main finirait par s'y trouver, et deux
+ * combinaisons différentes porteraient alors la même clé.
+ *
+ * Les filières masquées qui n'existent plus dans le modèle ne comptent pas :
+ * la clé se construit de ce qui est visible, pas de ce qui est caché.
+ */
+function cleFilieresAffichees(): string {
+    const visibles = distinctFilieres().filter(f => !hiddenFilieres.has(f));
+    return JSON.stringify(visibles.slice().sort());
+}
+
+/** Ce que la carte « Cadre du graphique » annonce comme portée du réglage. */
+function libelleFilieresAffichees(): string {
+    const visibles = distinctFilieres().filter(f => !hiddenFilieres.has(f));
+    if (!visibles.length) return "aucune filière affichée";
+    return visibles.map(f => f === "" ? "(sans filière)" : f).join(", ");
+}
+
+/**
+ * Dimensions personnalisées de la combinaison de filières en cours.
+ *
+ * Tant qu'aucune n'a été réglée, ce sont celles de la fenêtre : le point de
+ * départ du réglage est ce qu'on voit, pas un chiffre arbitraire.
+ */
+function taillePersonnalisee(): TailleExport {
+    const t = options.exportation.tailles[cleFilieresAffichees()];
+    return t ? { width: t.width, height: t.height } : tailleFenetre();
+}
+
+/** Une taille personnalisée est-elle réglée pour la combinaison en cours ? */
+function aUneTaillePersonnalisee(): boolean {
+    return !!options.exportation.tailles[cleFilieresAffichees()];
+}
+
+function reglerTaillePersonnalisee(champ: "width" | "height", v: number): void {
+    const t = taillePersonnalisee();
+    t[champ] = borneExport(v);
+    options.exportation.tailles[cleFilieresAffichees()] = t;
+}
+
+function oublierTaillePersonnalisee(): void {
+    delete options.exportation.tailles[cleFilieresAffichees()];
+}
+
+/**
+ * Le choix de la taille, sous le bouton d'export.
+ *
+ * Les deux tailles sont annoncées en chiffres : sans elles, « dimensions
+ * personnalisées » ne dirait pas si quelque chose a été réglé, ni quoi.
+ */
+function ouvrirMenuExport(anchor: HTMLElement, format: "png" | "svg"): void {
+    const fenetre = tailleFenetre();
+    const perso = taillePersonnalisee();
+    openMenuPopover({
+        anchor,
+        label: "Exporter en " + format.toUpperCase(),
+        items: [
+            {
+                label: "Taille de la fenêtre",
+                detail: libelleTaille(fenetre),
+                onPick: () => { exportImage(format, fenetre); }
+            },
+            {
+                label: "Dimensions personnalisées",
+                detail: aUneTaillePersonnalisee()
+                    ? libelleTaille(perso)
+                    : libelleTaille(perso) + " — à régler dans « Cadre du graphique »",
+                onPick: () => { exportImage(format, perso); }
+            }
+        ]
+    });
+}
+
+async function exportImage(format: "png" | "svg", taille: TailleExport): Promise<void> {
+    const w = borneExport(taille.width);
+    const h = borneExport(taille.height);
 
     // Rend le Sankey (vue filtrée) dans un SVG hors écran.
     const tmp = document.createElementNS(SVGNS, "svg") as SVGSVGElement;
@@ -3002,8 +3240,8 @@ async function exportImage(format: "png" | "svg"): Promise<void> {
         return;
     }
 
-    // PNG : SVG -> Image -> canvas (x2 pour la netteté)
-    const scale = 2;
+    // PNG : SVG -> Image -> canvas (suréchantillonné pour la netteté)
+    const scale = EXPORT_ECHELLE_PNG;
     const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgString);
     const img = new Image();
     await new Promise<void>((res, rej) => {

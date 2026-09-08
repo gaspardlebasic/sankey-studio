@@ -898,7 +898,7 @@ test("filières empilées : la même colonne tombe à la même abscisse", "compl
     await sleep(120);
 
     const carte = [...document.querySelectorAll('#sidebar details')]
-      .find(d => /Filières empilées/.test(d.querySelector('summary').textContent));
+      .find(d => /Empilement par filière/.test(d.querySelector('summary').textContent));
     carte.open = true;
     await sleep(60);
     [...carte.querySelectorAll('.field.check')]
@@ -1309,7 +1309,7 @@ test("majuscules : la bascule [AA] met en capitales l'affichage, pas les donnée
     const avant = { titre: titreApercu(), etiquette: etiquetteApercu() };
     await versEdition();
 
-    await basculer('Titres de colonnes', 'Majuscules');
+    await basculer('Colonnes', 'Majuscules');
     await basculer('Nœuds', 'Majuscules');
     // La vue d'édition suit elle aussi la casse des étiquettes.
     const edition = { avant: editionAvant, apres: etiquetteEdition() };
@@ -1357,7 +1357,7 @@ test("police : un projet d'avant la graisse revient tel qu'il a été écrit", "
                              italique: getComputedStyle(etiquette).fontStyle,
                              texte: etiquette.textContent };
     await versEdition();
-    const c = await carteDuPanneau('Titres de colonnes');
+    const c = await carteDuPanneau('Colonnes');
     const graisse = [...c.querySelectorAll('.field')]
       .find(x => x.querySelector('span') && x.querySelector('span').textContent.trim() === 'Graisse')
       .querySelector('select').value;
@@ -1408,16 +1408,16 @@ test("majuscules : chaque type de nœud a la sienne", "complexe", async p => {
 test("police : la bascule [G] et la liste « Graisse » disent la même chose", "complexe", async p => {
   const r = await p(`
     const etat = async () => {
-      const c = await carteDuPanneau('Titres de colonnes');
+      const c = await carteDuPanneau('Colonnes');
       const b = [...c.querySelectorAll('.style-toggle')].find(x => x.title === 'Gras');
       const f = [...c.querySelectorAll('.field')]
         .find(x => x.querySelector('span') && x.querySelector('span').textContent.trim() === 'Graisse');
       return { gras: b.classList.contains('active'), graisse: f.querySelector('select').value };
     };
     const depart = await etat();
-    await basculer('Titres de colonnes', 'Gras');       // la bascule mène
+    await basculer('Colonnes', 'Gras');       // la bascule mène
     const apresBascule = await etat();
-    await reglerCarte('Titres de colonnes', 'Graisse', '300');  // la liste mène
+    await reglerCarte('Colonnes', 'Graisse', '300');  // la liste mène
     const apresListe = await etat();
     return { depart, apresBascule, apresListe };
   `);
@@ -1641,9 +1641,14 @@ test("palette : propose les couleurs déjà utilisées dans le document", "compl
 test("palette : s'ouvre sous la pastille, jamais par-dessus le champ", "complexe", async p => {
   const r = await p(`
     await selectNode(one('Féverolle').id);
+    // La DERNIÈRE carte qui porte une pastille — pas la dernière carte tout
+    // court : celle du bas peut n'avoir aucune couleur à régler, et le pire cas
+    // recherché ici est bien un champ coloré au plus bas du volet.
     const cartes = [...document.querySelectorAll('#sidebar details')];
-    const carte = cartes[cartes.length - 1];
-    carte.open = true;
+    cartes.forEach(c => { c.open = true; });
+    await sleep(120);
+    const carte = cartes.filter(c => c.querySelector('.color-btn')).pop();
+    cartes.forEach(c => { if (c !== carte) c.open = false; });
     await sleep(120);
     // Le pire cas : le dernier champ coloré, volet déroulé jusqu'en bas.
     let volet = carte.parentElement;
@@ -1829,7 +1834,7 @@ test("filières empilées : un Sankey et un titre par filière", "complexe", asy
     await sleep(120);
     // active l'empilement
     const carte = [...document.querySelectorAll('#sidebar details')]
-      .find(d => /Filières empilées/.test(d.querySelector('summary').textContent));
+      .find(d => /Empilement par filière/.test(d.querySelector('summary').textContent));
     carte.open = true;
     await sleep(60);
     const bascule = [...carte.querySelectorAll('.field.check')]
@@ -1860,7 +1865,7 @@ test("filières empilées : l'espacement est réglable", "complexe", async p => 
       .dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await sleep(120);
     const carte = [...document.querySelectorAll('#sidebar details')]
-      .find(d => /Filières empilées/.test(d.querySelector('summary').textContent));
+      .find(d => /Empilement par filière/.test(d.querySelector('summary').textContent));
     carte.open = true;
     await sleep(60);
     [...carte.querySelectorAll('.field.check')]
@@ -1877,7 +1882,7 @@ test("filières empilées : l'espacement est réglable", "complexe", async p => 
     };
     // Point bas : marge nulle
     const carte0 = [...document.querySelectorAll('#sidebar details')]
-      .find(d => /Filières empilées/.test(d.querySelector('summary').textContent));
+      .find(d => /Empilement par filière/.test(d.querySelector('summary').textContent));
     carte0.open = true;
     await sleep(60);
     const champ0 = [...carte0.querySelectorAll('.field')]
@@ -1888,7 +1893,7 @@ test("filières empilées : l'espacement est réglable", "complexe", async p => 
     const avant = await lire();
     // La bascule reconstruit le panneau : il faut retrouver la carte.
     const carte2 = [...document.querySelectorAll('#sidebar details')]
-      .find(d => /Filières empilées/.test(d.querySelector('summary').textContent));
+      .find(d => /Empilement par filière/.test(d.querySelector('summary').textContent));
     carte2.open = true;
     await sleep(60);
     const champ = [...carte2.querySelectorAll('.field')]
@@ -1911,7 +1916,7 @@ test("filières empilées : l'échelle commune rend les épaisseurs comparables"
       .find(b => /Tout afficher/.test(b.textContent)).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await sleep(120);
     const carte = () => [...document.querySelectorAll('#sidebar details')]
-      .find(d => /Filières empilées/.test(d.querySelector('summary').textContent));
+      .find(d => /Empilement par filière/.test(d.querySelector('summary').textContent));
     const coche = (libelle) => {
       const c = carte(); c.open = true;
       return [...c.querySelectorAll('.field.check')]
@@ -1976,7 +1981,7 @@ test("marges du graphique : le haut décale le rendu", "complexe", async p => {
     };
     const avant = await hautDuRendu();
     const carte = [...document.querySelectorAll('#sidebar details')]
-      .find(d => /Marges du graphique/.test(d.querySelector('summary').textContent));
+      .find(d => /Cadre du graphique/.test(d.querySelector('summary').textContent));
     carte.open = true; await sleep(60);
     const champ = [...carte.querySelectorAll('.field')]
       .find(f => /Marge en haut/.test(f.textContent)).querySelector('input');
@@ -1992,8 +1997,14 @@ test("marges du graphique : le haut décale le rendu", "complexe", async p => {
 
 test("panneau : une section reste ouverte quand on change une option", "complexe", async p => {
   const r = await p(`
-    const carte = () => [...document.querySelectorAll('#sidebar details')]
-      .find(d => /Filières empilées/.test(d.querySelector('summary').textContent));
+    const parTitre = re => [...document.querySelectorAll('#sidebar details')]
+      .find(d => re.test(d.querySelector('summary').textContent));
+    const carte = () => parTitre(/Empilement par filière/);
+    const temoin = () => parTitre(/Colonnes/);
+    // Le témoin est REFERMÉ ici, et pas seulement supposé fermé : les cartes
+    // gardent leur état d'ouverture pendant toute la session, donc un test
+    // précédent a pu ouvrir n'importe laquelle d'entre elles.
+    temoin().open = false;
     carte().open = true;
     await sleep(80);
     const avant = carte().open;
@@ -2001,10 +2012,7 @@ test("panneau : une section reste ouverte quand on change une option", "complexe
       .find(f => /Un Sankey par filière/.test(f.textContent)).querySelector('input').click();
     await sleep(200);
     const apres = carte().open;
-    // Une autre carte, laissée fermée, doit le rester
-    const autre = [...document.querySelectorAll('#sidebar details')]
-      .find(d => /Valeurs des liens/.test(d.querySelector('summary').textContent));
-    return { avant, apres, autreOuverte: autre.open };
+    return { avant, apres, autreOuverte: temoin().open };
   `);
   attendu(r.avant, "la section doit être ouverte au départ");
   attendu(r.apres, "cocher une option ne doit pas replier la section");
@@ -2025,7 +2033,7 @@ test("filières empilées : chaque diagramme garde ses propres dégradés", "com
     await sleep(150);
     // active l'empilement
     const marges = [...document.querySelectorAll('#sidebar details')]
-      .find(d => /Filières empilées/.test(d.querySelector('summary').textContent));
+      .find(d => /Empilement par filière/.test(d.querySelector('summary').textContent));
     marges.open = true; await sleep(60);
     [...marges.querySelectorAll('.field.check')]
       .find(f => /Un Sankey par filière/.test(f.textContent)).querySelector('input').click();
@@ -2419,6 +2427,139 @@ test("couloirs (aperçu) : la gouttière suit les glyphes, pas le nombre de sign
     + `(${r.large.ecart.toFixed(1)} contre ${r.etroit.ecart.toFixed(1)})`);
   attendu(r.etroit.ecart > 0 && r.etroit.ecart < 20,
     `le nom ne doit ni mordre sur le dessin ni le repousser loin (${r.etroit.ecart.toFixed(1)})`);
+});
+
+test("export : le bouton PNG ouvre le choix de la taille au lieu d'exporter", "complexe", async p => {
+  const r = await p(`
+    const c = capterExport();
+    try {
+      const lignes = await ouvrirMenuExport('PNG');
+      const wrap = document.querySelector('#canvas-wrap');
+      return {
+        lignes,
+        exportsSpontanes: c.fichiers.length,
+        fenetre: { w: Math.max(1280, Math.round(wrap.clientWidth)),
+                   h: Math.max(720, Math.round(wrap.clientHeight)) }
+      };
+    } finally { c.rendre(); }
+  `);
+  // Ouvrir le menu ne doit RIEN exporter : le clic pose une question.
+  egal(r.exportsSpontanes, 0, "ouvrir le menu ne déclenche aucun téléchargement");
+  egal(r.lignes.map(l => l.label), ["Taille de la fenêtre", "Dimensions personnalisées"],
+       "le menu offre les deux tailles, dans cet ordre");
+  attendu(r.lignes[0].detail.indexOf(r.fenetre.w + " × " + r.fenetre.h) === 0,
+    `la taille de la fenêtre est annoncée en chiffres (obtenu « ${r.lignes[0].detail} », `
+    + `attendu ${r.fenetre.w} × ${r.fenetre.h})`);
+});
+
+test("export : « Taille de la fenêtre » rend un SVG aux dimensions de la fenêtre", "complexe", async p => {
+  const r = await p(`
+    const c = capterExport();
+    try {
+      await ouvrirMenuExport('SVG');
+      await choisirDansMenu('Taille de la fenêtre');
+      const wrap = document.querySelector('#canvas-wrap');
+      if (!c.fichiers.length) throw new Error('aucun fichier exporté');
+      return {
+        nom: c.fichiers[0].nom,
+        taille: await tailleDuSvgExporte(c.fichiers[0].blob),
+        fenetre: { width: Math.max(1280, Math.round(wrap.clientWidth)),
+                   height: Math.max(720, Math.round(wrap.clientHeight)) }
+      };
+    } finally { c.rendre(); }
+  `);
+  egal(r.nom, "sankey.svg", "le fichier exporté est un SVG");
+  egal(r.taille, r.fenetre, "le SVG porte les dimensions de la fenêtre");
+});
+
+test("export : les dimensions personnalisées sont celles du fichier produit", "complexe", async p => {
+  const r = await p(`
+    await reglerCarte('Cadre du graphique', 'Largeur (px)', 2400);
+    await reglerCarte('Cadre du graphique', 'Hauteur (px)', 900);
+    const c = capterExport();
+    try {
+      const lignes = await ouvrirMenuExport('SVG');
+      await choisirDansMenu('Dimensions personnalisées');
+      if (!c.fichiers.length) throw new Error('aucun fichier exporté');
+      return { lignes, taille: await tailleDuSvgExporte(c.fichiers[0].blob) };
+    } finally { c.rendre(); }
+  `);
+  // Ce qui est annoncé dans le menu et ce qui sort du fichier, c'est la même chose.
+  egal(r.taille, { width: 2400, height: 900 },
+       "le SVG exporté porte les dimensions réglées dans le panneau");
+  attendu(r.lignes[1].detail.indexOf("2400 × 900 px") === 0,
+    `le menu annonce les dimensions réglées (obtenu « ${r.lignes[1].detail} »)`);
+});
+
+test("export : chaque combinaison de filières garde ses propres dimensions", "complexe", async p => {
+  // La fixture masque « Blé tendre » : la combinaison de départ est « Lentilles ».
+  const r = await p(`
+    const largeur = () => Number(
+      [...document.querySelectorAll('#sidebar .field')]
+        .find(f => f.querySelector('span') && f.querySelector('span').textContent.trim() === 'Largeur (px)')
+        .querySelector('input').value);
+
+    await reglerCarte('Cadre du graphique', 'Largeur (px)', 2400);
+    await reglerCarte('Cadre du graphique', 'Hauteur (px)', 900);
+    const surLentilles = largeur();
+
+    // Une autre combinaison : les deux filières affichées.
+    await basculerFiliere('Blé tendre');
+    const carteDesDeux = largeur();
+    await reglerCarte('Cadre du graphique', 'Largeur (px)', 3600);
+    await reglerCarte('Cadre du graphique', 'Hauteur (px)', 1200);
+
+    // Retour à la combinaison de départ.
+    await basculerFiliere('Blé tendre');
+    const retour = largeur();
+
+    const c = capterExport();
+    try {
+      await ouvrirMenuExport('SVG');
+      await choisirDansMenu('Dimensions personnalisées');
+      return {
+        surLentilles, carteDesDeux, retour,
+        taille: await tailleDuSvgExporte(c.fichiers[0].blob)
+      };
+    } finally { c.rendre(); }
+  `);
+  egal(r.surLentilles, 2400, "la combinaison de départ prend la largeur réglée");
+  // Rien n'a jamais été réglé pour les deux filières ensemble : la carte repart
+  // de la taille de la fenêtre, elle n'hérite pas du réglage du voisin.
+  attendu(r.carteDesDeux !== 2400,
+    "une combinaison sans réglage ne reprend pas celui d'une autre "
+    + `(obtenu ${r.carteDesDeux})`);
+  egal(r.retour, 2400, "revenir à la combinaison de départ y retrouve ses dimensions");
+  egal(r.taille, { width: 2400, height: 900 },
+       "et c'est bien cette taille-là qui sort du fichier");
+});
+
+test("export : « Reprendre la taille de la fenêtre » efface le réglage", "complexe", async p => {
+  const r = await p(`
+    const carte = await carteDuPanneau('Cadre du graphique');
+    await reglerCarte('Cadre du graphique', 'Largeur (px)', 2400);
+    const avant = (await ouvrirMenuExport('SVG'))[1].detail;
+    document.querySelector('.cp-backdrop').remove();
+
+    const c2 = await carteDuPanneau('Cadre du graphique');
+    const lien = [...c2.querySelectorAll('button.linklike')]
+      .find(b => b.textContent.indexOf('Reprendre la taille de la fenêtre') >= 0);
+    if (!lien) throw new Error('lien de remise à zéro absent');
+    lien.click();
+    await sleep(200);
+
+    const wrap = document.querySelector('#canvas-wrap');
+    const apres = (await ouvrirMenuExport('SVG'))[1].detail;
+    return {
+      avant, apres,
+      fenetre: Math.max(1280, Math.round(wrap.clientWidth)) + ' × '
+             + Math.max(720, Math.round(wrap.clientHeight)) + ' px'
+    };
+  `);
+  attendu(r.avant.indexOf("2400 ×") === 0, `réglage pris en compte (${r.avant})`);
+  attendu(r.apres.indexOf(r.fenetre) === 0,
+    `après remise à zéro, la taille personnalisée repart de la fenêtre `
+    + `(obtenu « ${r.apres} », attendu « ${r.fenetre} »)`);
 });
 
 /* -------------------------------- exécution ------------------------------ */
