@@ -1034,6 +1034,15 @@ Voir « Vérifier une fonctionnalité » en tête de fichier.
 - **Octets NULL** : des éditions ont déjà transformé des séparateurs `" "` en `0x00` (le fichier
   devient « binary » pour `file`/`grep -a`, les correspondances de clés échouent). Déjà arrivé 2×.
   En cas de bug de clés inexpliqué : scanner les `\x00`, remplacer par un espace.
+- **Le panneau se reconstruit tout seul pendant la saisie.** `buildSidebar()` vide `#sidebar` et
+  le rebâtit ; les gestionnaires de champ s'en abstiennent, mais l'**écriture automatique vers
+  Excel** le fait, 300 ms après la dernière frappe (`DELAI_ENVOI_EXCEL`, puis `pushToExcel`). Une
+  frappe hésitante suffit donc à la déclencher en plein mot. `buildSidebar()` relève et repose
+  pour cette raison **le défilement du panneau, le champ actif et la position du curseur** — un
+  champ nouvellement ajouté n'a rien à faire pour en bénéficier, mais il doit passer par
+  `field()` / `card()` : le repère se lit sur `.field > span` et sur le titre de la carte. Deux
+  cartes portent des intitulés identiques (« Largeur », « Contour », « Police » dans les deux
+  cartes de type) : c'est le titre de la carte qui les départage.
 
 ### À faire
 - **La campagne de mesures Windows** (phase 6) : la grille de `RESULTATS-PHASE-6.md` est vide.
