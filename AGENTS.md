@@ -719,8 +719,7 @@ un poste, c'est `npm run addin:install -- --enligne`.
   ne viendrait pas du classeur finirait par l'écraser.
 - **Export : la taille se demande, elle ne se devine pas.** Les boutons PNG et SVG n'exportent
   plus au clic — ils ouvrent un menu (`ouvrirMenuExport`, `openMenuPopover` dans `ui.ts`) à deux
-  lignes : **« Taille de la fenêtre »** (ce que l'export a toujours produit, minima 1280 × 720)
-  et **« Dimensions personnalisées »**. Les deux annoncent leurs dimensions **en chiffres** :
+  lignes : **« Taille de la fenêtre »** et **« Dimensions personnalisées »**. Les deux annoncent leurs dimensions **en chiffres** :
   sans elles, « personnalisées » ne dirait ni si quelque chose a été réglé, ni quoi.
   - Les dimensions personnalisées se règlent dans la carte **« Cadre du graphique »** du
     panneau, sous l'intertitre « Taille du canevas », et sont
@@ -736,6 +735,14 @@ un poste, c'est `npm run addin:install -- --enligne`.
     encore les dimensions de la combinaison précédente. Une mutation le vérifie.
   - Sans réglage, la carte et le menu partent de la **taille de la fenêtre** : le point de
     départ est ce qu'on voit, et une combinaison n'hérite jamais du réglage d'une autre.
+  - **« Taille de la fenêtre » est du WYSIWYG, sans plancher** (`tailleFenetre`). Un minimum de
+    1280 × 720 s'appliquait naguère à toute fenêtre plus petite : le menu annonçait alors
+    toujours les mêmes chiffres, insensibles au redimensionnement, et le fichier sortait dans
+    un format que l'aperçu n'avait jamais montré. Qui veut une image plus grande que la
+    fenêtre passe par les dimensions personnalisées. En **aperçu**, la taille annoncée est
+    celle du **canevas peint** (marges du cadre comprises, elles vivent dedans) ; en édition,
+    le canevas suit la grille et déborde, c'est donc le cadre qui est mesuré — les deux ne
+    diffèrent que de la largeur d'un ascenseur, là où le système en dessine encore.
   - Le PNG reste rastérisé au **double** (`EXPORT_ECHELLE_PNG`) ; les dimensions réglées sont
     celles du canevas de dessin, pas celles du fichier PNG.
   - Les tests mesurent le **fichier réellement produit** : `capterExport()` (tests/helpers.js)

@@ -3350,14 +3350,23 @@ function libelleTaille(t: TailleExport): string {
 }
 
 /**
- * Taille de la fenêtre : ce que l'export a toujours produit. Les minima sont
- * ceux d'avant le choix — un volet étroit ne doit pas rendre une image étroite.
+ * Taille de la fenêtre : les dimensions du dessin **tel qu'il est à l'écran**.
+ * En aperçu, le canevas est le dessin — ses dimensions font foi, marges du
+ * cadre comprises, puisqu'elles vivent dedans. En édition, le canevas suit la
+ * grille et déborde : la place qu'aurait le dessin, c'est celle du cadre.
+ *
+ * Aucun plancher, et c'est le fond de l'affaire : un minimum de 1280 × 720
+ * s'appliquait à toute fenêtre plus petite, si bien que le menu annonçait
+ * toujours les mêmes chiffres, insensibles au redimensionnement — et que
+ * l'image sortait dans un format que l'aperçu n'avait jamais montré. Pour une
+ * image plus grande que la fenêtre, « Dimensions personnalisées » est là.
  */
 function tailleFenetre(): TailleExport {
     const wrap = canvas.parentElement as HTMLElement;
+    const apercu = view === "preview";
     return {
-        width: Math.max(1280, Math.round(wrap.clientWidth)),
-        height: Math.max(720, Math.round(wrap.clientHeight))
+        width: borneExport(apercu ? Number(canvas.getAttribute("width")) : wrap.clientWidth),
+        height: borneExport(apercu ? Number(canvas.getAttribute("height")) : wrap.clientHeight)
     };
 }
 

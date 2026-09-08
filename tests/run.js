@@ -2710,8 +2710,7 @@ test("export : le bouton PNG ouvre le choix de la taille au lieu d'exporter", "c
       return {
         lignes,
         exportsSpontanes: c.fichiers.length,
-        fenetre: { w: Math.max(1280, Math.round(wrap.clientWidth)),
-                   h: Math.max(720, Math.round(wrap.clientHeight)) }
+        fenetre: { w: Math.round(wrap.clientWidth), h: Math.round(wrap.clientHeight) }
       };
     } finally { c.rendre(); }
   `);
@@ -2735,14 +2734,67 @@ test("export : « Taille de la fenêtre » rend un SVG aux dimensions de la fen�
       return {
         nom: c.fichiers[0].nom,
         taille: await tailleDuSvgExporte(c.fichiers[0].blob),
-        fenetre: { width: Math.max(1280, Math.round(wrap.clientWidth)),
-                   height: Math.max(720, Math.round(wrap.clientHeight)) }
+        fenetre: { width: Math.round(wrap.clientWidth),
+                   height: Math.round(wrap.clientHeight) }
       };
     } finally { c.rendre(); }
   `);
   egal(r.nom, "Lentilles.svg",
        "le fichier exporté est un SVG nommé d'après la filière affichée");
   egal(r.taille, r.fenetre, "le SVG porte les dimensions de la fenêtre");
+});
+
+test("export : « Taille de la fenêtre » rend ce qui est à l'écran, marges comprises",
+     "complexe", async p => {
+  const r = await p(`
+    await reglerCarte('Cadre du graphique', 'Marge à gauche', '90');
+    const c = capterExport();
+    try {
+      await versApercu();
+      // Ce que l'écran montre : les dimensions du canevas peint, et l'abscisse
+      // du premier nœud — c'est elle qui porte la marge.
+      const svg = document.querySelector('#canvas');
+      const ecran = {
+        width: Number(svg.getAttribute('width')),
+        height: Number(svg.getAttribute('height')),
+        premier: Math.min(...[...svg.querySelectorAll('rect[data-id]')]
+          .map(rc => rc.getBoundingClientRect().left - svg.getBoundingClientRect().left))
+      };
+      await ouvrirMenuExport('SVG');
+      await choisirDansMenu('Taille de la fenêtre');
+      if (!c.fichiers.length) throw new Error('aucun fichier exporté');
+      const texte = await c.fichiers[0].blob.text();
+      const doc = new DOMParser().parseFromString(texte, 'image/svg+xml');
+      // Le fichier n'a pas de géométrie peinte à interroger : l'abscisse d'un
+      // nœud s'y lit dans le groupe qui porte les marges, translation comprise.
+      const g = doc.documentElement.querySelector('g[transform]');
+      const tx = Number((g.getAttribute('transform').match(/translate\\(([-\\d.]+)/) || [])[1]);
+      const fichier = {
+        width: Number(doc.documentElement.getAttribute('width')),
+        height: Number(doc.documentElement.getAttribute('height')),
+        premier: tx + Math.min(...[...doc.querySelectorAll('rect[data-id]')]
+          .map(rc => Number(rc.getAttribute('x'))))
+      };
+      return { ecran, fichier };
+    } finally {
+      c.rendre();
+      await versEdition();
+      await reglerCarte('Cadre du graphique', 'Marge à gauche', '0');
+    }
+  `);
+  egal(r.fichier.width, r.ecran.width, "le SVG exporté a la largeur du dessin affiché");
+  egal(r.fichier.height, r.ecran.height, "le SVG exporté a la hauteur du dessin affiché");
+  // Le plancher de 1280 × 720 rendait une image d'un autre format que l'aperçu :
+  // une fenêtre plus petite doit sortir une image plus petite, pas un gabarit.
+  attendu(r.ecran.width < 1280 || r.ecran.height < 720,
+    "la fenêtre d'essai doit être plus petite que l'ancien plancher, sans quoi " +
+    "ce test ne prouverait rien (" + r.ecran.width + " × " + r.ecran.height + ")");
+  attendu(Math.abs(r.fichier.premier - r.ecran.premier) < 1.5,
+    "la marge du cadre se retrouve dans le fichier (écran " + r.ecran.premier.toFixed(1) +
+    ", fichier " + r.fichier.premier.toFixed(1) + ")");
+  attendu(r.fichier.premier >= 90 - 0.5,
+    "et rien n'est peint dans la marge du fichier exporté (premier nœud à " +
+    r.fichier.premier.toFixed(1) + ")");
 });
 
 test("export : les dimensions personnalisées sont celles du fichier produit", "complexe", async p => {
@@ -2825,8 +2877,8 @@ test("export : « Reprendre la taille de la fenêtre » efface le réglage", "co
     const apres = (await ouvrirMenuExport('SVG'))[1].detail;
     return {
       avant, apres,
-      fenetre: Math.max(1280, Math.round(wrap.clientWidth)) + ' × '
-             + Math.max(720, Math.round(wrap.clientHeight)) + ' px'
+      fenetre: Math.round(wrap.clientWidth) + ' × '
+             + Math.round(wrap.clientHeight) + ' px'
     };
   `);
   attendu(r.avant.indexOf("2400 ×") === 0, `réglage pris en compte (${r.avant})`);
