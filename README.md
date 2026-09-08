@@ -20,8 +20,13 @@ npm run addin:install -- --enligne
 ```
 
 Puis quitter Excel **complètement**, le rouvrir, ouvrir le classeur, et cliquer
-*Accueil ▸ Diagramme de flux*. Détails et variantes (déploiement M365, mode développement,
-retrait) dans [DIFFUSION.md](DIFFUSION.md).
+*Accueil ▸ Diagramme de flux*.
+
+La procédure complète est dans **[INSTALLATION.md](INSTALLATION.md)** : les trois chemins
+d'installation — mode développement (macOS et Windows), déploiement par la console
+d'administration Microsoft 365, et complément **servi depuis GitHub et déclaré poste par poste**,
+sans aucun droit d'administration ni rien à installer — puis retrait et dépannage. La publication du site et
+du manifeste, elle, reste dans [DIFFUSION.md](DIFFUSION.md).
 
 ## Comment ça se présente
 

@@ -194,7 +194,9 @@ Un prompt de reprise détaillé existe dans `CONTEXTE-REPRISE.md`.
 Le chantier qui double la synchro Excel d'un **complément Office** est décrit dans
 `PLAN-COMPLEMENT-EXCEL.md` : **phases 0 à 5 faites, phase 6 outillée**. Le complément lui-même
 **a tourné dans Excel pour Mac le 2026-09-01** — volet, fenêtre d'édition, aller-retour complet
-sur un classeur réel : `RESULTATS-ESSAI-MAC.md`. La **diffusion** (hébergement, manifeste de production) est décrite dans
+sur un classeur réel : `RESULTATS-ESSAI-MAC.md`. L'**installation** — mode développement sur
+macOS et Windows, console d'administration M365, et manifeste publié déclaré poste par poste
+(avec ou sans le dépôt sur la machine), plus le dépannage — est dans `INSTALLATION.md`. La **diffusion** (hébergement, manifeste de production) est décrite dans
 `DIFFUSION.md` ; la **validation Windows** a son instrument prêt et sa grille de relevés vide
 dans `RESULTATS-PHASE-6.md`. Ces deux-là demandent des droits d'administration ou un poste
 Windows : le dépôt porte l'outillage, pas les résultats.
