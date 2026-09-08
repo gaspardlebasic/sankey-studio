@@ -307,6 +307,10 @@ button.linklike:hover { color: var(--dark); }
 .mp-label { font-weight: 600; }
 .mp-detail { font-size: 11px; color: var(--muted); }
 .mp-item:hover .mp-detail, .mp-item:focus-visible .mp-detail { color: var(--bright); }
+/* Avertissement sous les choix : lisible, mais jamais confondu avec un choix. */
+.mp-note { max-width: 320px; margin-top: 6px; padding: 8px 10px 2px;
+    border-top: var(--hairline) solid var(--grey);
+    font-size: 11px; line-height: 1.45; color: var(--muted); }
 
 /* Gras / italique compactés en bascules, comme dans Word */
 .style-toggles { display: flex; gap: 4px; }

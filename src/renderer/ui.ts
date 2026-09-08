@@ -182,6 +182,12 @@ export interface MenuPopoverOptions {
     /** Titre du menu (« Exporter en PNG »). */
     label: string;
     items: MenuItem[];
+    /**
+     * Avertissement posé sous les choix, quand l'un d'eux réserve une surprise
+     * que l'utilisatrice ne peut pas deviner. Au moment du choix, pas après :
+     * une fois le fichier enregistré, il est trop tard pour changer de nom.
+     */
+    note?: string;
     /** Comme pour la palette ; « libre » par défaut — un menu ne fait pas défiler. */
     placement?: "sous" | "libre";
 }
@@ -216,6 +222,12 @@ export function openMenuPopover(o: MenuPopoverOptions): void {
             b.addEventListener("click", () => { fermer(); it.onPick(); });
             pop.appendChild(b);
         });
+        if (o.note) {
+            const n = document.createElement("div");
+            n.className = "mp-note";
+            n.textContent = o.note;
+            pop.appendChild(n);
+        }
     });
 }
 

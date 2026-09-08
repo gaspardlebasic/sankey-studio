@@ -2797,6 +2797,37 @@ test("export : « Taille de la fenêtre » rend ce qui est à l'écran, marges c
     r.fichier.premier.toFixed(1) + ")");
 });
 
+test("export : le menu dit qu'un fichier existant ne sera pas remplacé", "complexe", async p => {
+  const r = await p(`
+    const c = capterExport();
+    try {
+      await ouvrirMenuExport('SVG');
+      const note = document.querySelector('.mp-pop .mp-note');
+      // Un export d'un test précédent a pu laisser son message : on part vide.
+      document.querySelector('#status').textContent = '';
+      await choisirDansMenu('Taille de la fenêtre');
+      return {
+        note: note ? note.textContent : null,
+        apresExport: document.querySelector('#status').textContent
+      };
+    } finally { c.rendre(); }
+  `);
+  attendu(r.note !== null, "le menu d'export porte un avertissement");
+  attendu(/jamais remplacé|pas remplacé/.test(r.note),
+    `l'avertissement dit qu'un fichier existant n'est pas remplacé (« ${r.note} »)`);
+  attendu(/Mac/.test(r.note) && /silence/.test(r.note),
+    `il nomme l'échec silencieux d'Excel pour Mac (« ${r.note} »)`);
+  attendu(/nom neuf|supprime/.test(r.note),
+    `et il dit quoi faire (« ${r.note} »)`);
+  // Le statut ne doit plus annoncer un succès qu'on ne peut pas connaître : le
+  // clic sur le lien de téléchargement ne rend aucun compte.
+  attendu(r.apresExport !== "", "l'export renseigne la barre de statut");
+  attendu(r.apresExport.indexOf("Image exportée.") !== 0,
+    `le statut n'affirme plus un succès en bloc (« ${r.apresExport} »)`);
+  attendu(/ne remplace pas|pas remplacé/.test(r.apresExport),
+    `il rappelle le sort d'un fichier existant (« ${r.apresExport} »)`);
+});
+
 test("export : les dimensions personnalisées sont celles du fichier produit", "complexe", async p => {
   const r = await p(`
     await reglerCarte('Cadre du graphique', 'Largeur (px)', 2400);

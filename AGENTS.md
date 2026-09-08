@@ -745,6 +745,17 @@ un poste, c'est `npm run addin:install -- --enligne`.
     diffèrent que de la largeur d'un ascenseur, là où le système en dessine encore.
   - Le PNG reste rastérisé au **double** (`EXPORT_ECHELLE_PNG`) ; les dimensions réglées sont
     celles du canevas de dessin, pas celles du fichier PNG.
+  - **Un fichier existant n'est jamais remplacé, et l'export n'en sait rien.** L'enregistrement
+    est un `<a download>` cliqué (`saveExport`) : la webview qui héberge le complément s'occupe
+    du reste et ne rend **aucun compte** — ni où, ni si. Sur **Excel pour Mac** (WKWebView),
+    choisir un fichier qui existe déjà et confirmer « Remplacer » ne fait rien du tout : l'API
+    de téléchargement de WebKit exige une destination « qui n'existe pas »
+    (`WKDownloadDelegate`, en-tête : *« it must be a file that does not exist »*), et l'échec
+    est silencieux. Ailleurs, un doublon est écrit à côté. Rien de tout cela n'est réparable
+    depuis le JavaScript : le menu le **dit avant** que le panneau s'ouvre
+    (`AVERTISSEMENT_ECRASEMENT`, ligne `note` de `openMenuPopover`) et le statut ne promet plus
+    le succès qu'il ne peut pas connaître. Deux mutations vérifiées (avertissement retiré,
+    statut réaffirmant « Image exportée. »).
   - Les tests mesurent le **fichier réellement produit** : `capterExport()` (tests/helpers.js)
     intercepte `URL.createObjectURL` et le clic de l'ancre — sinon Electron ouvrirait une boîte
     d'enregistrement et le test resterait dessus — puis on lit `width`/`height` dans le SVG.

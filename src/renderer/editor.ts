@@ -3479,9 +3479,26 @@ function ouvrirMenuExport(anchor: HTMLElement, format: "png" | "svg"): void {
                     : libelleTaille(perso) + " — à régler dans « Cadre du graphique »",
                 onPick: () => { exportImage(format, perso); }
             }
-        ]
+        ],
+        note: AVERTISSEMENT_ECRASEMENT
     });
 }
+
+/**
+ * Le piège de l'enregistrement, dit AVANT que le panneau s'ouvre — après, le
+ * nom est choisi et il est trop tard.
+ *
+ * L'export passe par le téléchargement de la webview qui héberge le
+ * complément, et aucune webview ne remplace un fichier existant : celle
+ * d'Excel pour Mac (WKWebView) **échoue en silence** — son API de
+ * téléchargement exige une destination « qui n'existe pas » —, les autres
+ * écrivent un doublon à côté. Rien de tout cela ne se voit d'ici : le clic sur
+ * le lien de téléchargement ne rend aucun compte de ce qu'il advient.
+ */
+const AVERTISSEMENT_ECRASEMENT =
+    "Un fichier qui existe déjà n'est jamais remplacé : sur Excel pour Mac "
+    + "l'enregistrement échoue en silence, ailleurs un doublon est créé. "
+    + "Donne un nom neuf, ou supprime l'ancien fichier d'abord.";
 
 async function exportImage(format: "png" | "svg", taille: TailleExport): Promise<void> {
     const w = borneExport(taille.width);
@@ -3519,7 +3536,14 @@ async function exportImage(format: "png" | "svg", taille: TailleExport): Promise
     await saveExport(nomFichierExport("png"), "image/png", base64, true);
 }
 
-/** Le navigateur d'Office télécharge le fichier : pas de dialogue natif ici. */
+/**
+ * Le navigateur d'Office télécharge le fichier : pas de dialogue natif ici.
+ *
+ * Et pas d'accusé de réception non plus — le clic sur le lien ne dit ni si le
+ * fichier a été écrit, ni où. Le statut annonçait donc « Image exportée. »
+ * même quand rien ne l'avait été, sur un fichier existant que la webview
+ * refusait de remplacer. Il dit maintenant ce qu'on sait, et seulement ça.
+ */
 async function saveExport(name: string, mime: string, data: string, binary: boolean): Promise<void> {
     let blob: Blob;
     if (binary) {
@@ -3534,7 +3558,10 @@ async function saveExport(name: string, mime: string, data: string, binary: bool
     a.href = URL.createObjectURL(blob);
     a.download = name;
     a.click();
-    setStatus("Image exportée.");
+    setStatus(
+        "Image exportée — sauf sur un fichier qui existait déjà, "
+        + "qu'Excel pour Mac ne remplace pas."
+    );
 }
 
 /* ------------------------------ Excel ------------------------------ */
