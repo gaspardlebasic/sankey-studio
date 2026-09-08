@@ -409,10 +409,10 @@ const SEP = "\u0000";
 
 /**
  * Combien de lignes concordantes (même formule, même valeur) font une recopie.
- * Trois : deux liens qui visent la même cellule sont un geste courant, pas un
- * accident d'Excel. Le raisonnement complet est dans `lignesDeRemplissage`.
+ * Quatre : quelques liens qui visent la même cellule sont un geste courant, pas
+ * un accident d'Excel. Le raisonnement complet est dans `lignesDeRemplissage`.
  */
-const SEUIL_RECOPIE = 3;
+const SEUIL_RECOPIE = 4;
 
 /**
  * Quelles lignes de « Valeur du flux » sont un REMPLISSAGE d'Excel — pas des
@@ -433,7 +433,7 @@ const SEUIL_RECOPIE = 3;
  * restauration du classeur.
  *
  * CE QUI TRAHIT UNE RECOPIE : **le même texte de formule ET la même valeur
- * calculée sur au moins TROIS liens.** Les deux moitiés du critère comptent :
+ * calculée sur au moins QUATRE liens.** Les deux moitiés du critère comptent :
  *
  * - la formule seule ne suffit pas — une vraie colonne calculée, écrite avec
  *   une référence structurée (`=[@Quantité]*1000`), porte le même texte partout
@@ -441,15 +441,16 @@ const SEUIL_RECOPIE = 3;
  * - la valeur seule ne suffit pas non plus : deux liens peuvent légitimement
  *   valoir 0.
  *
- * POURQUOI TROIS, ET PAS DEUX. Deux liens qui portent la même formule et la
- * même valeur, c'est un geste courant et délibéré : le flux qui sort d'un nœud
- * vaut celui qui y entre, et on écrit la même référence sur les deux. À deux,
- * le critère prenait ce geste-là pour une recopie et effaçait les deux
- * formules. À trois, la coïncidence n'en est plus une : une recopie d'Excel
- * s'étend à toute la colonne, jamais à un couple. Contrepartie assumée : trois
- * liens visant délibérément la même cellule perdent leur formule (leur valeur,
- * elle, est conservée) — Excel en aurait de toute façon fait une colonne
- * calculée.
+ * POURQUOI QUATRE, ET PAS DEUX. Quelques liens qui portent la même formule et
+ * la même valeur, c'est un geste courant et délibéré : le flux qui sort d'un
+ * nœud vaut celui qui y entre, et on écrit la même référence sur les deux — et
+ * une même cellule peut légitimement alimenter un petit groupe de liens. À
+ * deux, le critère prenait ce geste-là pour une recopie et effaçait les
+ * formules. À quatre, la coïncidence n'en est plus une : une recopie d'Excel
+ * s'étend à toute la colonne, jamais à une poignée de lignes. Contrepartie
+ * assumée : quatre liens visant délibérément la même cellule perdent leur
+ * formule (leur valeur, elle, est conservée) — Excel en aurait de toute façon
+ * fait une colonne calculée.
  *
  * On juge donc LIGNE PAR LIGNE, et pas colonne entière — c'est ce qui rattrape
  * les remplissages PARTIELS. Après une restauration, ou une correction faite à
@@ -485,8 +486,9 @@ function lignesDeRemplissage(
   const ignorees = new Set<number>();
   let principal: Remplissage | null = null;
   for (const g of groupes.values()) {
-    // Une ou deux lignes ne prouvent rien : un lien porte sa formule, et deux
-    // liens partagent souvent la même (entrant = sortant). Il en faut trois.
+    // Jusqu'à trois lignes, rien n'est prouvé : un lien porte sa formule, et
+    // plusieurs liens partagent souvent la même (entrant = sortant). Il en faut
+    // quatre.
     if (g.lignes.length < SEUIL_RECOPIE) continue;
     for (const i of g.lignes) ignorees.add(i);
     if (!principal || g.lignes.length > principal.liens) {

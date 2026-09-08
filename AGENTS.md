@@ -562,7 +562,7 @@ un poste, c'est `npm run addin:install -- --enligne`.
     d'utilisatrice (`collecterFormules`) et les réécrire toutes. Il **cimentait** la corruption,
     et la recréait à la première écriture qui suivait une restauration.
   - **Ce qui trahit une recopie** : le **même texte de formule ET la même valeur calculée** sur
-    au moins **trois** liens (`SEUIL_RECOPIE`). Les deux moitiés comptent — une vraie colonne
+    au moins **quatre** liens (`SEUIL_RECOPIE`). Les deux moitiés comptent — une vraie colonne
     calculée écrite en référence structurée (`=[@Quantité]*1000`) porte le même texte partout
     mais donne des valeurs *différentes*, et deux liens peuvent légitimement valoir 0.
   - **On juge LIGNE PAR LIGNE**, jamais colonne entière : `lignesDeRemplissage()` rend les
@@ -570,14 +570,15 @@ un poste, c'est `npm run addin:install -- --enligne`.
     recopiées, trente rescapées, ce qu'on trouve après une restauration ou une correction faite à
     la main. L'ancien critère (« *toutes* les lignes, la même formule ») déclarait cette
     colonne-là saine, réémettait la recopie, et Excel tuait les trente survivantes.
-  - **Trois lignes concordantes, pas deux** : écrire la même référence sur deux liens est un
-    geste courant et délibéré — le flux qui sort d'un nœud vaut celui qui y entre. À deux, la
-    détection prenait ce geste pour une recopie et effaçait les deux formules ; à trois, la
-    coïncidence n'en est plus une, car une recopie d'Excel s'étend à toute la colonne, jamais à
-    un couple. Une ligne seule ne prouve rien non plus : un diagramme naissant dont l'unique lien
-    porte une formule ne doit pas la perdre. Contrepartie assumée : trois liens qui visent
-    délibérément la même cellule perdent leur formule (leur valeur, elle, est conservée) —
-    Excel en aurait de toute façon fait une colonne calculée.
+  - **Quatre lignes concordantes, pas deux** : écrire la même référence sur quelques liens est
+    un geste courant et délibéré — le flux qui sort d'un nœud vaut celui qui y entre, et une même
+    cellule peut alimenter un petit groupe de liens. À deux, la détection prenait ce geste pour
+    une recopie et effaçait les formules ; à quatre, la coïncidence n'en est plus une, car une
+    recopie d'Excel s'étend à toute la colonne, jamais à une poignée de lignes. Contrepartie
+    assumée : quatre liens qui visent délibérément la même cellule perdent leur formule (leur
+    valeur, elle, est conservée) — Excel en aurait de toute façon fait une colonne calculée.
+    Le seuil est **encadré par mutation** : le ramener à 3 ou le pousser à 5 doit faire échouer
+    des tests de `tests/addin-office.test.js` (deux mutations vérifiées).
   - **Et on le DIT.** Défaire la recopie ne rend pas les valeurs qu'Excel a écrasées : elles sont
     perdues, et seule l'utilisatrice peut restaurer une version antérieure — tant qu'elle sait
     qu'il faut le faire. Le résultat d'écriture porte `remplissage: { formule, liens }`, et
