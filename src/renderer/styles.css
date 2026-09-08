@@ -224,7 +224,11 @@ button.linklike:hover { color: var(--dark); }
 #canvas .edit-node:hover .node-box { stroke: var(--dark); stroke-width: 1.5; }
 #canvas .edit-node.selected .node-box { stroke: var(--dark); stroke-width: 2.5; }
 #canvas .edit-node.drop-target .node-box { stroke: var(--dark); stroke-width: 2.5; fill: var(--light); }
-#canvas .node-color-dot { stroke: rgba(0, 0, 0, 0.18); stroke-width: 1; pointer-events: none; }
+/* Pastille de couleur : cliquable, elle ouvre la palette sur place. */
+#canvas .node-color { cursor: pointer; }
+#canvas .node-color-dot { stroke: rgba(0, 0, 0, 0.18); stroke-width: 1; pointer-events: none;
+    transition: stroke 0.12s var(--ease), stroke-width 0.12s var(--ease); }
+#canvas .node-color:hover .node-color-dot { stroke: var(--dark); stroke-width: 2; }
 
 /* Nœud en cours de déplacement : au premier plan, ombré ; le + est masqué */
 #canvas .edit-node.dragging { cursor: grabbing; }

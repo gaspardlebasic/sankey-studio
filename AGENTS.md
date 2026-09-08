@@ -727,6 +727,22 @@ un poste, c'est `npm run addin:install -- --enligne`.
   depuis le point droit crée un lien *sortant*, depuis le gauche un lien *entrant* (`linkDrag`,
   aperçu `.link-preview`, cible surlignée `.drop-target`). Échap ou relâchement dans le vide
   annule. Le bouton « + » à droite reste le raccourci « nouveau nœud déjà relié ».
+- **La pastille d'un nœud ouvre sa couleur** (`pastilleCouleur`, `ouvrirCouleurDuNoeud`) : le
+  petit rond du coin haut-droit montrait déjà la couleur effective, il la règle maintenant —
+  un clic sélectionne le nœud et pose la palette contre la pastille. Régler la couleur là où
+  on la voit évite l'aller-retour par le panneau.
+  - Une **zone de prise** invisible de 10 px de rayon entoure le rond (5 px, ça ne s'attrape
+    pas), et elle reste **dans la boîte** pour ne pas manger de clics du canevas. Le `mousedown`
+    est arrêté sur place : sans ça, un appui sur la pastille amorcerait un glisser du nœud.
+  - La palette se place **là où il y a la place** (`placeLibre` dans `ui.ts`, `placement:
+    "libre"`) : dessous, à droite, à gauche, au-dessus — le premier côté où elle tient
+    **entière** l'emporte, et de côté elle glisse verticalement pour ne pas sortir de la
+    fenêtre. Surtout **ne rien faire défiler** : le placement du panneau (`place`, `placement:
+    "sous"`) remonte le champ en faisant défiler le volet, ce qui sur le canevas emporterait le
+    nœud qu'on vient de cliquer. Les deux placements coexistent pour cette seule raison.
+  - Chaque choix rebâtit le canevas, donc **la pastille ancre n'est plus dans le document** :
+    la palette ne se replace que si son ancre l'est encore (`isConnected`), et
+    `ouvrirCouleurDuNoeud` ancre la pastille d'APRÈS la sélection, pas celle d'où vient le clic.
 - Les **valeurs de flux** vivent **uniquement dans Excel** (formules préservées à l'écriture) ;
   l'**apparence** vit dans le classeur (`document.settings`).
 

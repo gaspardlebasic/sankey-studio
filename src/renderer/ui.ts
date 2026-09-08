@@ -93,9 +93,18 @@ export function normalizeHex(v: string): string | null {
 /* -------------------------- sélecteur de couleurs ----------------------- */
 
 export interface ColorPopoverOptions {
-    anchor: HTMLElement;
+    /** Le bouton (ou la pastille SVG du canevas) sur lequel s'ancre la palette. */
+    anchor: Element;
     value: string;
     label: string;
+    /**
+     * « sous » (défaut) : toujours sous le bouton, quitte à faire défiler le
+     * volet — une palette ouverte vers le haut recouvrirait le champ qu'on est
+     * en train de régler. « libre » : dessous, à côté ou au-dessus, là où il y
+     * a la place, et sans rien faire défiler — c'est ce qu'il faut sur le
+     * canevas, où défiler ferait glisser le nœud sous le curseur.
+     */
+    placement?: "sous" | "libre";
     /** Couleurs déjà employées dans le diagramme, proposées en premier. */
     usedColors?: string[];
     /** Appelé avant la première modification (pour l'historique undo). */
@@ -222,7 +231,9 @@ export function openColorPopover(o: ColorPopoverOptions): void {
     refresh();
     back.appendChild(pop);
     document.body.appendChild(back);
-    place(pop, o.anchor);
+    const placer = () =>
+        (o.placement === "libre" ? placeLibre : place)(pop, o.anchor);
+    placer();
 
     function done(): void {
         window.removeEventListener("keydown", onKey, true);
@@ -234,7 +245,9 @@ export function openColorPopover(o: ColorPopoverOptions): void {
     const onKey = (e: KeyboardEvent) => {
         if (e.key === "Escape") { e.stopPropagation(); done(); }
     };
-    const reposition = () => place(pop, o.anchor);
+    // L'ancre du canevas est refaite à chaque rendu : sans elle, ne rien bouger
+    // plutôt que de renvoyer la palette dans un coin sur un rectangle vide.
+    const reposition = () => { if (o.anchor.isConnected) placer(); };
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("resize", reposition);
     back.addEventListener("mousedown", e => { if (e.target === back) done(); });
@@ -265,7 +278,7 @@ function retireCale(): void {
 }
 
 /** Le conteneur qui défile autour du bouton (le volet), s'il y en a un. */
-function ancetreDefilant(el: HTMLElement): HTMLElement | null {
+function ancetreDefilant(el: Element): HTMLElement | null {
     let e = el.parentElement;
     while (e && e !== document.body) {
         const oy = getComputedStyle(e).overflowY;
@@ -276,13 +289,65 @@ function ancetreDefilant(el: HTMLElement): HTMLElement | null {
 }
 
 /**
+ * Place la surcouche **là où il y a la place**, sans rien faire défiler :
+ * dessous d'abord — c'est là qu'on la cherche des yeux — puis à droite, à
+ * gauche, au-dessus. Employé pour la pastille d'un nœud du canevas : faire
+ * défiler le canevas dégagerait bien la place, mais en emportant le nœud qu'on
+ * vient de cliquer.
+ */
+function placeLibre(pop: HTMLElement, anchor: Element): void {
+    const m = 8;      // marge avec les bords de la fenêtre
+    const gap = 6;    // écart entre la pastille et la palette
+    const mini = 160; // en deçà, la palette n'est plus utilisable
+
+    pop.style.maxHeight = "";
+    pop.style.overflowY = "";
+    const w = pop.offsetWidth;
+    const h = pop.offsetHeight;
+    const a = anchor.getBoundingClientRect();
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+
+    // À droite comme à gauche, la palette GLISSE verticalement pour tenir dans
+    // la fenêtre : l'aligner sur la pastille la ferait sortir par le bas sans
+    // rien y gagner — elle reste à côté d'elle, c'est ce qu'on lui demande.
+    const glissee = Math.max(m, Math.min(a.top, H - m - h));
+    const tientEnHauteur = h <= H - 2 * m;
+    const cotes = [
+        { ok: a.bottom + gap + h <= H - m, left: a.left, top: a.bottom + gap },
+        { ok: tientEnHauteur && a.right + gap + w <= W - m, left: a.right + gap, top: glissee },
+        { ok: tientEnHauteur && a.left - gap - w >= m, left: a.left - gap - w, top: glissee },
+        { ok: a.top - gap - h >= m, left: a.left, top: a.top - gap - h }
+    ];
+    // Le premier côté où elle tient ENTIÈRE l'emporte : une palette rognée se
+    // subit, elle ne se choisit pas.
+    const choisi = cotes.find(c => c.ok);
+
+    let left = (choisi || cotes[0]).left;
+    let top = (choisi || cotes[0]).top;
+    if (!choisi) {
+        // Nulle part en entier : on garde le côté vertical le plus dégagé et la
+        // palette défile en elle-même plutôt que de sortir de la fenêtre.
+        const dessous = H - m - (a.bottom + gap);
+        const dessus = a.top - gap - m;
+        const hauteur = Math.max(mini, Math.max(dessous, dessus));
+        pop.style.maxHeight = hauteur + "px";
+        pop.style.overflowY = "auto";
+        top = dessous >= dessus ? a.bottom + gap : a.top - gap - hauteur;
+    }
+
+    pop.style.left = Math.round(Math.max(m, Math.min(left, W - w - m))) + "px";
+    pop.style.top = Math.round(Math.max(m, top)) + "px";
+}
+
+/**
  * Place la surcouche **sous** le bouton, jamais au-dessus : une palette qui
  * s'ouvre vers le haut recouvre le champ qu'on est en train de régler.
  * Quand le bas de la fenêtre est trop proche, on fait d'abord remonter le
  * bouton en faisant défiler le volet ; s'il manque encore de la hauteur, la
  * palette se rogne et défile en elle-même.
  */
-function place(pop: HTMLElement, anchor: HTMLElement): void {
+function place(pop: HTMLElement, anchor: Element): void {
     const m = 8;      // marge avec les bords de la fenêtre
     const gap = 6;    // écart entre le bouton et la palette
     const mini = 160; // en deçà, la palette n'est plus utilisable

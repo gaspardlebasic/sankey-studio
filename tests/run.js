@@ -1690,6 +1690,109 @@ test("palette : s'ouvre sous la pastille, jamais par-dessus le champ", "complexe
   egal(r.caleRestante, 0, "en refermant, la cale posée dans le volet doit repartir");
 });
 
+test("pastille : un clic sur la pastille ouvre la palette à côté du nœud", "complexe", async p => {
+  const r = await p(`
+    // Le diagramme d'essai tient dans la fenêtre : on l'allonge d'abord, pour
+    // retrouver le cas qui décide — une pastille tout en bas, où la palette ne
+    // tient plus dessous. C'est le cas courant dans la fenêtre du complément,
+    // où un diagramme réel fait 1 362 px de haut.
+    const modele = T.model();
+    const voisin = one('Féverolle');
+    for (let i = 0; i < 16; i++) {
+      modele.nodes.push({
+        id: 'remplissage' + i, name: 'Remplissage ' + i, column: voisin.column,
+        title: voisin.title, order: 100 + i, lane: 1, kind: 'produit',
+        filiere: voisin.filiere, color: '#cccccc', x: 0, y: 0
+      });
+    }
+    T.refresh();
+    await sleep(150);
+
+    // On vise le nœud le plus BAS de l'écran : c'est là que la place manque
+    // sous la pastille, donc là où le choix du côté se joue vraiment.
+    const wrap = document.querySelector('#canvas-wrap');
+    wrap.scrollTop = wrap.scrollHeight;
+    await sleep(120);
+    const vue = wrap.getBoundingClientRect();
+    const cible = nodes().filter(x => elOf(x.id))
+        .map(x => ({ id: x.id, nom: x.name, r: pastilleDe(x.id) }))
+        .filter(o => o.r.top > vue.top + 4 && o.r.bottom < vue.bottom - 4
+                  && o.r.left > vue.left + 4 && o.r.right < vue.right - 4)
+        .sort((a, b) => b.r.bottom - a.r.bottom)[0];
+    if (!cible) throw new Error('aucune pastille visible en bas du canevas');
+    const fige = x => ({ x: x.x, y: x.y, colonne: x.column, ordre: x.order });
+    const avant = fige(byId(cible.id));
+    const defilementAvant = wrap.scrollTop;
+    await clicReel(cible.r.left + cible.r.width / 2, cible.r.top + cible.r.height / 2);
+    const pop = document.querySelector('.cp-pop');
+    const res = { nom: cible.nom, ouverte: !!pop,
+                  selectionne: T.selection().id === cible.id,
+                  avant, apres: fige(byId(cible.id)),
+                  defilementAvant, defilementApres: wrap.scrollTop,
+                  placeSousLaPastille: Math.round(vue.bottom - cible.r.bottom) };
+    if (pop) {
+      const a = pastilleDe(cible.id);
+      const b = pop.getBoundingClientRect();
+      // Distance entre les deux rectangles : nulle sur l'axe où ils se
+      // chevauchent, l'écart d'ancrage sur l'autre.
+      const dx = Math.max(a.left - b.right, b.left - a.right, 0);
+      const dy = Math.max(a.top - b.bottom, b.top - a.bottom, 0);
+      res.ecart = Math.round(Math.max(dx, dy));
+      res.recouvre = dx === 0 && dy === 0;
+      res.hauteur = Math.round(b.height);
+      res.dansLaFenetre = b.left >= 0 && b.top >= 0
+          && b.right <= window.innerWidth && b.bottom <= window.innerHeight;
+      pop.querySelector('.cp-close').click();
+      await sleep(80);
+    }
+    res.refermee = !document.querySelector('.cp-pop');
+    wrap.scrollTop = 0;
+    return res;
+  `);
+  attendu(r.ouverte, "la palette doit s'ouvrir au clic sur la pastille");
+  attendu(r.selectionne, "le nœud dont on règle la couleur doit être sélectionné");
+  egal(r.apres, r.avant, "un clic sur la pastille ne doit pas déplacer le nœud");
+  egal(r.defilementApres, r.defilementAvant,
+    `le canevas ne doit pas défiler sous le curseur pour dégager la place `
+    + `(${r.defilementAvant} -> ${r.defilementApres})`);
+  attendu(!r.recouvre, "la palette ne doit pas se poser sur la pastille elle-même");
+  attendu(r.ecart <= 16,
+    `la palette doit se poser contre la pastille, dessous ou à côté (écart ${r.ecart} px)`);
+  attendu(r.dansLaFenetre, "la palette doit tenir entièrement dans la fenêtre");
+  attendu(r.hauteur > 300,
+    `la palette doit rester entière, pas rognée (hauteur ${r.hauteur}, `
+    + `place sous la pastille : ${r.placeSousLaPastille} px)`);
+  attendu(r.refermee, "« Fermer » doit refermer la palette");
+});
+
+test("pastille : la couleur choisie prend sur le nœud, et l'annulation la rend", "complexe", async p => {
+  const r = await p(`
+    const n = one('Féverolle');
+    const avant = (byId(n.id).color || '').toLowerCase();
+    await clicPastille(n.id);
+    if (!document.querySelector('.cp-pop')) throw new Error('la palette ne s\\'est pas ouverte');
+    const autre = [...document.querySelectorAll('.cp-pop .cp-swatch')]
+        .find(b => b.dataset.hex !== avant);
+    const vise = autre.dataset.hex;
+    autre.click();
+    await sleep(160);
+    const res = {
+      avant, vise,
+      apres: (byId(n.id).color || '').toLowerCase(),
+      peinte: (elOf(n.id).querySelector('.node-color-dot').getAttribute('fill') || '').toLowerCase(),
+      ouverte: !!document.querySelector('.cp-pop')
+    };
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true }));
+    await sleep(160);
+    res.annule = (byId(n.id).color || '').toLowerCase();
+    return res;
+  `);
+  egal(r.apres, r.vise, "le nœud doit porter la couleur choisie");
+  egal(r.peinte, r.vise, "la pastille peinte doit montrer la nouvelle couleur");
+  attendu(!r.ouverte, "choisir une couleur referme la palette");
+  egal(r.annule, r.avant, "l'annulation doit rendre la couleur d'avant");
+});
+
 test("panneau : les champs nombre et couleur tiennent en demi-colonne", "complexe", async p => {
   const r = await p(`
     await selectNode(one('Féverolle').id);

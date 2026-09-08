@@ -123,11 +123,10 @@ const clicReel = async (x, y) => {
     await sleep(80);
 };
 /**
- * Sélectionne un nœud par un clic réel sur sa boîte.
- * On l'amène d'abord dans la fenêtre : elementFromPoint ne voit que ce qui est
+ * Amène un nœud dans la fenêtre : elementFromPoint ne voit que ce qui est
  * réellement affiché, un nœud hors champ renverrait le panneau latéral.
  */
-const selectNodeReel = async id => {
+const amenerEnVue = async id => {
     const wrap = document.querySelector('#canvas-wrap');
     const n = byId(id);
     const vue = wrap.getBoundingClientRect();
@@ -137,9 +136,32 @@ const selectNodeReel = async id => {
         wrap.scrollLeft = Math.max(0, n.x - 40);
     }
     await sleep(60);
+};
+
+/** Sélectionne un nœud par un clic réel sur sa boîte. */
+const selectNodeReel = async id => {
+    await amenerEnVue(id);
     const p = centerOf(id);
     await clicReel(p.x, p.y);
     return T.selection();
+};
+
+/** Pastille de couleur d'un nœud, telle qu'elle est peinte. */
+const pastilleDe = id => {
+    const el = elOf(id);
+    if (!el) throw new Error('nœud non rendu : ' + id);
+    return el.querySelector('.node-color-dot').getBoundingClientRect();
+};
+
+/**
+ * Clic RÉEL sur la pastille de couleur d'un nœud. La cible est re-résolue par
+ * elementFromPoint : c'est ce qui éprouve que la pastille est bien attrapable,
+ * et pas seulement que son gestionnaire est branché.
+ */
+const clicPastille = async id => {
+    await amenerEnVue(id);
+    const r = pastilleDe(id);
+    await clicReel(r.left + r.width / 2, r.top + r.height / 2);
 };
 
 /** Champ du panneau latéral, repéré par son intitulé. */

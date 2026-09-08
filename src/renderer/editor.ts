@@ -939,14 +939,7 @@ function renderEditor(): void {
         rect.setAttribute("rx", "0");
         g.appendChild(rect);
 
-        // Pastille : couleur effective du nœud (celle utilisée dans l'aperçu)
-        const dot = document.createElementNS(SVGNS, "circle");
-        dot.setAttribute("class", "node-color-dot");
-        dot.setAttribute("cx", String(NODE_W - 11));
-        dot.setAttribute("cy", "11");
-        dot.setAttribute("r", "5");
-        dot.setAttribute("fill", n.color || options.nodes.nodeColor);
-        g.appendChild(dot);
+        g.appendChild(pastilleCouleur(n));
 
         const label = document.createElementNS(SVGNS, "text");
         label.setAttribute("class", "node-label");
@@ -998,6 +991,80 @@ function renderEditor(): void {
         canvas.appendChild(linkDrag.preview);
         if (linkDrag.overId) nodeEls.get(linkDrag.overId)?.classList.add("drop-target");
     }
+}
+
+/**
+ * Pastille de couleur du nœud : elle montre la couleur effective (celle de
+ * l'aperçu) et l'ouvre au clic. Régler la couleur là où on la voit évite
+ * l'aller-retour par le panneau, qui demandait de sélectionner le nœud puis de
+ * retrouver le champ dans sa carte.
+ */
+function pastilleCouleur(n: FlowNode): SVGGElement {
+    const cx = NODE_W - 11;
+    const cy = 11;
+    const g = document.createElementNS(SVGNS, "g");
+    g.setAttribute("class", "node-color");
+
+    // Zone de prise plus large que le rond : 5 px de rayon, ça ne s'attrape pas.
+    // Elle reste dans la boîte, pour ne pas manger de clics du canevas.
+    const hit = document.createElementNS(SVGNS, "circle");
+    hit.setAttribute("class", "node-color-hit");
+    hit.setAttribute("cx", String(cx));
+    hit.setAttribute("cy", String(cy));
+    hit.setAttribute("r", "10");
+    hit.setAttribute("fill", "transparent");
+    g.appendChild(hit);
+
+    const dot = document.createElementNS(SVGNS, "circle");
+    dot.setAttribute("class", "node-color-dot");
+    dot.setAttribute("cx", String(cx));
+    dot.setAttribute("cy", String(cy));
+    dot.setAttribute("r", "5");
+    dot.setAttribute("fill", couleurDuNoeud(n));
+    g.appendChild(dot);
+
+    g.appendChild(svgTitle("Cliquer pour changer la couleur du nœud"));
+
+    // Le nœud écoute le mousedown pour se laisser déplacer : sans ce garde-fou,
+    // un appui sur la pastille amorcerait un glisser.
+    g.addEventListener("mousedown", e => { e.stopPropagation(); e.preventDefault(); });
+    g.addEventListener("dblclick", e => e.stopPropagation());
+    g.addEventListener("click", e => {
+        e.stopPropagation(); // ne pas repasser par la sélection du nœud
+        ouvrirCouleurDuNoeud(n);
+    });
+    return g;
+}
+
+/** Couleur effective d'un nœud : la sienne, ou celle par défaut du diagramme. */
+function couleurDuNoeud(n: FlowNode): string {
+    return n.color || options.nodes.nodeColor;
+}
+
+/** Ouvre la palette sur la pastille du nœud, en vue d'édition. */
+function ouvrirCouleurDuNoeud(n: FlowNode): void {
+    // Sélectionner reconstruit le canevas : c'est la NOUVELLE pastille qu'il
+    // faut ancrer, celle d'où vient le clic vient d'être retirée du document.
+    if (selection.type !== "node" || selection.id !== n.id) select("node", n.id);
+    const ancre = nodeEls.get(n.id)?.querySelector(".node-color-dot");
+    if (!ancre) return;
+    const valeur = couleurDuNoeud(n);
+    openColorPopover({
+        anchor: ancre,
+        placement: "libre",
+        label: "Couleur",
+        value: normalizeHex(valeur) || toHex(valeur),
+        usedColors: couleursDuDocument(),
+        onBeforeChange: () => { snapshot(); },
+        onPick: v => {
+            n.color = v;
+            render();
+            // Le champ « Couleur » du panneau montre la même couleur : le
+            // laisser en arrière ferait douter de celle qui a pris.
+            buildSidebar();
+            persist();
+        }
+    });
 }
 
 /**
@@ -1679,7 +1746,7 @@ function buildSidebar(): void {
                 persist();
             }));
             s.appendChild(colorField(
-                "Couleur", n.color || options.nodes.nodeColor,
+                "Couleur", couleurDuNoeud(n),
                 v => { n.color = v; render(); persist(); }
             ));
             s.appendChild(divider());
