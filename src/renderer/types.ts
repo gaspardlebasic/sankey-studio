@@ -250,6 +250,7 @@ export interface SankeyOptions {
     nodeLabels: {
         show: boolean;
         fontColor: string;
+        opacity: number;
         fontFamily: string;
         fontSize: number;
         weight: number;
@@ -266,6 +267,7 @@ export interface SankeyOptions {
     columnHeaders: {
         show: boolean;
         fontColor: string;
+        opacity: number;
         backgroundColor: string;
         fontFamily: string;
         fontSize: number;
@@ -287,6 +289,7 @@ export interface SankeyOptions {
          */
         chiffresSignificatifs: number;
         fontColor: string;
+        opacity: number;
         fontFamily: string;
         fontSize: number;
         weight: number;
@@ -330,6 +333,7 @@ export interface SankeyOptions {
         /** Nom de chaque couloir, indexé par son numéro. Vide = « Couloir N ». */
         titles: Record<string, string>;
         fontColor: string;
+        opacity: number;
         fontFamily: string;
         fontSize: number;
         weight: number;
@@ -346,6 +350,7 @@ export interface SankeyOptions {
         sameScale: boolean;
         align: "gauche" | "centre" | "droite";
         fontColor: string;
+        opacity: number;
         fontFamily: string;
         fontSize: number;
         weight: number;
