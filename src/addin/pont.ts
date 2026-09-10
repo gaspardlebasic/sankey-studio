@@ -204,3 +204,13 @@ export async function elargirVolet(): Promise<number> {
   }
   return window.innerWidth;
 }
+
+/** Réduit le task pane à son format compact dès l'ouverture du complément. */
+export async function reduireVolet(): Promise<number> {
+  const api = (Office as any).extensionLifeCycle && (Office as any).extensionLifeCycle.taskpane;
+  if (!api || typeof api.setWidth !== "function") return window.innerWidth;
+  const largeur = 320;
+  try { api.setWidth(largeur); } catch { return window.innerWidth; }
+  await new Promise(r => setTimeout(r, 400));
+  return window.innerWidth;
+}

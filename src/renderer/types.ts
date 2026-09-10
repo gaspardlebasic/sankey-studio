@@ -94,6 +94,7 @@ export interface TextStyle {
     fontFamily: string;
     fontSize: number;
     fontColor: string;
+    opacity: number; // 0..100
     weight: number; // 300 fine … 700 grasse
     italic: boolean;
     uppercase: boolean; // affiché tout en capitales (les données ne changent pas)
@@ -382,6 +383,7 @@ export function defaultOptions(): SankeyOptions {
         nodeLabels: {
             show: true,
             fontColor: "#000000",
+            opacity: 100,
             fontFamily: FONT,
             fontSize: 12,
             weight: 400,
@@ -398,6 +400,7 @@ export function defaultOptions(): SankeyOptions {
         columnHeaders: {
             show: true,
             fontColor: "#ffffff",
+            opacity: 100,
             backgroundColor: "#000000",
             fontFamily: FONT,
             fontSize: 13,
@@ -413,6 +416,7 @@ export function defaultOptions(): SankeyOptions {
             multiplicateur: "aucun",
             chiffresSignificatifs: 3,
             fontColor: "#000000",
+            opacity: 100,
             fontFamily: FONT,
             fontSize: 10,
             weight: 400,
@@ -433,6 +437,7 @@ export function defaultOptions(): SankeyOptions {
             showTitles: true,
             titles: {},
             fontColor: "#6b6b6b",
+            opacity: 100,
             fontFamily: FONT,
             fontSize: 12,
             weight: 400,
@@ -447,6 +452,7 @@ export function defaultOptions(): SankeyOptions {
             sameScale: true,
             align: "gauche",
             fontColor: "#000000",
+            opacity: 100,
             fontFamily: FONT,
             fontSize: 16,
             weight: 700,
