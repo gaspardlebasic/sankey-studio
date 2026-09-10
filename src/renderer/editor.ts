@@ -2227,6 +2227,8 @@ function fontControls(parent: HTMLElement, o: TextStyle, rr: () => void): void {
 
     parent.appendChild(numberField("Taille", o.fontSize, v => { o.fontSize = v; rr(); }));
     parent.appendChild(colorField("Couleur du texte", o.fontColor, v => { o.fontColor = v; rr(); }));
+    parent.appendChild(rangeField("Opacité du texte (%)", o.opacity, 0, 100,
+        v => { o.opacity = v; rr(); }));
 
     const group = document.createElement("div");
     group.className = "style-toggles";
@@ -3147,6 +3149,8 @@ function normaliserPolice(o: Record<string, unknown> | null | undefined, defaut:
     if (typeof o.fontFamily !== "string") o.fontFamily = defaut.fontFamily;
     if (typeof o.fontSize !== "number") o.fontSize = defaut.fontSize;
     if (typeof o.fontColor !== "string") o.fontColor = defaut.fontColor;
+    const opacity = Number(o.opacity);
+    o.opacity = isFinite(opacity) ? Math.min(100, Math.max(0, opacity)) : defaut.opacity;
 }
 
 /** Toutes les polices du document, celles des types de nœuds comprises. */

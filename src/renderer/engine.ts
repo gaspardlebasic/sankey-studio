@@ -106,6 +106,7 @@ export function policeDuType(opt: SankeyOptions, kind: NodeKind): NodeTypeFont {
         fontFamily: NL.fontFamily,
         fontSize: NL.fontSize,
         fontColor: NL.fontColor,
+        opacity: NL.opacity,
         weight: typeof NL.weight === "number" ? NL.weight : 400,
         italic: NL.italic,
         uppercase: !!NL.uppercase
@@ -363,6 +364,7 @@ export function renderSankeyGroups(
                 .attr("y", y + taille)
                 .attr("text-anchor", ancre)
                 .attr("fill", F.fontColor)
+                .attr("fill-opacity", clamp(F.opacity, 0, 100) / 100)
                 .style("font-family", F.fontFamily)
                 .style("font-size", taille + "px")
                 .style("font-weight", String(F.weight))
@@ -1018,6 +1020,7 @@ function drawSankey(
                 .attr("y", (haut + bas) / 2)
                 .attr("dy", "0.35em")
                 .attr("fill", C.fontColor)
+                .attr("fill-opacity", clamp(C.opacity, 0, 100) / 100)
                 .style("font-family", C.fontFamily)
                 .style("font-size", tailleCouloir + "px")
                 .style("font-weight", String(C.weight))
@@ -1250,6 +1253,7 @@ function drawSankey(
                 return `rotate(${a} ${mx(d)} ${my(d)})`;
             })
             .attr("fill", V.fontColor)
+            .attr("fill-opacity", clamp(V.opacity, 0, 100) / 100)
             .style("font-family", V.fontFamily)
             .style("font-size", vfs + "px")
             .style("font-weight", String(V.weight))
@@ -1391,6 +1395,7 @@ function drawSankey(
                 // Repère stable pour les tests et le débogage, comme les nœuds.
                 .attr("data-label-for", d.id)
                 .attr("fill", police.fontColor)
+                .attr("fill-opacity", clamp(police.opacity, 0, 100) / 100)
                 .style("font-family", police.fontFamily)
                 .style("font-size", fs + "px")
                 .style("font-weight", String(police.weight))
@@ -1436,6 +1441,7 @@ function drawSankey(
                 .attr("dy", "0.35em")
                 .attr("text-anchor", "middle")
                 .attr("fill", H.fontColor)
+                .attr("fill-opacity", clamp(H.opacity, 0, 100) / 100)
                 .style("font-family", H.fontFamily)
                 .style("font-size", headerFontSize + "px")
                 .style("font-weight", String(H.weight))

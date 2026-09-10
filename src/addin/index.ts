@@ -19,7 +19,7 @@
  * suffirait pas : `Office.onReady` est asynchrone.
  */
 
-import { installerPont, elargirVolet, supporte } from "./pont";
+import { installerPont, elargirVolet, reduireVolet, supporte } from "./pont";
 import type { Pont } from "./pont";
 import { diagrammePresent, initialiserClasseur } from "./excel-office";
 import { CourtierVolet, JEU_FENETRE, type Etat } from "./courtier-volet";
@@ -166,6 +166,9 @@ function demarrer(): void {
       annoncer("Sankey Studio fonctionne dans Excel.");
       return;
     }
+    // Le mode normal ouvre l'éditeur dans une fenêtre : le volet ne garde que
+    // l'état et doit rester compact. Le repli l'élargit ensuite si nécessaire.
+    await reduireVolet();
 
     let pont: Pont;
     let nomClasseur: string;
