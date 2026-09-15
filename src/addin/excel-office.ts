@@ -1155,14 +1155,42 @@ export async function ajouterColonnesManquantes(nomFeuille?: string): Promise<Re
         };
       }
 
-      const feuille = t.noeuds.table.worksheet;
+      // Vérifier que les tableaux ne se superposent pas et qu'il y a assez d'espace
+      const rangeNoeuds = t.noeuds.table.getRange();
+      rangeNoeuds.load("columnIndex, columnCount, worksheet");
+      const rangeLiens = t.liens.table.getRange();
+      rangeLiens.load("columnIndex, columnCount");
+      await context.sync();
+
+      const feuille = rangeNoeuds.worksheet;
+
+      const noeudsEndCol = rangeNoeuds.columnIndex + rangeNoeuds.columnCount;
+      const liensStartCol = rangeLiens.columnIndex;
+      
+      // Vérifier que les tableaux ne se superposent pas
+      // Ils peuvent se toucher (pas de colonne vide entre eux), mais pas se chevaucher
+      // Après ajout des colonnes manquantes, calculer la nouvelle position du tableau Nœuds
+      const colsNoeuds = rangeNoeuds.columnCount + (manquantes.noeuds.length > 0 ? manquantes.noeuds.length : 0);
+      const nouveauxNoeudsEndCol = rangeNoeuds.columnIndex + colsNoeuds;
+      
+      // Vérifier que même après ajout, les tableaux ne se superposent pas
+      // On autorise la position adjacente (noeudsEndCol === liensStartCol)
+      if (nouveauxNoeudsEndCol > liensStartCol) {
+        // Calculer combien de colonnes il faudrait pour éviter la superposition
+        const espaceNecessaire = nouveauxNoeudsEndCol - liensStartCol;
+        return {
+          ok: false,
+          message: `Pas assez d'espace entre les tableaux : le tableau Nœuds étendu empiéterait sur le tableau Liens. ` +
+                   `(Nœuds finit en colonne ${nouveauxNoeudsEndCol}, Liens commence en ${liensStartCol}). ` +
+                   `Ajoutez ${espaceNecessaire} colonne(s) vide(s) entre les deux tableaux et réessayez.`
+        };
+      }
 
       // Ajouter les colonnes manquantes au tableau des nœuds
       if (manquantes.noeuds.length > 0) {
-        // Le tableau s'étend sur tout le corps (en-tête + données)
         const range = t.noeuds.table.getRange();
         range.load("rowCount, columnCount, rowIndex, columnIndex");
-        const headerRange = range.getRow(0);
+        const headerRange = t.noeuds.table.getHeaderRowRange();
         headerRange.load("values");
         await context.sync();
 
@@ -1190,7 +1218,7 @@ export async function ajouterColonnesManquantes(nomFeuille?: string): Promise<Re
       if (manquantes.liens.length > 0) {
         const range = t.liens.table.getRange();
         range.load("rowCount, columnCount, rowIndex, columnIndex");
-        const headerRange = range.getRow(0);
+        const headerRange = t.liens.table.getHeaderRowRange();
         headerRange.load("values");
         await context.sync();
 

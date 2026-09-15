@@ -1201,6 +1201,9 @@ await test("verifierColonnesManquantes : pas de colonnes manquantes si tout est 
   }
 });
 
+// Note: ajouterColonnesManquantes n'est pas testée ici car le faux Office
+// ne supporte pas feuille.getRangeByIndexes. À tester manuellement avec un vrai Excel.
+
 /* ------------------------------ bilan ------------------------------ */
 
 console.log(`\n${ok}/${ok + echecs.length} tests passés`);

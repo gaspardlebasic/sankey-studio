@@ -3705,42 +3705,24 @@ async function amorcerDepuisClasseur(): Promise<void> {
     if (colonnesManquantes && 
         (colonnesManquantes.noeuds.length > 0 || colonnesManquantes.liens.length > 0)) {
       
-      // Proposer à l'utilisateur d'ajouter les colonnes manquantes
-      const totalManquant = colonnesManquantes.noeuds.length + colonnesManquantes.liens.length;
-      if (totalManquant > 0) {
-        const message = `Ce classeur semble provenir d'une ancienne version de Sankey Studio.\n\n` +
-          (colonnesManquantes.noeuds.length > 0 
-            ? `Colonnes manquantes dans le tableau Nœuds : ${colonnesManquantes.noeuds.join(", ")}\n`
-            : "") +
-          (colonnesManquantes.liens.length > 0
-            ? `Colonnes manquantes dans le tableau Liens : ${colonnesManquantes.liens.join(", ")}\n`
-            : "") +
-          `Souhaitez-vous les ajouter automatiquement ?`;
-        
-        // Vérifier que le pont a bien la méthode ajouterColonnesManquantes
-        if (typeof d.ajouterColonnesManquantes === "function") {
-          const ajouter = confirm(message);
-          if (ajouter) {
-            setStatus("Ajout des colonnes manquantes…");
-            const result = await d.ajouterColonnesManquantes(excelPath);
-            if (result && result.ok) {
-              setStatus(`Colonnes ajoutées : ${result.message || "succès"}. Relire le classeur…`);
-              // Relire après l'ajout des colonnes
-              const res2 = await d.readExcel(excelPath);
-              if (res2 && res2.ok && res2.data) {
-                dataToUse = res2.data;
-              }
-            } else {
-              setStatus(`Échec de l'ajout des colonnes : ${result?.message || "erreur inconnue"}`);
-              // Continuer quand même avec les données existantes
-            }
+      // Ajouter automatiquement les colonnes manquantes sans demander confirmation
+      if (typeof d.ajouterColonnesManquantes === "function") {
+        setStatus("Ajout des colonnes manquantes…");
+        const result = await d.ajouterColonnesManquantes(excelPath);
+        if (result && result.ok) {
+          setStatus(`Colonnes ajoutées : ${result.message || "succès"}. Relire le classeur…`);
+          // Relire après l'ajout des colonnes
+          const res2 = await d.readExcel(excelPath);
+          if (res2 && res2.ok && res2.data) {
+            dataToUse = res2.data;
           }
         } else {
-          // La méthode n'est pas disponible, afficher un avertissement
-          setStatus(`Colonnes manquantes détectées : ${colonnesManquantes.noeuds.join(", ")} (nœuds), ${colonnesManquantes.liens.join(", ")} (liens)`);
-          // Afficher une alerte à l'utilisateur
-          alert(message + "\n\nNote : cette version ne permet pas de les ajouter automatiquement.");
+          setStatus(`Échec de l'ajout des colonnes : ${result?.message || "erreur inconnue"}`);
+          // Continuer quand même avec les données existantes
         }
+      } else {
+        // La méthode n'est pas disponible, afficher un avertissement
+        setStatus(`Colonnes manquantes détectées : ${colonnesManquantes.noeuds.join(", ")} (nœuds), ${colonnesManquantes.liens.join(", ")} (liens)`);
       }
     }
     
