@@ -51,11 +51,24 @@ export interface DonneesExcel {
   /** Le tableau des liens porte-t-il « Part bio / durable » ? */
   hasBio?: boolean;
   sheetName?: string;
+  /** Colonnes manquantes dans chaque tableau. */
+  colonnesManquantes?: ColonnesManquantes;
 }
 
 export interface OptionsEcriture {
   /** Demander à Excel d'enregistrer après l'écriture. Réservé à un « App → Excel » explicite. */
   save?: boolean;
+}
+
+export interface ColonnesManquantes {
+  noeuds: string[];
+  liens: string[];
+}
+
+export interface ResultatAjoutColonnes {
+  ok: boolean;
+  message?: string;
+  colonnesAjoutees?: ColonnesManquantes;
 }
 
 /**
@@ -365,13 +378,18 @@ export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel |
     // Un classeur écrit avant l'arrivée des couloirs (ou des types) n'a pas la
     // colonne : l'app doit alors GARDER ce qu'elle connaît au lieu de tout
     // remettre au défaut.
+    
+    // Vérifier les colonnes manquantes
+    const manquantes = verifierColonnesManquantes(t);
+    
     return {
       sheetName: t.feuille || nomFeuille || FEUILLE_DEFAUT,
       nodes,
       links,
       hasLane: !!(t.noeuds && t.noeuds.index.has("Couloir")),
       hasKind: !!(t.noeuds && t.noeuds.index.has("Type")),
-      hasBio: !!(t.liens && t.liens.index.has(LINK_COL_BIO))
+      hasBio: !!(t.liens && t.liens.index.has(LINK_COL_BIO)),
+      colonnesManquantes: (manquantes.noeuds.length > 0 || manquantes.liens.length > 0) ? manquantes : undefined
     };
   });
 }
@@ -1078,6 +1096,170 @@ function reposerLesNombres(
       blocDuCorps(corps, c, debut, r - debut).values = donnees.slice(debut, r);
       debut = -1;
     }
+  }
+}
+
+/* --------------------- vérification des colonnes ---------------------- */
+
+/**
+ * Vérifie quelles colonnes manquent dans les tableaux existants par rapport
+ * au schéma attendu (NODE_COLS et LINK_COLS).
+ *
+ * Retourne les colonnes manquantes pour chaque tableau.
+ */
+export function verifierColonnesManquantes(t: Tableaux): ColonnesManquantes {
+  const manquantes: ColonnesManquantes = { noeuds: [], liens: [] };
+
+  if (t.noeuds) {
+    manquantes.noeuds = NODE_COLS.filter(col => !t.noeuds!.index.has(col));
+  } else {
+    manquantes.noeuds = NODE_COLS.slice();
+  }
+
+  if (t.liens) {
+    manquantes.liens = LINK_COLS.filter(col => !t.liens!.index.has(col));
+  } else {
+    manquantes.liens = LINK_COLS.slice();
+  }
+
+  return manquantes;
+}
+
+/**
+ * Ajoute les colonnes manquantes aux tableaux existants.
+ *
+ * Cette fonction MODIFIE le classeur en ajoutant les colonnes manquantes avec
+ * leurs en-têtes. Les données existantes ne sont pas modifiées.
+ *
+ * Les colonnes sont ajoutées à la fin de chaque tableau pour ne pas perturber
+ * l'ordre existant.
+ */
+export async function ajouterColonnesManquantes(nomFeuille?: string): Promise<ResultatAjoutColonnes> {
+  const cible = nomFeuille || FEUILLE_DEFAUT;
+
+  try {
+    return await Excel.run(async context => {
+      const t = await trouverTableaux(context, cible);
+      const manquantes = verifierColonnesManquantes(t);
+
+      // Si rien ne manque, rien à faire
+      if (manquantes.noeuds.length === 0 && manquantes.liens.length === 0) {
+        return { ok: true, message: "Toutes les colonnes sont présentes.", colonnesAjoutees: { noeuds: [], liens: [] } };
+      }
+
+      // On ne peut ajouter des colonnes que si les tableaux existent
+      if (!t.noeuds || !t.liens) {
+        return {
+          ok: false,
+          message: "Impossible d'ajouter des colonnes : un ou les deux tableaux sont introuvables."
+        };
+      }
+
+      const feuille = t.noeuds.table.worksheet;
+
+      // Ajouter les colonnes manquantes au tableau des nœuds
+      if (manquantes.noeuds.length > 0) {
+        // Le tableau s'étend sur tout le corps (en-tête + données)
+        const range = t.noeuds.table.getRange();
+        range.load("rowCount, columnCount, rowIndex, columnIndex");
+        const headerRange = range.getRow(0);
+        headerRange.load("values");
+        await context.sync();
+
+        const currentCols = range.columnCount || 0;
+        const currentHeaders = (headerRange.values && headerRange.values[0]) || [];
+        
+        // Construire les nouveaux en-têtes : existants + manquants
+        const newHeaders = currentHeaders.slice();
+        manquantes.noeuds.forEach(h => newHeaders.push(h));
+
+        // Réécrire l'en-tête complet
+        headerRange.values = [newHeaders];
+
+        // Redimensionner le tableau pour inclure les nouvelles colonnes
+        const newRange = feuille.getRangeByIndexes(
+          range.rowIndex,
+          range.columnIndex,
+          range.rowCount,
+          currentCols + manquantes.noeuds.length
+        );
+        t.noeuds.table.resize(newRange);
+      }
+
+      // Ajouter les colonnes manquantes au tableau des liens
+      if (manquantes.liens.length > 0) {
+        const range = t.liens.table.getRange();
+        range.load("rowCount, columnCount, rowIndex, columnIndex");
+        const headerRange = range.getRow(0);
+        headerRange.load("values");
+        await context.sync();
+
+        const currentCols = range.columnCount || 0;
+        const currentHeaders = (headerRange.values && headerRange.values[0]) || [];
+        
+        // Construire les nouveaux en-têtes : existants + manquants
+        const newHeaders = currentHeaders.slice();
+        manquantes.liens.forEach(h => newHeaders.push(h));
+
+        // Réécrire l'en-tête complet
+        headerRange.values = [newHeaders];
+
+        // Redimensionner le tableau pour inclure les nouvelles colonnes
+        const newRange = feuille.getRangeByIndexes(
+          range.rowIndex,
+          range.columnIndex,
+          range.rowCount,
+          currentCols + manquantes.liens.length
+        );
+        t.liens.table.resize(newRange);
+      }
+
+      await context.sync();
+
+      return {
+        ok: true,
+        message: `Colonnes ajoutées : nœuds (${manquantes.noeuds.join(", ")}), liens (${manquantes.liens.join(", ")})`,
+        colonnesAjoutees: manquantes
+      };
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      message: `Erreur lors de l'ajout des colonnes : ${(e as Error).message || String(e)}`
+    };
+  }
+}
+
+/**
+ * Vérifie si le classeur a des colonnes manquantes et retourne les informations.
+ * Utilisé par le renderer pour savoir quoi proposer.
+ */
+export async function verifierEtRetournerColonnesManquantes(nomFeuille?: string): Promise<{
+  ok: boolean;
+  manquantes: ColonnesManquantes;
+  message?: string;
+  feuille?: string;
+}> {
+  try {
+    return await Excel.run(async context => {
+      const t = await trouverTableaux(context, nomFeuille);
+      const manquantes = verifierColonnesManquantes(t);
+
+      return {
+        ok: true,
+        manquantes,
+        feuille: t.feuille || nomFeuille || FEUILLE_DEFAUT,
+        message: !!(manquantes.noeuds.length || manquantes.liens.length)
+          ? `Colonnes manquantes - Nœuds: [${manquantes.noeuds.join(", ")}] - Liens: [${manquantes.liens.join(", ")}]`
+          : "Toutes les colonnes sont présentes"
+      };
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      manquantes: { noeuds: [], liens: [] },
+      message: `Erreur lors de la vérification : ${(e as Error).message || String(e)}`
+    };
   }
 }
 

@@ -12,8 +12,8 @@
  */
 
 import {
-  lireDiagramme, ecrireDiagramme, ecouterTableaux,
-  type DonneesExcel, type EvenementTableau
+  lireDiagramme, ecrireDiagramme, ecouterTableaux, ajouterColonnesManquantes,
+  type DonneesExcel, type EvenementTableau, type ResultatAjoutColonnes
 } from "./excel-office.js";
 import type { Modele } from "../shared/modele-excel.js";
 import { FiltreEcho, AntiRebond } from "./synchro.js";
@@ -142,7 +142,13 @@ function construirePont(nomClasseur: string, evenements: boolean) {
     onExcelChanged(cb: () => void) { rappelChangement = cb; },
 
     lireApparence,
-    ecrireApparence
+    ecrireApparence,
+    
+    /**
+     * Ajoute les colonnes manquantes aux tableaux du diagramme.
+     * Utilisé pour mettre à jour les classeurs anciens.
+     */
+    ajouterColonnesManquantes: (feuille?: string) => ajouterColonnesManquantes(feuille)
   };
 }
 
@@ -209,7 +215,7 @@ export async function elargirVolet(): Promise<number> {
 export async function reduireVolet(): Promise<number> {
   const api = (Office as any).extensionLifeCycle && (Office as any).extensionLifeCycle.taskpane;
   if (!api || typeof api.setWidth !== "function") return window.innerWidth;
-  const largeur = 320;
+  const largeur = 272;
   try { api.setWidth(largeur); } catch { return window.innerWidth; }
   await new Promise(r => setTimeout(r, 400));
   return window.innerWidth;

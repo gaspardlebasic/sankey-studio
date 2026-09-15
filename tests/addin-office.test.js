@@ -1157,6 +1157,50 @@ await test("écriture : tableaux introuvables -> ok faux et message clair", asyn
   attendu(/introuvables/.test(r.error || ""), "message explicite : " + r.error);
 });
 
+await test("verifierColonnesManquantes : détecte les colonnes manquantes", async () => {
+  // Créer un tableau avec des colonnes manquantes
+  const c = classeurType({
+    entetesNoeuds: ["Filière", "Noeud", "Numéro de colonne d'affichage"], // Il manque Couloir, Type, etc.
+    entetesLiens: ["Filière", "Origine", "Destination", "Valeur du flux"], // Il manque Part bio
+    noeuds: [["Lait", "Production", 1]],
+    liens: [["Lait", "Production", "Lait cru", 100]]
+  });
+  
+  // Lire les données - la fonction verifierColonnesManquantes est utilisée en interne
+  const data = await office.lireDiagramme();
+  attendu(data !== null, "Doit pouvoir lire le diagramme");
+  
+  // Vérifier que colonnesManquantes est présent et contient les colonnes attendues
+  attendu(data.colonnesManquantes, "Doit avoir colonnesManquantes");
+  
+  // Vérifier que Type et Couloir manquent dans les nœuds
+  attendu(data.colonnesManquantes.noeuds.includes("Type"), "Type doit manquer dans nœuds");
+  attendu(data.colonnesManquantes.noeuds.includes("Couloir"), "Couloir doit manquer dans nœuds");
+  
+  // Vérifier que Part bio / durable manque dans les liens
+  attendu(data.colonnesManquantes.liens.includes("Part bio / durable"), "Part bio doit manquer dans liens");
+});
+
+await test("verifierColonnesManquantes : pas de colonnes manquantes si tout est présent", async () => {
+  // Créer un tableau avec toutes les colonnes
+  const c = classeurType({
+    entetesNoeuds: NODE_COLS.slice(),
+    entetesLiens: LINK_COLS.slice(),
+    noeuds: [["Lait", "Production", 1, "", 0, "", "n1", 1, "produit"]],
+    liens: [["Lait", "Production", "Lait cru", 100, "t", "n1", "n2", 0]]
+  });
+  
+  const data = await office.lireDiagramme();
+  attendu(data !== null, "Doit pouvoir lire le diagramme");
+  
+  // Si toutes les colonnes sont présentes, colonnesManquantes ne doit pas être défini
+  // ou doit être vide
+  if (data.colonnesManquantes) {
+    egal(data.colonnesManquantes.noeuds.length, 0, "Aucune colonne ne doit manquer dans nœuds");
+    egal(data.colonnesManquantes.liens.length, 0, "Aucune colonne ne doit manquer dans liens");
+  }
+});
+
 /* ------------------------------ bilan ------------------------------ */
 
 console.log(`\n${ok}/${ok + echecs.length} tests passés`);

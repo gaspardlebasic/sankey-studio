@@ -61,7 +61,10 @@ function construirePontFenetre(mandataire: Mandataire, accueil: Accueil) {
     },
 
     ecrireApparence: (json: string) => tunnel(mandataire, "ecrireApparence", [json],
-      { ok: false } as { ok: boolean; error?: string })
+      { ok: false } as { ok: boolean; error?: string }),
+    
+    ajouterColonnesManquantes: (feuille?: string) => tunnel(mandataire, "ajouterColonnesManquantes", [feuille],
+      { ok: false } as { ok: boolean; message?: string; colonnesAjoutees?: unknown })
   };
 }
 
