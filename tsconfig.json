@@ -15,6 +15,7 @@
   "include": [
     "src/renderer/**/*.ts",
     "src/addin/**/*.ts",
+    "src/onlyoffice/**/*.ts",
     "src/shared/**/*.d.ts"
   ]
 }

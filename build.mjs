@@ -101,6 +101,43 @@ async function buildAddin() {
   return bundles;
 }
 
+async function buildOnlyOffice() {
+  if (existsSync("dist/onlyoffice")) rmSync("dist/onlyoffice", { recursive: true, force: true });
+  mkdirSync("dist/onlyoffice", { recursive: true });
+
+  await esbuild.build({
+    ...commun,
+    entryPoints: ["src/onlyoffice/index.ts"],
+    outfile: "dist/onlyoffice/sankey-onlyoffice.js"
+  });
+
+  writeFileSync(
+    "dist/onlyoffice/index.html",
+    readFileSync("src/onlyoffice/index.html", "utf8").replace("__BUNDLE__", "sankey-onlyoffice.js")
+  );
+  cpSync("src/onlyoffice/config.json", "dist/onlyoffice/config.json");
+  if (existsSync("src/onlyoffice/plugins.js")) {
+    cpSync("src/onlyoffice/plugins.js", "dist/onlyoffice/plugins.js");
+  }
+  cpSync("src/renderer/styles.css", "dist/onlyoffice/styles.css");
+  cpSync("src/renderer/fonts", "dist/onlyoffice/fonts", { recursive: true });
+  if (existsSync("build/addin")) {
+    cpSync("build/addin", "dist/onlyoffice/assets", { recursive: true });
+  }
+
+  // Création du paquet .plugin (archive zip renommée .plugin pour ONLYOFFICE)
+  try {
+    const pluginZip = "dist/sankey-studio.plugin";
+    if (existsSync(pluginZip)) rmSync(pluginZip, { force: true });
+    const { execFileSync } = await import("child_process");
+    execFileSync("zip", ["-q", "-r", "../sankey-studio.plugin", "."], { cwd: "dist/onlyoffice" });
+  } catch (err) {
+    console.warn("Avertissement : création de dist/sankey-studio.plugin ignorée (" + err.message + ")");
+  }
+
+  return "dist/onlyoffice";
+}
+
 if (watch) {
   const ctx = await esbuild.context(options);
   await ctx.watch();
@@ -108,10 +145,14 @@ if (watch) {
   // Le complément n'est pas surveillé : il se sert par HTTPS (npm run addin:serve)
   // et sa page doit de toute façon être rechargée dans Excel.
   await buildAddin();
+  await buildOnlyOffice();
   console.log("esbuild: watching…");
 } else {
   await esbuild.build(options);
   copyStatic();
   const bundles = await buildAddin();
-  console.log("build terminé — complément : " + bundles.map(b => "dist/addin/" + b).join(", "));
+  await buildOnlyOffice();
+  console.log("build terminé — Excel : " + bundles.map(b => "dist/addin/" + b).join(", "));
+  console.log("build terminé — ONLYOFFICE : dist/onlyoffice (dist/sankey-studio.plugin)");
 }
+

@@ -28,6 +28,8 @@ d'administration Microsoft 365, et complément **servi depuis GitHub et déclar�
 sans aucun droit d'administration ni rien à installer — puis retrait et dépannage. La publication du site et
 du manifeste, elle, reste dans [DIFFUSION.md](DIFFUSION.md).
 
+Pour utiliser Sankey Studio dans **ONLYOFFICE Spreadsheet Editor** (Desktop Editors ou Web), consulte **[INSTALLATION-ONLYOFFICE.md](INSTALLATION-ONLYOFFICE.md)**.
+
 ## Comment ça se présente
 
 Le **volet** tient Office.js et le classeur ; il ouvre une **fenêtre d'édition** à 98 % de

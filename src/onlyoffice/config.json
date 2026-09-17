@@ -1,0 +1,38 @@
+{
+  "name": "Sankey Studio",
+  "nameLocale": {
+    "fr": "Sankey Studio",
+    "en": "Sankey Studio"
+  },
+  "guid": "asc.{F8E92543-A729-4B52-8874-9C78A1D3482C}",
+  "version": "1.0.0",
+  "variations": [
+    {
+      "description": "Éditeur graphique de diagrammes de flux Sankey dans votre classeur",
+      "descriptionLocale": {
+        "fr": "Éditeur graphique de diagrammes de flux Sankey dans votre classeur",
+        "en": "Sankey flow diagram editor in your spreadsheet"
+      },
+      "url": "index.html",
+      "icons": ["assets/icon-16.png", "assets/icon-32.png"],
+      "icons2": [
+        {
+          "100%": { "normal": "assets/icon-32.png" },
+          "125%": { "normal": "assets/icon-32.png" },
+          "150%": { "normal": "assets/icon-64.png" },
+          "200%": { "normal": "assets/icon-64.png" }
+        }
+      ],
+      "isViewer": false,
+      "EditorsSupport": ["cell"],
+      "isVisual": true,
+      "isModal": true,
+      "isInsideMode": false,
+      "type": "window",
+      "size": [1280, 800],
+      "initDataType": "none",
+      "initData": "",
+      "buttons": []
+    }
+  ]
+}
