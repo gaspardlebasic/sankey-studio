@@ -3000,6 +3000,179 @@ test("valeurs des liens : le multiplicateur divise tout et arrondit", "complexe"
     "et revient quand le multiplicateur est « aucun »");
 });
 
+test("étiquettes (aperçu) : « À l'extérieur » écrit les noms hors des colonnes de bord",
+  "complexe", async p => {
+  const r = await p(`
+    await reglerCarte('Nœuds', 'Position', 'exterieur');
+    await versApercu();
+    const rects = rectsApercu();
+    const parId = new Map(etiquettesApercu().map(e => [e.id, e]));
+    const axe = rc => Math.round((rc.gauche + rc.droite) / 2);
+    const axes = [...new Set(rects.map(axe))].sort((a, b) => a - b);
+    const bordDe = rc => axe(rc) === axes[0] ? 'gauche'
+      : axe(rc) === axes[axes.length - 1] ? 'droite' : 'milieu';
+    const cadre = canvasRect();
+    const fillDe = id => document.querySelector('#canvas text[data-label-for="' + id + '"]')
+      .getAttribute('fill');
+    const couleurNoeud = id => document.querySelector('#canvas rect[data-id="' + id + '"]')
+      .getAttribute('fill');
+    const mesurer = () => rectsApercu().map(rc => {
+      const e = new Map(etiquettesApercu().map(x => [x.id, x])).get(rc.id);
+      return { id: rc.id, bord: bordDe(rc),
+               aGauche: e.droite <= rc.gauche + 0.5,
+               aDroite: e.gauche >= rc.droite - 0.5,
+               deborde: e.gauche < cadre.left - 0.5 || e.droite > cadre.right + 0.5,
+               fill: fillDe(rc.id), couleur: couleurNoeud(rc.id) };
+    });
+    const avant = mesurer();
+    await cocher('Nœuds', 'Étiquettes extérieures de la couleur du nœud');
+    const apres = mesurer();
+    await versEdition();
+    return { nbColonnes: axes.length, avant, apres };
+  `);
+  attendu(r.nbColonnes >= 3, "le diagramme doit avoir des colonnes de bord ET du milieu");
+  const de = (l, b) => l.filter(m => m.bord === b);
+  attendu(de(r.avant, 'gauche').length && de(r.avant, 'droite').length && de(r.avant, 'milieu').length,
+    "les trois cas doivent être peuplés");
+  attendu(de(r.avant, 'gauche').every(m => m.aGauche),
+    "à la première colonne, le nom doit s'écrire à GAUCHE du nœud");
+  attendu(de(r.avant, 'droite').every(m => m.aDroite),
+    "à la dernière colonne, le nom doit s'écrire à DROITE du nœud");
+  // Le dessin se resserre pour leur faire place : aucun nom ne sort du cadre.
+  const debords = r.avant.filter(m => m.deborde).map(m => m.id);
+  attendu(!debords.length, "des étiquettes extérieures sortent du cadre : " + debords.join(", "));
+  // Sans la case, la couleur du texte reste celle réglée — le noir par défaut.
+  attendu(r.avant.every(m => m.fill === '#000000'), "sans la case, les noms restent noirs");
+  const ext = r.apres.filter(m => m.bord !== 'milieu');
+  attendu(ext.every(m => m.fill === m.couleur),
+    "avec la case, un nom extérieur prend la couleur de son nœud : "
+    + JSON.stringify(ext.filter(m => m.fill !== m.couleur)));
+  attendu(de(r.apres, 'milieu').every(m => m.fill === '#000000'),
+    "un nom du milieu, posé entre les rubans, garde la couleur du texte");
+});
+
+test("valeurs des nœuds : le format des liens s'applique au chiffre peint", "complexe", async p => {
+  const r = await p(`
+    links().find(l => l.id === 'l40').value = 1234567;
+    T.refresh();
+    await cocher('Nœuds', 'Afficher la valeur');
+    await versApercu();
+    const lire = () => {
+      const t = document.querySelector('#canvas text[data-label-for="n45"]');
+      return t ? t.textContent.replace(/[\\u202f\\u00a0]/g, ' ') : null;
+    };
+    const trois = lire();
+    await reglerCarte('Nœuds', 'Chiffres significatifs de la valeur', 1);
+    const un = lire();
+    await reglerCarte('Nœuds', 'Multiplicateur de la valeur', 'milliers');
+    const milliers = lire();
+    const champ = [...(await carteDuPanneau('Nœuds')).querySelectorAll('.field span')]
+      .some(s => s.textContent.trim() === 'Chiffres significatifs de la valeur');
+    await versEdition();
+    return { trois, un, milliers, champ };
+  `);
+  // L'unité vient des liens du nœud (« t » dans le classeur d'essai).
+  egal(r.trois, "Féverolle (1 230 000 t)", "trois chiffres significatifs par défaut");
+  egal(r.un, "Féverolle (1 000 000 t)", "un seul chiffre significatif");
+  egal(r.milliers, "Féverolle (1 235 t)", "en milliers, la valeur est divisée et arrondie");
+  attendu(r.champ === false, "« Chiffres significatifs » disparaît dès qu'un multiplicateur agit");
+});
+
+test("valeurs des nœuds : la part de la colonne se compte couloir par couloir", "complexe", async p => {
+  const r = await p(`
+    await cocher('Nœuds', 'Afficher la valeur');
+    await reglerCarte('Nœuds', 'Valeur affichée', 'les-deux');
+    await versApercu();
+    const lire = id => {
+      const t = document.querySelector('#canvas text[data-label-for="' + id + '"]');
+      return t ? t.textContent.replace(/[\\u202f\\u00a0]/g, ' ') : null;
+    };
+    const unCouloir = { n45: lire('n45'), n62: lire('n62'), n65: lire('n65') };
+    await reglerCarte('Nœuds', 'Valeur affichée', 'part');
+    const partSeule = lire('n45');
+    // La colonne 2 compte trois nœuds ; l'un passe dans un second couloir.
+    byId('n65').lane = 2;
+    T.refresh();
+    await sleep(200);
+    const deuxCouloirs = { n45: lire('n45'), n62: lire('n62'), n65: lire('n65') };
+    await versEdition();
+    return { unCouloir, partSeule, deuxCouloirs };
+  `);
+  // Colonne 2 : Féverolle 320, Importation 90, Exportation 80 — 490 en tout.
+  egal(r.unCouloir, {
+    n45: "Féverolle (320 t · 65 %)",
+    n62: "Importation hors bretagne (90 t · 18 %)",
+    n65: "Exportation hors bretagne (80 t · 16 %)"
+  }, "valeur et part de la colonne");
+  egal(r.partSeule, "Féverolle (65 %)", "la part seule");
+  // Couloir 1 : 320 + 90 = 410 ; couloir 2 : l'exportation, seule.
+  egal(r.deuxCouloirs, {
+    n45: "Féverolle (78 %)",
+    n62: "Importation hors bretagne (22 %)",
+    n65: "Exportation hors bretagne (100 %)"
+  }, "chaque couloir totalise ses 100 %");
+});
+
+test("flèches : le ruban se referme en pointe, à l'écart demandé du nœud", "complexe", async p => {
+  const r = await p(`
+    await versApercu();
+    /* Profil PEINT de l'arrivée du ruban Tri -> Exportation (colonne 4) :
+       on interroge le tracé (isPointInFill), jamais la formule de la pointe.
+       Un ruban mince, exprès : sur un ruban plus épais que la place entre deux
+       colonnes, la pointe est raccourcie et l'angle ne peut pas être tenu. */
+    const profil = () => {
+      const ruban = document.querySelector(
+        '#canvas path:not(.lien-bio)[data-source="n54"][data-target="n60"]');
+      const x0 = parseFloat(document.querySelector('#canvas rect[data-id="n60"]').getAttribute('x'));
+      const pt = ruban.ownerSVGElement.createSVGPoint();
+      const b = ruban.getBBox();
+      const dans = (x, y) => { pt.x = x; pt.y = y; return ruban.isPointInFill(pt); };
+      // Épaisseur peinte et milieu, sur la verticale d'abscisse x.
+      const coupe = x => {
+        let n = 0, haut = null, bas = null;
+        for (let y = b.y - 1; y <= b.y + b.height + 1; y += 0.1) {
+          if (dans(x, y)) { n++; if (haut === null) haut = y; bas = y; }
+        }
+        return { h: n * 0.1, milieu: haut === null ? null : (haut + bas) / 2 };
+      };
+      const pleine = coupe(x0 - 60);
+      // L'axe du ruban, pris tout près de l'arrivée, où il est horizontal ; puis
+      // le bout : dernière abscisse peinte le long de cet axe, depuis le nœud.
+      const axe = coupe(x0 - 8).milieu;
+      let bout = null;
+      for (let x = x0 + 0.5; x > x0 - 60; x -= 0.1) {
+        if (dans(x, axe)) { bout = x; break; }
+      }
+      const h1 = coupe(bout - 4).h, h2 = coupe(bout - 12).h;
+      return { x0, epaisseur: coupe(x0 - 0.5).h, pleine: pleine.h, ecart: x0 - bout,
+               pente: (h2 - h1) / 2 / 8 };
+    };
+    const sans = profil();
+    await cocher('Liens', 'Flèches au bout des liens');
+    await reglerCarte('Liens', 'Écart flèche – nœud', 5);
+    const angle90 = profil();
+    await reglerCarte('Liens', 'Angle de la pointe (°)', 60);
+    const angle60 = profil();
+    await versEdition();
+    return { sans, angle90, angle60 };
+  `);
+  // Sans flèche, le ruban arrive plein sur le nœud : c'est ce qui donne un sens
+  // aux mesures qui suivent.
+  attendu(r.sans.epaisseur > 25 && Math.abs(r.sans.ecart) < 0.6,
+    "sans flèche, le ruban doit toucher le nœud de toute son épaisseur : " + JSON.stringify(r.sans));
+  attendu(r.angle90.epaisseur === 0, "avec flèche, plus rien n'est peint contre le nœud");
+  attendu(Math.abs(r.angle90.ecart - 5) < 0.6,
+    "la pointe doit s'arrêter à 5 px du nœud (mesuré " + r.angle90.ecart.toFixed(2) + ")");
+  // Une pointe à 90° s'élargit d'autant qu'elle recule : pente 1 de chaque côté.
+  attendu(Math.abs(r.angle90.pente - 1) < 0.1,
+    "à 90°, la pointe doit s'ouvrir d'une pente de 1 (mesuré " + r.angle90.pente.toFixed(3) + ")");
+  attendu(Math.abs(r.angle60.pente - Math.tan(Math.PI / 6)) < 0.1,
+    "à 60°, la pointe doit s'ouvrir d'une pente de tan 30° (mesuré " + r.angle60.pente.toFixed(3) + ")");
+  // La pointe reste dans l'épaisseur du ruban : elle ne mord pas sur ses voisins.
+  attendu(r.angle90.pleine <= r.sans.pleine + 0.3,
+    "la flèche ne doit pas déborder de l'épaisseur du ruban");
+});
+
 /* -------------------------------- exécution ------------------------------ */
 
 async function charger(win, fixture) {

@@ -144,13 +144,53 @@ export function diviseurDe(m: MultiplicateurValeur | string | null | undefined):
  * centrée dessus (les nœuds des colonnes de bord se calant alors sur le côté
  * tourné vers l'intérieur du graphique).
  */
-export type NodeLabelPosition = "cote" | "dessous" | "centre";
+export type NodeLabelPosition = "cote" | "dessous" | "centre" | "exterieur";
 
 export const NODE_LABEL_POSITIONS: [NodeLabelPosition, string][] = [
     ["cote", "À côté"],
     ["dessous", "En dessous"],
-    ["centre", "Centré sur le nœud"]
+    ["centre", "Centré sur le nœud"],
+    ["exterieur", "À l'extérieur du graphique"]
 ];
+
+/**
+ * Ce que dit la valeur écrite après le nom d'un nœud : son flux, sa part du
+ * total de sa colonne — comptée DANS SON COULOIR —, ou les deux.
+ */
+export type ContenuValeurNoeud = "valeur" | "part" | "les-deux";
+
+export const CONTENUS_VALEUR_NOEUD: [ContenuValeurNoeud, string][] = [
+    ["valeur", "La valeur"],
+    ["part", "La part de la colonne (%)"],
+    ["les-deux", "La valeur et la part"]
+];
+
+/**
+ * Format de la valeur écrite dans l'étiquette d'un nœud : le même que celui des
+ * valeurs de liens (multiplicateur, chiffres significatifs, unité de repli),
+ * plus la part du total de la colonne.
+ */
+export interface FormatValeurNoeud {
+    contenu: ContenuValeurNoeud;
+    unitText: string; // unité si les liens du nœud n'en portent pas
+    multiplicateur: MultiplicateurValeur;
+    chiffresSignificatifs: number;
+}
+
+export function defaultFormatValeurNoeud(): FormatValeurNoeud {
+    return { contenu: "valeur", unitText: "", multiplicateur: "aucun", chiffresSignificatifs: 3 };
+}
+
+/**
+ * Flèche au bout d'un ruban : l'extrémité du ruban se referme en pointe vers
+ * son nœud d'arrivée, sans déborder de son épaisseur (les rubans empilés sur un
+ * même nœud ne se chevauchent donc pas). Un écart blanc la sépare du nœud.
+ */
+export interface FlecheLiens {
+    show: boolean;
+    angle: number; // angle de la pointe, en degrés (petit = pointe effilée)
+    separation: number; // écart entre la pointe et le nœud, en pixels
+}
 
 /**
  * Damier peint À LA PLACE de l'aplat du nœud : un carrelage de carrés de
@@ -229,6 +269,8 @@ export interface SankeyOptions {
             show: boolean;
             color: string;
         };
+        /** Pointe au bout des rubans, du côté du nœud d'arrivée. */
+        fleches: FlecheLiens;
         showBorder: boolean;
         borderColor: string;
         borderWidth: number;
@@ -257,7 +299,15 @@ export interface SankeyOptions {
         italic: boolean;
         uppercase: boolean;
         showValue: boolean;
+        /** Format de la valeur écrite après le nom (voir `FormatValeurNoeud`). */
+        valeur: FormatValeurNoeud;
         position: NodeLabelPosition;
+        /**
+         * Étiquettes posées À L'EXTÉRIEUR du graphique (position « exterieur »,
+         * colonnes de bord) : elles sont sur le fond blanc, et peuvent prendre
+         * la couleur de leur nœud au lieu de la couleur du texte.
+         */
+        couleurDuNoeud: boolean;
         showBackground: boolean;
         backgroundColor: string;
         backgroundOpacity: number; // 0..100
@@ -359,6 +409,10 @@ export interface SankeyOptions {
     };
 }
 
+export function defaultFleches(): FlecheLiens {
+    return { show: false, angle: 90, separation: 3 };
+}
+
 const FONT = "\"Source Sans Pro\", system-ui, -apple-system, Helvetica, Arial, sans-serif";
 
 export function defaultOptions(): SankeyOptions {
@@ -372,6 +426,7 @@ export function defaultOptions(): SankeyOptions {
             traversee: "passage",
             // « field » de la palette BASIC : le vert des cultures.
             bio: { show: true, color: "#adcb47" },
+            fleches: defaultFleches(),
             showBorder: false,
             borderColor: "#000000",
             borderWidth: 1
@@ -395,7 +450,9 @@ export function defaultOptions(): SankeyOptions {
             italic: false,
             uppercase: false,
             showValue: false,
+            valeur: defaultFormatValeurNoeud(),
             position: "cote",
+            couleurDuNoeud: false,
             showBackground: false,
             backgroundColor: "#ffffff",
             backgroundOpacity: 80,

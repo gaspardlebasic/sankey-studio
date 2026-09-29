@@ -5,7 +5,8 @@ import {
     FlowModel, FlowNode, FlowLink, SankeyOptions, defaultOptions,
     NodeKind, NodeTypeStyle, NodeLabelPosition, NODE_KINDS, NODE_LABEL_POSITIONS,
     kindOf, defaultTypeStyle, TextStyle, texteAffiche, partBio, TailleExport,
-    MultiplicateurValeur, MULTIPLICATEURS_VALEUR
+    MultiplicateurValeur, MULTIPLICATEURS_VALEUR, ContenuValeurNoeud, CONTENUS_VALEUR_NOEUD,
+    defaultFormatValeurNoeud, defaultFleches
 } from "./types";
 import {
     renderSankey, renderSankeyGroups, wrapText, policeDuType, positionDuType
@@ -2317,17 +2318,34 @@ function carteNoeuds(rr: () => void): HTMLElement {
     const nl = options.nodeLabels;
     b.appendChild(divider());
     b.appendChild(checkField("Afficher l'étiquette", nl.show, v => { nl.show = v; rr(); }));
+    // La note et la case « couleur du nœud » dépendent de la position : le
+    // choix reconstruit donc le panneau.
     b.appendChild(selectField("Position", nl.position,
         NODE_LABEL_POSITIONS as [string, string][],
-        v => { nl.position = v as NodeLabelPosition; rr(); }));
+        v => { nl.position = v as NodeLabelPosition; rr(); buildSidebar(); }));
     if (nl.position === "centre") {
         b.appendChild(hint(
             "L'étiquette se pose sur la boîte du nœud ; aux colonnes de bord elle "
             + "se cale sur le côté tourné vers l'intérieur pour ne pas sortir du cadre."
         ));
+    } else if (nl.position === "exterieur") {
+        b.appendChild(hint(
+            "La première colonne écrit ses noms à sa gauche, la dernière à sa droite, "
+            + "sur le fond : le dessin se resserre pour leur faire place. Les colonnes "
+            + "du milieu gardent leurs noms à côté du nœud."
+        ));
+    }
+    /* La case ne vaut que pour les étiquettes posées dehors : elle n'apparaît
+       que si l'un des types au moins les y met (réglage général ou propre). */
+    if (NODE_KINDS.some(([k]) => positionDuType(options, k) === "exterieur")) {
+        b.appendChild(checkField("Étiquettes extérieures de la couleur du nœud", nl.couleurDuNoeud,
+            v => { nl.couleurDuNoeud = v; rr(); }));
     }
     fontControls(b, nl, rr);
-    b.appendChild(checkField("Afficher la valeur", nl.showValue, v => { nl.showValue = v; rr(); }));
+    b.appendChild(checkField("Afficher la valeur", nl.showValue, v => {
+        nl.showValue = v; rr(); buildSidebar();
+    }));
+    if (nl.showValue) champsValeurNoeud(b, rr);
     b.appendChild(divider());
     b.appendChild(checkField("Arrière-plan", nl.showBackground, v => { nl.showBackground = v; rr(); }));
     b.appendChild(colorField("Couleur d'arrière-plan", nl.backgroundColor,
@@ -2345,6 +2363,41 @@ function carteNoeuds(rr: () => void): HTMLElement {
         + "mosaïque : voir les deux cartes qui suivent."
     ));
     return b.parentElement as HTMLElement;
+}
+
+/**
+ * Format de la valeur écrite après le nom d'un nœud : les mêmes réglages que
+ * pour les valeurs des liens (unité de repli, multiplicateur, chiffres
+ * significatifs), plus la part du total de la colonne. Un réglage sans effet
+ * ne reste pas à l'écran — d'où les reconstructions du panneau.
+ */
+function champsValeurNoeud(b: HTMLElement, rr: () => void): void {
+    const fv = options.nodeLabels.valeur;
+    b.appendChild(selectField("Valeur affichée", fv.contenu,
+        CONTENUS_VALEUR_NOEUD as [string, string][],
+        x => { fv.contenu = x as ContenuValeurNoeud; rr(); buildSidebar(); }));
+    if (fv.contenu !== "valeur") {
+        b.appendChild(hint(
+            "La part se compte dans la colonne du nœud, couloir par couloir : "
+            + "les nœuds d'une même colonne et d'un même couloir totalisent 100 %."
+        ));
+    }
+    if (fv.contenu === "part") return;
+    b.appendChild(textField("Unité des nœuds (si aucune dans les données)", fv.unitText,
+        x => { fv.unitText = x; rr(); }));
+    b.appendChild(selectField("Multiplicateur de la valeur", fv.multiplicateur,
+        MULTIPLICATEURS_VALEUR.map(([v, t]) => [v, t] as [string, string]),
+        x => { fv.multiplicateur = x as MultiplicateurValeur; rr(); buildSidebar(); }));
+    if (fv.multiplicateur === "aucun") {
+        b.appendChild(numberField("Chiffres significatifs de la valeur", fv.chiffresSignificatifs,
+            x => { fv.chiffresSignificatifs = Math.min(15, Math.max(1, Math.round(x))); rr(); }));
+    } else {
+        b.appendChild(hint(
+            "Les valeurs sont divisées par "
+            + (fv.multiplicateur === "millions" ? "1 000 000" : "1 000")
+            + " et écrites arrondies : à dire dans l'unité — « milliers de tonnes »."
+        ));
+    }
 }
 
 /* ---- Une carte par type de nœud ----
@@ -2402,7 +2455,7 @@ function carteTypeDeNoeud(kind: NodeKind, rr: () => void): HTMLElement {
     if (t.position !== null) {
         b.appendChild(selectField("Position de l'étiquette", t.position,
             NODE_LABEL_POSITIONS as [string, string][],
-            v => { t.position = v as NodeLabelPosition; rr(); }));
+            v => { t.position = v as NodeLabelPosition; rr(); buildSidebar(); }));
     }
 
     /* Contour : un liseré qui entoure le nœud sans le toucher. */
@@ -2467,6 +2520,22 @@ function carteLiens(rr: () => void): HTMLElement {
         b.appendChild(hint(
             "Un lien qui saute une colonne (de la 1 à la 3) s'y réserve une place : "
             + "il se faufile entre les nœuds traversés au lieu de passer dessus."
+        ));
+    }
+    /* Flèches : le bout du ruban se referme en pointe vers le nœud d'arrivée. */
+    const fl = options.links.fleches;
+    b.appendChild(checkField("Flèches au bout des liens", fl.show,
+        v => { fl.show = v; rr(); buildSidebar(); }));
+    if (fl.show) {
+        b.appendChild(numberField("Angle de la pointe (°)", fl.angle,
+            v => { fl.angle = Math.min(170, Math.max(10, v)); rr(); }));
+        b.appendChild(numberField("Écart flèche – nœud", fl.separation,
+            v => { fl.separation = Math.max(0, v); rr(); }));
+        b.appendChild(hint(
+            "La pointe reste dans l'épaisseur du ruban : un angle fermé l'allonge, "
+            + "un angle ouvert la raccourcit. Elle ne prend jamais plus de la moitié "
+            + "de la place entre deux colonnes — sur un ruban très épais, elle s'ouvre "
+            + "donc davantage. L'écart est le trait blanc qui la sépare du nœud."
         ));
     }
     b.appendChild(checkField("Bordure", options.links.showBorder,
@@ -3066,7 +3135,39 @@ function normaliserLiens(): void {
     // `Object.assign` ne fusionne que le premier niveau : un projet écrit avant
     // le bandeau bio arrive sans `links.bio` du tout.
     L.bio = Object.assign({}, d.bio, L.bio || {});
+    // Même chose pour les flèches, venues après : un projet d'avant n'en a pas.
+    const f = Object.assign(defaultFleches(), L.fleches || {});
+    const nombre = (v: unknown, defaut: number) => (isFinite(Number(v)) ? Number(v) : defaut);
+    L.fleches = {
+        show: f.show === true,
+        angle: Math.min(170, Math.max(10, nombre(f.angle, d.fleches.angle))),
+        separation: Math.max(0, nombre(f.separation, d.fleches.separation))
+    };
     normaliserValeursDeLiens();
+    normaliserEtiquettesDeNoeuds();
+}
+/**
+ * Complète le format des valeurs de nœuds et la couleur des étiquettes
+ * extérieures : une apparence rangée avant eux arrive avec un `nodeLabels`
+ * entier, qui remplace celui du défaut (`Object.assign` ne fusionne que le
+ * premier niveau) — sans `valeur` ni `couleurDuNoeud`.
+ */
+function normaliserEtiquettesDeNoeuds(): void {
+    const NL = options.nodeLabels;
+    const d = defaultFormatValeurNoeud();
+    const v = Object.assign(defaultFormatValeurNoeud(), NL.valeur || {});
+    const n = Number(v.chiffresSignificatifs);
+    NL.valeur = {
+        contenu: CONTENUS_VALEUR_NOEUD.some(([c]) => c === v.contenu) ? v.contenu : d.contenu,
+        unitText: typeof v.unitText === "string" ? v.unitText : d.unitText,
+        multiplicateur: MULTIPLICATEURS_VALEUR.some(([m]) => m === v.multiplicateur)
+            ? v.multiplicateur : d.multiplicateur,
+        chiffresSignificatifs: isFinite(n) && n >= 1
+            ? Math.min(15, Math.max(1, Math.round(n)))
+            : d.chiffresSignificatifs
+    };
+    NL.couleurDuNoeud = NL.couleurDuNoeud === true;
+    if (!NODE_LABEL_POSITIONS.some(([p]) => p === NL.position)) NL.position = "cote";
 }
 /**
  * Complète le format des valeurs écrites sur les rubans. Une apparence rangée

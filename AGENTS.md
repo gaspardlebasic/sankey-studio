@@ -505,6 +505,25 @@ un poste, c'est `npm run addin:install -- --enligne`.
       peints**, jamais sur un numéro de colonne : d3 tasse les couches quand la plus longue
       chaîne de liens est plus courte que le nombre de colonnes, et une colonne de la grille
       peut rester vide (le cas du diagramme de `tests/fixtures/complexe.sankey`).
+    - **« À l'extérieur du graphique »** (`exterieur`) : la première colonne écrit ses noms à
+      sa **gauche**, la dernière à sa **droite**, sur le fond ; les colonnes du milieu restent
+      « à côté ». Le bord se lit sur l'**axe** des nœuds peints (`bordsDu`) — pas sur le bord
+      de la boîte : un produit de largeur nulle et une industrie large partagent la même
+      colonne. « Centré » passe par la même règle.
+      - **Le dessin se resserre pour leur faire place** (`reserveExterieure`) : la place se
+        mesure sur les étiquettes réellement écrites (`mesureTexte`, valeur comprise), donc
+        après une **première disposition** qui dit quels nœuds sont au bord ; une seconde
+        disposition la reprend. La réserve est **plafonnée à 60 %** de la largeur, rognée à
+        proportion : dans une fenêtre étroite, un nom très long peut encore être coupé.
+      - **Filières empilées** : chaque diagramme demanderait sa propre réserve et leurs
+        colonnes ne tomberaient plus en face. `renderSankeyGroups` prend la plus large de
+        chaque côté et la passe à tous (`grille.reserve`). `drawSankey` rend pour ça un
+        `Dessin` (échelle **et** réserve), plus un simple nombre.
+      - L'étiquette s'écarte aussi du **contour** du nœud (`ecartExterieur`).
+      - **`nodeLabels.couleurDuNoeud`** : une étiquette extérieure, posée sur le fond, peut
+        prendre la couleur de son nœud. Les étiquettes du milieu gardent la couleur du texte
+        — un nom de la couleur du ruban qu'il chevauche ne se lirait plus. La case ne
+        s'affiche que si un type au moins pose ses noms dehors.
     - Les étiquettes de l'aperçu portent `data-label-for` (identifiant du nœud) : c'est par là
       que les tests mesurent la position réellement peinte.
   - **Deux cartes d'apparence, une par type** (`TITRES_TYPES`) et non une seule : une carte
@@ -611,6 +630,22 @@ un poste, c'est `npm run addin:install -- --enligne`.
     par `isPointInFill` le long d'une verticale à la sortie du nœud d'origine) et vérifient
     que le bandeau part bien du **bord supérieur** du ruban.
   - Couleur et présence sont réglables dans la carte « Liens » (`options.links.bio`).
+- **Flèches au bout des liens** (`options.links.fleches` : `show`, `angle`, `separation`) :
+  le ruban se referme en **pointe** vers son nœud d'arrivée, à `separation` pixels du nœud
+  (le « trait » blanc qui l'en sépare). Aperçu et exports seulement, comme le contour.
+  - **La pointe ne déborde jamais de l'épaisseur du ruban** : sur un nœud, les rubans
+    arrivent bord à bord, une flèche plus large mordrait sur ses voisins. Sa longueur se
+    déduit de l'angle (demi-épaisseur / tan(angle / 2)) et se **borne à la moitié du dernier
+    segment** (`pointeRuban`) : sur un ruban plus épais que la place entre deux colonnes,
+    l'angle demandé ne peut pas être tenu et la pointe s'ouvre davantage. Le panneau le dit.
+  - C'est `bandePath` qui la trace, donc **le bandeau bio l'épouse** : une tranche du ruban
+    se referme sur le profil de la pointe au lieu de dépasser en carré. Sans flèche, le tracé
+    est celui d'avant, caractère pour caractère.
+  - Le test mesure le **profil peint** (`isPointInFill`) : écart au nœud, puis pente du bord
+    de la pointe, qui vaut tan(angle / 2). Il vise le lien Tri → Exportation (colonne 4) du
+    diagramme d'essai : un ruban mince qui franchit une vraie colonne — ailleurs, d3 tasse
+    les couches (Trempage et Restauration scolaire y tombent dans la même) ou le ruban est
+    trop épais pour que l'angle tienne. Deux mutations vérifiées (angle ignoré, écart ignoré).
 - **La colonne « Valeur du flux » ne doit JAMAIS se remplir toute seule.** Excel a une
   correction automatique — *« Remplir les formules dans les tableaux pour créer des colonnes
   calculées »* — qui recopie sur **toutes les lignes** une formule saisie dans UNE cellule d'une
@@ -836,8 +871,19 @@ un poste, c'est `npm run addin:install -- --enligne`.
       **reconstruit le panneau**.
     - L'ancien format automatique (« k », « M », « Md ») est parti d'ici : il abrégeait chaque
       valeur pour elle-même, et « 999 » à côté de « 1,0 k » ne se comparait plus d'un regard.
-      `formatNumber` le garde pour l'infobulle d'un ruban et la valeur écrite dans l'étiquette
-      d'un nœud, où l'on lit une valeur à la fois.
+      `formatNumber` ne le garde plus que pour l'infobulle d'un ruban.
+    - **La valeur écrite dans l'étiquette d'un nœud a les mêmes réglages**
+      (`nodeLabels.valeur` : unité de repli, multiplicateur, chiffres significatifs), dans la
+      carte « Nœuds » sous « Afficher la valeur ». Elle peut dire la valeur, **la part du
+      total de sa colonne**, ou les deux (« Féverolle (320 t · 65 %) »).
+      - La part se compte **dans la colonne peinte ET dans le couloir** : un couloir isole une
+        famille de flux, additionner deux familles ne dirait rien. Les escales (places des
+        liens traversants) ne comptent pas.
+      - La valeur d'un nœud est relue sur les valeurs **brutes** des liens (`ELink.brut`) :
+        d3 reçoit un millionième à la place d'un flux nul, qui s'écrirait « 0,000001 ».
+      - L'unité est celle des liens du nœud s'ils s'accordent, sinon l'unité de repli.
+      - Mutations vérifiées : format ignoré, couloir ignoré dans la part ; et pour les
+        étiquettes extérieures, réserve ignorée et couleur ignorée.
     - L'unité, elle, **reste celle de l'utilisatrice** : coller un « k » devant « tonnes »
       qu'elle vient d'écrire au long ferait un libellé faux. Une note du panneau le rappelle.
     - Les décimales gardées se déduisent de l'ordre de grandeur du nombre **arrondi**, pas de

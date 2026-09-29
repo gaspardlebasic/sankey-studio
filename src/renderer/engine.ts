@@ -6,7 +6,8 @@ import { sankey } from "d3-sankey";
 import {
     FlowModel, SankeyOptions, NodeKind, NodeTypeStyle, NodeTypeFont, NodeOutline,
     NodeMosaique, NodeLabelPosition, NODE_LABEL_POSITIONS, kindOf, defaultTypeStyle,
-    texteAffiche, partBio, diviseurDe
+    texteAffiche, partBio, diviseurDe, FormatValeurNoeud, defaultFormatValeurNoeud,
+    FlecheLiens, defaultFleches
 } from "./types";
 
 interface ENode {
@@ -44,6 +45,9 @@ interface ELink {
     source: string | ENode;
     target: string | ENode;
     value: number;
+    /** Valeur telle que le classeur la donne : `value` est relevée à un
+     *  millionième pour qu'un flux nul reste traçable, pas celle-ci. */
+    brut: number;
     unit: string;
     colorOverride: string | null;
     /** Part du flux en bio / durable, de 0 à 1 (0 = rien à recouvrir). */
@@ -181,6 +185,23 @@ function couchesModele(model: FlowModel, dense: Map<number, number>): Map<string
 export interface GrilleColonnes {
     dense: Map<number, number>;
     nCols: number;
+    /** Place réservée aux étiquettes posées à l'extérieur, la même pour tous
+     *  les diagrammes empilés — sans quoi leurs colonnes ne s'aligneraient plus. */
+    reserve?: Reserve;
+}
+
+/** Place réservée de part et d'autre du dessin aux étiquettes extérieures. */
+interface Reserve {
+    gauche: number;
+    droite: number;
+}
+
+/** Ce que rend le dessin d'un diagramme, pour qui en empile plusieurs. */
+interface Dessin {
+    /** Pixels par unité de flux, telle que d3-sankey l'a obtenue. */
+    echelle: number;
+    /** Place qu'ont demandée ses étiquettes extérieures. */
+    reserve: Reserve;
 }
 
 export function renderSankey(
@@ -266,8 +287,25 @@ function mesurerEchelle(
     height: number,
     grille?: GrilleColonnes
 ): number {
+    return dessinerDetache(model, opt, width, height, grille).echelle;
+}
+
+/** Dessine un diagramme hors du document, pour n'en lire que les mesures. */
+function dessinerDetache(
+    model: FlowModel,
+    opt: SankeyOptions,
+    width: number,
+    height: number,
+    grille?: GrilleColonnes
+): Dessin {
     const detache = select(document.createElementNS("http://www.w3.org/2000/svg", "g"));
     return drawSankey(detache, model, opt, width, height, grille);
+}
+
+/** Un type de nœud au moins pose-t-il ses étiquettes à l'extérieur ? */
+function etiquettesExterieures(opt: SankeyOptions): boolean {
+    return !!opt.nodeLabels.show
+        && (["produit", "industrie"] as NodeKind[]).some(k => positionDuType(opt, k) === "exterieur");
 }
 
 /**
@@ -313,6 +351,20 @@ export function renderSankeyGroups(
     const ecart = clamp(F.gap, 0, 400);
     const m = margesDuCadre(opt, width, height);
     const largeur = m.largeur;
+
+    /* Étiquettes à l'extérieur : chaque diagramme dirait sa propre réserve, et
+       leurs colonnes ne tomberaient plus en face. On prend la plus large de
+       chaque côté, et tous la reçoivent. La hauteur n'y change rien — une
+       étiquette a la même largeur quel que soit le flux. */
+    if (etiquettesExterieures(opt)) {
+        const reserve: Reserve = { gauche: 0, droite: 0 };
+        utiles.forEach(g => {
+            const r = dessinerDetache(g.model, opt, largeur, 400, grille).reserve;
+            reserve.gauche = Math.max(reserve.gauche, r.gauche);
+            reserve.droite = Math.max(reserve.droite, r.droite);
+        });
+        grille.reserve = reserve;
+    }
     const hauteurTitre = F.showTitle ? taille + sousTitre : 0;
     const dispo =
         m.hauteur
@@ -815,7 +867,8 @@ function drawSankey(
     width: number,
     height: number,
     grille?: GrilleColonnes
-): number {
+): Dessin {
+    const RIEN: Dessin = { echelle: 0, reserve: { gauche: 0, droite: 0 } };
     const prefixe = `d${compteurDiagramme++}`;
     const defs = svg.append("defs");
     const gLinks = svg.append("g");
@@ -848,6 +901,7 @@ function drawSankey(
             value: l.value > 0 ? l.value : 0.000001,
             unit: l.unit || "",
             colorOverride: l.colorOverride ?? null,
+            brut: l.value > 0 ? l.value : 0,
             bio: partBio(l)
         }));
 
@@ -953,31 +1007,154 @@ function drawSankey(
         .filter(o => o.show)
         .reduce((m, o) => Math.max(m, clamp(o.distance, 0, 200) + clamp(o.width, 0, 40)), 0);
 
-    const left = 2 + debordement + Math.min(gouttiere, Math.max(0, width * 0.3));
-    const right = width - 2 - debordement;
+    /* ---- Étiquettes des nœuds : ce qu'elles disent, la place qu'elles prennent ----
+       Mesurées AVANT d'être peintes : une étiquette posée à l'extérieur se
+       réserve sa place dans le cadre, et cette place, c'est sa largeur. */
+    const NL = opt.nodeLabels;
+    const FV: FormatValeurNoeud = Object.assign(defaultFormatValeurNoeud(), NL.valeur || {});
+    const maxChars = Math.max(1, Math.round(NL.maxChars));
+    const GAP_ETIQUETTE = 6;
+    const PAD_X = 4;
+    const PAD_Y = 2;
+
+    /* Flux d'un nœud tel que le classeur le donne — le plus grand de ce qui
+       entre et de ce qui sort, comme l'épaisseur que d3 lui a donnée. On relit
+       les valeurs brutes : un flux nul, relevé à un millionième pour rester
+       traçable, s'écrirait sinon « 0,000001 ». */
+    const valeurNoeud = (d: ENode): number => {
+        const somme = (ls?: ELink[]) => (ls ?? []).reduce((t, l) => t + (l.brut ?? 0), 0);
+        return Math.max(somme(d.sourceLinks), somme(d.targetLinks));
+    };
+    // Unité d'un nœud : celle de ses liens s'ils s'accordent, sinon celle de repli.
+    const uniteNoeud = (d: ENode): string => {
+        const u = new Set([...(d.sourceLinks ?? []), ...(d.targetLinks ?? [])]
+            .map(l => (l.unit || "").trim())
+            .filter(Boolean));
+        return u.size === 1 ? Array.from(u)[0] : (FV.unitText || "").trim();
+    };
+    /* Part de chaque nœud dans le total de sa colonne, compté DANS SON
+       COULOIR : un couloir isole une famille de flux (entrants hors périmètre,
+       cœur…), et additionner deux familles ne dirait rien. La colonne est celle
+       qui est peinte, pas le numéro saisi. */
+    const partsDes = (liste: ENode[]): Map<string, number> => {
+        const cle = (n: ENode) => n.layer + "|" + n.lane;
+        const totaux = new Map<string, number>();
+        liste.forEach(n => totaux.set(cle(n), (totaux.get(cle(n)) ?? 0) + valeurNoeud(n)));
+        return new Map(liste.map(n => {
+            const t = totaux.get(cle(n)) ?? 0;
+            return [n.id, t > 0 ? valeurNoeud(n) / t : 0] as [string, number];
+        }));
+    };
+    const texteValeurNoeud = (d: ENode, part: number): string => {
+        if (FV.contenu === "part") return formatPart(part);
+        const unite = uniteNoeud(d);
+        const v = formatValeurLien(valeurNoeud(d), FV.multiplicateur, FV.chiffresSignificatifs);
+        const valeur = unite ? `${v} ${unite}` : v;
+        return FV.contenu === "les-deux" ? `${valeur} · ${formatPart(part)}` : valeur;
+    };
+    const etiquetteDe = (d: ENode, parts: Map<string, number>) => {
+        const police = policeParType[d.kind];
+        const fs = clamp(police.fontSize, 4, 60);
+        const texte = texteAffiche(
+            NL.showValue ? `${d.name} (${texteValeurNoeud(d, parts.get(d.id) ?? 0)})` : d.name,
+            police
+        );
+        const lignes = NL.wrap ? wrapText(texte, maxChars) : [texte];
+        /* Le bloc fait la largeur de sa LIGNE LA PLUS LARGE, mesurée pour de
+           bon : « IAA » garde un fond à sa taille, et « Importation de bovins
+           finis » coupé en deux lignes prend la largeur de « Importation de »,
+           pas celle du nom entier. */
+        const largeur = Math.max(...lignes.map(ln =>
+            mesureTexte(ln, fs, police.weight, police.italic, police.fontFamily)));
+        return { police, fs, hauteurLigne: fs * 1.2, lignes, largeur };
+    };
+    /* Colonne de bord d'un nœud, lue sur les AXES des nœuds peints — jamais
+       sur un numéro de colonne : d3 tasse les couches quand la plus longue
+       chaîne est plus courte que le nombre de colonnes, et une colonne de la
+       grille peut rester vide. L'axe plutôt que le bord de la boîte : un
+       produit de largeur nulle et une industrie large partagent la même
+       colonne. Un nœud collé aux deux bords (colonne unique) n'en a aucun. */
+    const bordsDu = (liste: ENode[]) => {
+        const axe = (n: ENode) => ((n.x0 ?? 0) + (n.x1 ?? 0)) / 2;
+        const min = Math.min(...liste.map(axe));
+        const max = Math.max(...liste.map(axe));
+        return (d: ENode): "gauche" | "droite" | null => {
+            const g = axe(d) <= min + 0.5;
+            const dr = axe(d) >= max - 0.5;
+            return g === dr ? null : g ? "gauche" : "droite";
+        };
+    };
+    // Une étiquette extérieure se pose au-delà du contour, s'il y en a un.
+    const ecartExterieur = (d: ENode): number => {
+        const o = contourParType[d.kind];
+        return GAP_ETIQUETTE + (o.show ? clamp(o.distance, 0, 200) + clamp(o.width, 0, 40) : 0);
+    };
+    const reserveExterieure = (liste: ENode[]): Reserve => {
+        const r: Reserve = { gauche: 0, droite: 0 };
+        if (!liste.length) return r;
+        const bord = bordsDu(liste);
+        const parts = partsDes(liste);
+        liste.forEach(d => {
+            if (positionParType[d.kind] !== "exterieur") return;
+            const cote = bord(d);
+            if (!cote) return;
+            const place = etiquetteDe(d, parts).largeur + ecartExterieur(d)
+                + (NL.showBackground ? PAD_X : 0) + 2;
+            r[cote] = Math.max(r[cote], place);
+        });
+        return r;
+    };
+
+    const gauche0 = 2 + debordement + Math.min(gouttiere, Math.max(0, width * 0.3));
+    const droite0 = width - 2 - debordement;
     const top = topMargin + debordement;
     const bottom = height - 6 - debordement;
-    if (right - left < 4 || bottom - top < 4) return 0;
+    if (droite0 - gauche0 < 4 || bottom - top < 4) return RIEN;
 
     /* ---- Disposition ----
        Deux passes dès qu'un lien saute une colonne : la première donne les
        positions réelles, d'où l'on déduit par où chaque ruban veut passer ; la
        seconde refait la disposition en lui réservant sa place. */
-    const kx = nCols > 1 ? (right - left - nodeWidth) / (nCols - 1) : 0;
-    const cadre: Cadre = {
-        left, right, top, bottom, nCols, nodeWidth, nodePadding, largeurDe,
-        axeColonne: (layer: number) => left + layer * kx + nodeWidth / 2
+    const cadreEntre = (left: number, right: number): Cadre => {
+        const kx = nCols > 1 ? (right - left - nodeWidth) / (nCols - 1) : 0;
+        return {
+            left, right, top, bottom, nCols, nodeWidth, nodePadding, largeurDe,
+            axeColonne: (layer: number) => left + layer * kx + nodeWidth / 2
+        };
     };
-    const axeColonne = cadre.axeColonne;
+    /* Une réserve n'avale jamais le dessin : au delà de 60 % de la largeur,
+       les deux côtés sont rognés à proportion. */
+    const cadreAvecReserve = (r: Reserve): Cadre => {
+        const dispo = droite0 - gauche0;
+        const k = r.gauche + r.droite > dispo * 0.6 ? (dispo * 0.6) / (r.gauche + r.droite) : 1;
+        return cadreEntre(gauche0 + r.gauche * k, droite0 - r.droite * k);
+    };
 
+    const reserveImposee = grille && grille.reserve;
+    let cadre = reserveImposee ? cadreAvecReserve(reserveImposee) : cadreEntre(gauche0, droite0);
     let graph = disposer(eNodes, eLinks, opt, cadre);
     if (!graph) {
         drawMessage(
             svg, width, height,
             "Impossible d'afficher le Sankey (données de flux invalides, ex. lien circulaire)."
         );
-        return 0;
+        return RIEN;
     }
+
+    /* Étiquettes À L'EXTÉRIEUR : elles se posent au-delà des colonnes de bord,
+       là où il n'y a que le fond. Leur place se prend sur le dessin — mesurée
+       sur les étiquettes réellement écrites, donc après une première
+       disposition, qui dit quels nœuds sont au bord et ce qu'ils portent. */
+    let reserve: Reserve = { gauche: 0, droite: 0 };
+    if (!reserveImposee && etiquettesExterieures(opt)) {
+        reserve = reserveExterieure((graph.nodes as ENode[]).filter(n => !n.passage));
+        if (reserve.gauche > 0 || reserve.droite > 0) {
+            cadre = cadreAvecReserve(reserve);
+            const g2 = disposer(eNodes, eLinks, opt, cadre);
+            if (g2) graph = g2;
+        }
+    }
+    const axeColonne = cadre.axeColonne;
 
     /* Rubans à dessiner : un par lien du modèle. Un lien qui saute une colonne a
        été découpé en segments passant par des nœuds de passage — ses morceaux
@@ -1033,6 +1210,10 @@ function drawSankey(
     const L = opt.links;
     const opacity = clamp(L.opacity, 0, 100) / 100;
     const curvature = clamp(L.curvature, 0, 100) / 100;
+    /* Flèches : réglage complété ici aussi — une apparence rangée avant leur
+       arrivée n'en dit rien, et le ruban doit alors rester celui d'avant. */
+    const FL: FlecheLiens = Object.assign(defaultFleches(), L.fleches || {});
+    const fleche: FlecheLiens | null = FL.show ? FL : null;
     const defaultNodeColor = opt.nodes.nodeColor;
     // Couleur affichée d'un nœud : sa couleur propre, sinon la couleur par défaut.
     const nodeDisplayColor = (n: ENode): string => n.color || defaultNodeColor;
@@ -1076,7 +1257,7 @@ function drawSankey(
         .data(liens)
         .enter()
         .append("path")
-        .attr("d", (d: ELink) => ribbonPath(d, L.curveType, curvature))
+        .attr("d", (d: ELink) => ribbonPath(d, L.curveType, curvature, fleche))
         // Repères stables pour les tests et le débogage (cf. data-id des nœuds).
         .attr("data-source", (d: ELink) => (d.source as ENode).id)
         .attr("data-target", (d: ELink) => (d.target as ENode).id)
@@ -1101,7 +1282,7 @@ function drawSankey(
             .enter()
             .append("path")
             .attr("class", "lien-bio")
-            .attr("d", (d: ELink) => bandeauBio(d, L.curveType, curvature))
+            .attr("d", (d: ELink) => bandeauBio(d, L.curveType, curvature, fleche))
             .attr("data-source", (d: ELink) => (d.source as ENode).id)
             .attr("data-target", (d: ELink) => (d.target as ENode).id)
             // La part réellement peinte, pour les tests et le débogage.
@@ -1267,7 +1448,6 @@ function drawSankey(
     }
 
     /* ---- Étiquettes des nœuds ---- */
-    const NL = opt.nodeLabels;
     if (NL.show) {
         // La police ET la position sont propres au type du nœud (elles
         // retombent sur celles-ci quand le type n'en a pas) : taille, hauteur de
@@ -1275,76 +1455,67 @@ function drawSankey(
         // toutes.
         const midX = width / 2;
         const bgOpacity = clamp(NL.backgroundOpacity, 0, 100) / 100;
-        const maxChars = Math.max(1, Math.round(NL.maxChars));
-        // Bords du dessin : abscisses extrêmes des nœuds peints (cf. « centre »).
-        const xMinNoeuds = Math.min(...noeuds.map(n => n.x0 ?? 0));
-        const xMaxNoeuds = Math.max(...noeuds.map(n => n.x1 ?? 0));
-        const gap = 6;
-        const padX = 4;
-        const padY = 2;
+        const bord = bordsDu(noeuds);
+        const parts = partsDes(noeuds);
 
         noeuds.forEach(d => {
-            const police = policeParType[d.kind];
+            const { police, fs, hauteurLigne: lineHeight, lignes: lines, largeur: maxLineW } =
+                etiquetteDe(d, parts);
             const position = positionParType[d.kind];
-            const fs = clamp(police.fontSize, 4, 60);
-            const lineHeight = fs * 1.2;
-            const labelText = texteAffiche(
-                NL.showValue ? `${d.name} (${formatNumber(d.value ?? 0)})` : d.name,
-                police
-            );
-            const lines = NL.wrap ? wrapText(labelText, maxChars) : [labelText];
-            /* Le bloc fait la largeur de sa LIGNE LA PLUS LARGE, mesurée pour de
-               bon : « IAA » garde un fond à sa taille, et « Importation de
-               bovins finis » coupé en deux lignes prend la largeur de
-               « Importation de », pas celle du nom entier. */
-            const maxLineW = Math.max(
-                ...lines.map(ln =>
-                    mesureTexte(ln, fs, police.weight, police.italic,
-                        police.fontFamily))
-            );
+            const cote = bord(d);
             const centerY = ((d.y0 ?? 0) + (d.y1 ?? 0)) / 2;
             const nodeCenterX = ((d.x0 ?? 0) + (d.x1 ?? 0)) / 2;
+            // Posée au-delà d'une colonne de bord, sur le fond du graphique.
+            const exterieure = position === "exterieur" && cote !== null;
 
             let anchor: string, anchorX: number, blockTopY: number, rectX: number;
             if (position === "dessous") {
                 anchor = "middle";
                 anchorX = nodeCenterX;
-                blockTopY = (d.y1 ?? 0) + gap;
-                rectX = nodeCenterX - maxLineW / 2 - padX;
+                blockTopY = (d.y1 ?? 0) + GAP_ETIQUETTE;
+                rectX = nodeCenterX - maxLineW / 2 - PAD_X;
             } else if (position === "centre") {
                 /* Centrée SUR le nœud (pas à côté), donc sans écart : le texte
                    se pose sur la boîte. Aux deux extrémités du dessin, un nom
                    plus large que la boîte déborderait vers l'extérieur du
                    diagramme (et sortirait du cadre à gauche) : l'étiquette se
-                   cale alors sur le côté du nœud tourné vers l'intérieur.
-                   Ce sont les colonnes RÉELLEMENT peintes qui font le bord, pas
-                   un numéro de colonne : d3 tasse les couches d'un modèle dont
-                   la plus longue chaîne est plus courte que le nombre de
-                   colonnes, et une colonne de la grille peut rester vide.
-                   Un nœud collé aux deux bords à la fois (colonne unique) reste
-                   centré, faute de mieux. */
-                const bordGauche = (d.x0 ?? 0) <= xMinNoeuds + 0.5;
-                const bordDroit = (d.x1 ?? 0) >= xMaxNoeuds - 0.5;
+                   cale alors sur le côté du nœud tourné vers l'intérieur. */
                 blockTopY = centerY - (lines.length * lineHeight) / 2;
-                if (bordGauche === bordDroit) {
+                if (!cote) {
                     anchor = "middle";
                     anchorX = nodeCenterX;
-                    rectX = nodeCenterX - maxLineW / 2 - padX;
-                } else if (bordGauche) {
+                    rectX = nodeCenterX - maxLineW / 2 - PAD_X;
+                } else if (cote === "gauche") {
                     anchor = "start";
                     anchorX = d.x0 ?? 0;
-                    rectX = anchorX - padX;
+                    rectX = anchorX - PAD_X;
                 } else {
                     anchor = "end";
                     anchorX = d.x1 ?? 0;
-                    rectX = anchorX - maxLineW - padX;
+                    rectX = anchorX - maxLineW - PAD_X;
+                }
+            } else if (exterieure) {
+                /* À l'EXTÉRIEUR : la première colonne écrit ses noms à sa
+                   gauche, la dernière à sa droite — hors des rubans, sur le
+                   fond. Le cadre leur a réservé cette place. Les colonnes du
+                   milieu n'ont pas d'extérieur : elles restent « à côté ». */
+                const ecart = ecartExterieur(d);
+                blockTopY = centerY - (lines.length * lineHeight) / 2;
+                if (cote === "gauche") {
+                    anchor = "end";
+                    anchorX = (d.x0 ?? 0) - ecart;
+                    rectX = anchorX - maxLineW - PAD_X;
+                } else {
+                    anchor = "start";
+                    anchorX = (d.x1 ?? 0) + ecart;
+                    rectX = anchorX - PAD_X;
                 }
             } else {
                 const isLeft = (d.x0 ?? 0) < midX;
                 anchor = isLeft ? "start" : "end";
-                anchorX = isLeft ? (d.x1 ?? 0) + gap : (d.x0 ?? 0) - gap;
+                anchorX = isLeft ? (d.x1 ?? 0) + GAP_ETIQUETTE : (d.x0 ?? 0) - GAP_ETIQUETTE;
                 blockTopY = centerY - (lines.length * lineHeight) / 2;
-                rectX = isLeft ? anchorX - padX : anchorX - maxLineW - padX;
+                rectX = isLeft ? anchorX - PAD_X : anchorX - maxLineW - PAD_X;
             }
 
             /* Le bloc que l'étiquette occupe : le fond s'y pose, et la zone
@@ -1353,9 +1524,9 @@ function drawSankey(
                étiquette qu'on voit mais qu'on n'attrape pas. */
             const boite = {
                 x: rectX,
-                y: blockTopY - padY,
-                w: maxLineW + padX * 2,
-                h: lines.length * lineHeight + padY * 2
+                y: blockTopY - PAD_Y,
+                w: maxLineW + PAD_X * 2,
+                h: lines.length * lineHeight + PAD_Y * 2
             };
 
             // Le repère est porté par le GROUPE, pas seulement par le texte :
@@ -1394,7 +1565,11 @@ function drawSankey(
                 .attr("data-kind", d.kind)
                 // Repère stable pour les tests et le débogage, comme les nœuds.
                 .attr("data-label-for", d.id)
-                .attr("fill", police.fontColor)
+                /* Sur le fond, une étiquette extérieure peut prendre la couleur
+                   de son nœud : le nom se relie alors à sa boîte d'un regard.
+                   Entre les rubans, la couleur du texte reste celle réglée — un
+                   nom de la couleur du ruban qu'il chevauche ne se lirait plus. */
+                .attr("fill", exterieure && NL.couleurDuNoeud ? nodeDisplayColor(d) : police.fontColor)
                 .attr("fill-opacity", clamp(police.opacity, 0, 100) / 100)
                 .style("font-family", police.fontFamily)
                 .style("font-size", fs + "px")
@@ -1449,7 +1624,7 @@ function drawSankey(
                 .text(titre);
         });
     }
-    return echelleObtenue;
+    return { echelle: echelleObtenue, reserve };
 }
 
 /* ----------------------------- utilitaires ----------------------------- */
@@ -1481,9 +1656,11 @@ function clamp(v: number, min: number, max: number): number {
  * même ligne, décalée de ± une demi-épaisseur — c'est `bandePath`, dont le
  * ruban entier n'est qu'un cas particulier.
  */
-function ribbonPath(link: ELink, curveType: string, curvature: number): string {
+function ribbonPath(
+    link: ELink, curveType: string, curvature: number, fleche: FlecheLiens | null = null
+): string {
     const hw = Math.max(0, link.width ?? 0) / 2;
-    return bandePath(link, -hw, hw, curveType, curvature);
+    return bandePath(link, -hw, hw, curveType, curvature, fleche);
 }
 
 /**
@@ -1491,9 +1668,11 @@ function ribbonPath(link: ELink, curveType: string, curvature: number): string {
  * supérieur jusqu'à la fraction demandée de son épaisseur. À 100 % il recouvre
  * le ruban entier, à 0 % il n'est pas dessiné du tout.
  */
-function bandeauBio(link: ELink, curveType: string, curvature: number): string {
+function bandeauBio(
+    link: ELink, curveType: string, curvature: number, fleche: FlecheLiens | null = null
+): string {
     const hw = Math.max(0, link.width ?? 0) / 2;
-    return bandePath(link, -hw, -hw + 2 * hw * partBio(link), curveType, curvature);
+    return bandePath(link, -hw, -hw + 2 * hw * partBio(link), curveType, curvature, fleche);
 }
 
 /** L'axe du ruban : son départ, les escales traversées, son arrivée. */
@@ -1510,6 +1689,28 @@ function axeRuban(link: ELink): [number, number][] {
 }
 
 /**
+ * Pointe d'un ruban : où son corps s'arrête (`base`) et combien la pointe
+ * avance au-delà (`longueur`), jusqu'à `separation` pixels du nœud.
+ *
+ * La pointe ne déborde JAMAIS de l'épaisseur du ruban : sur un nœud, les rubans
+ * arrivent empilés bord à bord, et une flèche plus large que son ruban
+ * mordrait sur ses voisins. Sa longueur se déduit donc de l'angle —
+ * demi-épaisseur / tan(angle / 2) — et se borne à la moitié du dernier
+ * segment, pour qu'un ruban épais entre deux colonnes serrées garde un corps.
+ */
+function pointeRuban(
+    pts: [number, number][], hw: number, fleche: FlecheLiens
+): { base: number; longueur: number } {
+    const n = pts.length;
+    const bout = pts[n - 1][0] - clamp(fleche.separation, 0, 200);
+    const depart = pts[n - 2][0];
+    const angle = (clamp(fleche.angle, 10, 170) * Math.PI) / 180;
+    const place = Math.max(0, (bout - depart) / 2);
+    const longueur = Math.min(hw / Math.tan(angle / 2), place);
+    return { base: bout - longueur, longueur };
+}
+
+/**
  * Une BANDE du ruban : la portion comprise entre deux décalages de son axe
  * (en pixels, négatif vers le haut). Le ruban entier est la bande
  * [-épaisseur/2, +épaisseur/2] ; le bandeau bio en est une tranche.
@@ -1517,14 +1718,33 @@ function axeRuban(link: ELink): [number, number][] {
  * Les points de passage (colonnes seulement traversées) s'intercalent entre le
  * départ et l'arrivée : la bande file droit sur la largeur de l'escale, puis
  * repart vers le point suivant. Sans passage, le tracé est celui d'avant.
+ *
+ * Avec une flèche, le corps s'arrête plus tôt et la bande se referme sur le
+ * profil de la pointe : une tranche du ruban (le bandeau bio) en épouse donc
+ * exactement le bord, au lieu de dépasser en carré.
  */
 function bandePath(
-    link: ELink, de: number, a: number, curveType: string, curvature: number
+    link: ELink, de: number, a: number, curveType: string, curvature: number,
+    fleche: FlecheLiens | null = null
 ): string {
     const pts = axeRuban(link);
+    const hw = Math.max(0, link.width ?? 0) / 2;
+    if (!fleche || hw <= 0) {
+        const haut = bordRuban(pts, de, curveType, curvature);
+        const bas = bordRuban(pts.slice().reverse(), a, curveType, curvature);
+        return `M${haut} L${bas} Z`;
+    }
+    const { base, longueur } = pointeRuban(pts, hw, fleche);
+    const y = pts[pts.length - 1][1];
+    pts[pts.length - 1] = [base, y];
+    // Abscisse du bord de la pointe à un décalage donné de l'axe.
+    const profil = (o: number) => base + longueur * (1 - Math.min(1, Math.abs(o) / hw));
+    const pointe: string[] = [`${profil(de)},${y + de}`];
+    if (de < 0 && a > 0) pointe.push(`${base + longueur},${y}`);
+    pointe.push(`${profil(a)},${y + a}`);
     const haut = bordRuban(pts, de, curveType, curvature);
     const bas = bordRuban(pts.slice().reverse(), a, curveType, curvature);
-    return `M${haut} L${bas} Z`;
+    return `M${haut} L${pointe.join(" L")} L${bas} Z`;
 }
 
 /** Un bord du ruban : la ligne brisée des points, décalée de `dy`. */
@@ -1618,6 +1838,17 @@ function arrondiSignificatif(v: number, n: number): string {
     const r = Number(v.toPrecision(chiffres));
     const dec = clamp(chiffres - 1 - Math.floor(Math.log10(Math.abs(r))), 0, 20);
     return r.toLocaleString("fr-FR", { maximumFractionDigits: dec });
+}
+
+/**
+ * Part d'un total, écrite en pour cent entiers. Une part non nulle mais sous
+ * le pour cent s'écrit « < 1 % » : « 0 % » dirait qu'il n'y a rien.
+ */
+function formatPart(p: number): string {
+    const pct = p * 100;
+    if (!isFinite(pct) || pct <= 0) return "0\u202f%";
+    if (pct < 0.5) return "<\u202f1\u202f%";
+    return Math.round(pct).toLocaleString("fr-FR") + "\u202f%";
 }
 
 function formatNumber(v: number): string {
