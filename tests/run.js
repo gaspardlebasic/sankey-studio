@@ -3057,10 +3057,16 @@ test("valeurs des nœuds : le format des liens s'applique au chiffre peint", "co
     T.refresh();
     await cocher('Nœuds', 'Afficher la valeur');
     await versApercu();
-    const lire = () => {
-      const t = document.querySelector('#canvas text[data-label-for="n45"]');
-      return t ? t.textContent.replace(/[\\u202f\\u00a0]/g, ' ') : null;
-    };
+    // Une entrée par LIGNE peinte (un tspan chacune), de haut en bas.
+    const lire = () => [...document.querySelectorAll('#canvas text[data-label-for="n45"] tspan')]
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+      .map(t => t.textContent.replace(/[\\u202f\\u00a0]/g, ' '));
+    // La ligne de la valeur est bien SOUS celle du nom, pas à côté.
+    const ts = [...document.querySelectorAll('#canvas text[data-label-for="n45"] tspan')]
+      .map(t => t.getBoundingClientRect());
+    // Interligne de 1,2 : les boîtes des glyphes se touchent presque, on
+    // compare donc le décalage des lignes à la hauteur d'une ligne.
+    const dessous = ts.length === 2 && ts[1].top - ts[0].top >= ts[0].height * 0.7;
     const trois = lire();
     await reglerCarte('Nœuds', 'Chiffres significatifs de la valeur', 1);
     const un = lire();
@@ -3069,12 +3075,13 @@ test("valeurs des nœuds : le format des liens s'applique au chiffre peint", "co
     const champ = [...(await carteDuPanneau('Nœuds')).querySelectorAll('.field span')]
       .some(s => s.textContent.trim() === 'Chiffres significatifs de la valeur');
     await versEdition();
-    return { trois, un, milliers, champ };
+    return { trois, un, milliers, champ, dessous };
   `);
   // L'unité vient des liens du nœud (« t » dans le classeur d'essai).
-  egal(r.trois, "Féverolle (1 230 000 t)", "trois chiffres significatifs par défaut");
-  egal(r.un, "Féverolle (1 000 000 t)", "un seul chiffre significatif");
-  egal(r.milliers, "Féverolle (1 235 t)", "en milliers, la valeur est divisée et arrondie");
+  egal(r.trois, ["Féverolle", "1 230 000 t"], "trois chiffres significatifs par défaut");
+  attendu(r.dessous, "la valeur doit s'écrire sur une ligne à elle, sous le nom");
+  egal(r.un, ["Féverolle", "1 000 000 t"], "un seul chiffre significatif");
+  egal(r.milliers, ["Féverolle", "1 235 t"], "en milliers, la valeur est divisée et arrondie");
   attendu(r.champ === false, "« Chiffres significatifs » disparaît dès qu'un multiplicateur agit");
 });
 
@@ -3083,10 +3090,10 @@ test("valeurs des nœuds : la part de la colonne se compte couloir par couloir",
     await cocher('Nœuds', 'Afficher la valeur');
     await reglerCarte('Nœuds', 'Valeur affichée', 'les-deux');
     await versApercu();
-    const lire = id => {
-      const t = document.querySelector('#canvas text[data-label-for="' + id + '"]');
-      return t ? t.textContent.replace(/[\\u202f\\u00a0]/g, ' ') : null;
-    };
+    // Les lignes peintes, jointes par « / » pour se comparer d'un coup.
+    const lire = id => [...document.querySelectorAll(
+        '#canvas text[data-label-for="' + id + '"] tspan')]
+      .map(t => t.textContent.replace(/[\\u202f\\u00a0]/g, ' ')).join(' / ');
     const unCouloir = { n45: lire('n45'), n62: lire('n62'), n65: lire('n65') };
     await reglerCarte('Nœuds', 'Valeur affichée', 'part');
     const partSeule = lire('n45');
@@ -3100,16 +3107,16 @@ test("valeurs des nœuds : la part de la colonne se compte couloir par couloir",
   `);
   // Colonne 2 : Féverolle 320, Importation 90, Exportation 80 — 490 en tout.
   egal(r.unCouloir, {
-    n45: "Féverolle (320 t · 65 %)",
-    n62: "Importation hors bretagne (90 t · 18 %)",
-    n65: "Exportation hors bretagne (80 t · 16 %)"
+    n45: "Féverolle / 320 t · 65 %",
+    n62: "Importation hors bretagne / 90 t · 18 %",
+    n65: "Exportation hors bretagne / 80 t · 16 %"
   }, "valeur et part de la colonne");
-  egal(r.partSeule, "Féverolle (65 %)", "la part seule");
+  egal(r.partSeule, "Féverolle / 65 %", "la part seule");
   // Couloir 1 : 320 + 90 = 410 ; couloir 2 : l'exportation, seule.
   egal(r.deuxCouloirs, {
-    n45: "Féverolle (78 %)",
-    n62: "Importation hors bretagne (22 %)",
-    n65: "Exportation hors bretagne (100 %)"
+    n45: "Féverolle / 78 %",
+    n62: "Importation hors bretagne / 22 %",
+    n65: "Exportation hors bretagne / 100 %"
   }, "chaque couloir totalise ses 100 %");
 });
 

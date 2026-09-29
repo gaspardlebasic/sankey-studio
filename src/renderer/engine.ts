@@ -1055,11 +1055,15 @@ function drawSankey(
     const etiquetteDe = (d: ENode, parts: Map<string, number>) => {
         const police = policeParType[d.kind];
         const fs = clamp(police.fontSize, 4, 60);
-        const texte = texteAffiche(
-            NL.showValue ? `${d.name} (${texteValeurNoeud(d, parts.get(d.id) ?? 0)})` : d.name,
-            police
-        );
-        const lignes = NL.wrap ? wrapText(texte, maxChars) : [texte];
+        const nom = texteAffiche(d.name, police);
+        const lignes = NL.wrap ? wrapText(nom, maxChars) : [nom];
+        /* La valeur (ou la part) s'écrit sur SA ligne, sous le nom : collée
+           au nom entre parenthèses, elle allongeait d'autant l'étiquette — et
+           la place prise sur le dessin par les étiquettes extérieures. Elle ne
+           se coupe pas : un chiffre coupé en deux ne se lit plus. */
+        if (NL.showValue) {
+            lignes.push(texteAffiche(texteValeurNoeud(d, parts.get(d.id) ?? 0), police));
+        }
         /* Le bloc fait la largeur de sa LIGNE LA PLUS LARGE, mesurée pour de
            bon : « IAA » garde un fond à sa taille, et « Importation de bovins
            finis » coupé en deux lignes prend la largeur de « Importation de »,

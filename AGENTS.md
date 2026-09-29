@@ -875,7 +875,12 @@ un poste, c'est `npm run addin:install -- --enligne`.
     - **La valeur écrite dans l'étiquette d'un nœud a les mêmes réglages**
       (`nodeLabels.valeur` : unité de repli, multiplicateur, chiffres significatifs), dans la
       carte « Nœuds » sous « Afficher la valeur ». Elle peut dire la valeur, **la part du
-      total de sa colonne**, ou les deux (« Féverolle (320 t · 65 %) »).
+      total de sa colonne**, ou les deux (« 320 t · 65 % »).
+      - **Sur sa propre ligne, sous le nom** (demandé le 2026-09-29), sans parenthèses :
+        collée au nom, elle allongeait l'étiquette — et la place que les étiquettes
+        extérieures prennent au dessin. Le nom seul passe par le retour à la ligne ; la
+        valeur, jamais (un chiffre coupé ne se lit plus). Le test vérifie la ligne peinte
+        sous celle du nom.
       - La part se compte **dans la colonne peinte ET dans le couloir** : un couloir isole une
         famille de flux, additionner deux familles ne dirait rien. Les escales (places des
         liens traversants) ne comptent pas.
