@@ -3505,11 +3505,25 @@ function cleFilieresAffichees(): string {
  * Le nom est ASSAINI (les caractères interdits par Windows et macOS retirés) et
  * BORNÉ : une dizaine de filières cochées feraient un nom qu'aucun système
  * n'accepte. Sans filière nommée, on retombe sur « sankey ».
+ *
+ * Et il est DATÉ, à la seconde, comme les captures d'écran de macOS
+ * (« Lentilles 2026-10-12 à 14.32.05.png ») : la webview d'Excel pour Mac ne
+ * remplace jamais un fichier existant — elle échoue en silence (cf.
+ * `AVERTISSEMENT_ECRASEMENT`) —, et réexporter le même diagramme proposait le
+ * même nom, donc l'échec, à chaque fois. Un nom neuf à chaque export rend le
+ * chemin par défaut toujours bon. Les « : » sont exclus : macOS les refuse.
  */
-function nomFichierExport(format: "png" | "svg"): string {
+function nomFichierExport(format: "png" | "svg", quand: Date = new Date()): string {
     const visibles = distinctFilieres().filter(f => !hiddenFilieres.has(f));
     const base = visibles.map(assainirNomFichier).filter(n => n !== "").join(" - ");
-    return (base ? tronquer(base, 80) : "sankey") + "." + format;
+    return (base ? tronquer(base, 80) : "sankey") + " " + horodatage(quand) + "." + format;
+}
+
+/** « 2026-10-12 à 14.32.05 », à l'heure locale. */
+function horodatage(d: Date): string {
+    const z = (n: number) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate())
+        + " à " + z(d.getHours()) + "." + z(d.getMinutes()) + "." + z(d.getSeconds());
 }
 
 /** Un nom de filière ramené à ce qu'un système de fichiers accepte. */
@@ -3601,11 +3615,15 @@ function ouvrirMenuExport(anchor: HTMLElement, format: "png" | "svg"): void {
  * téléchargement exige une destination « qui n'existe pas » —, les autres
  * écrivent un doublon à côté. Rien de tout cela ne se voit d'ici : le clic sur
  * le lien de téléchargement ne rend aucun compte de ce qu'il advient.
+ *
+ * Le nom proposé est désormais toujours neuf (`nomFichierExport` le date) : le
+ * piège ne reste que pour qui choisit À LA MAIN un fichier existant.
  */
 const AVERTISSEMENT_ECRASEMENT =
-    "Un fichier qui existe déjà n'est jamais remplacé : sur Excel pour Mac "
-    + "l'enregistrement échoue en silence, ailleurs un doublon est créé. "
-    + "Donne un nom neuf, ou supprime l'ancien fichier d'abord.";
+    "Le nom proposé est daté, donc toujours neuf : garde-le. Un fichier qui "
+    + "existe déjà n'est jamais remplacé — sur Excel pour Mac l'enregistrement "
+    + "échoue en silence, ailleurs un doublon est créé. Pour remplacer une "
+    + "image, supprime l'ancien fichier d'abord.";
 
 async function exportImage(format: "png" | "svg", taille: TailleExport): Promise<void> {
     const w = borneExport(taille.width);
@@ -3666,8 +3684,8 @@ async function saveExport(name: string, mime: string, data: string, binary: bool
     a.download = name;
     a.click();
     setStatus(
-        "Image exportée — sauf sur un fichier qui existait déjà, "
-        + "qu'Excel pour Mac ne remplace pas."
+        "Image proposée sous « " + name + " » — un fichier existant, lui, "
+        + "n'est pas remplacé."
     );
 }
 

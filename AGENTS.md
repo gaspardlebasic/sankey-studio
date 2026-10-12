@@ -786,11 +786,16 @@ un poste, c'est `npm run addin:install -- --enligne`.
     choisir un fichier qui existe déjà et confirmer « Remplacer » ne fait rien du tout : l'API
     de téléchargement de WebKit exige une destination « qui n'existe pas »
     (`WKDownloadDelegate`, en-tête : *« it must be a file that does not exist »*), et l'échec
-    est silencieux. Ailleurs, un doublon est écrit à côté. Rien de tout cela n'est réparable
-    depuis le JavaScript : le menu le **dit avant** que le panneau s'ouvre
-    (`AVERTISSEMENT_ECRASEMENT`, ligne `note` de `openMenuPopover`) et le statut ne promet plus
-    le succès qu'il ne peut pas connaître. Deux mutations vérifiées (avertissement retiré,
-    statut réaffirmant « Image exportée. »).
+    est silencieux. Ailleurs, un doublon est écrit à côté. L'écrasement n'est pas réparable
+    depuis le JavaScript (aucun accès au disque) : on **évite donc la collision** — le nom
+    proposé est **daté à la seconde** (`nomFichierExport` → `horodatage`, « Lentilles
+    2026-10-12 à 14.32.05.png », la convention des captures d'écran de macOS, sans « : » que
+    macOS refuse). Avant, réexporter le même diagramme proposait le même nom, donc l'échec, à
+    chaque fois. Reste le cas d'un fichier existant choisi **à la main** : le menu le **dit
+    avant** que le panneau s'ouvre (`AVERTISSEMENT_ECRASEMENT`, ligne `note` de
+    `openMenuPopover`) et le statut nomme le fichier proposé sans promettre un succès qu'il ne
+    peut pas connaître. Mutations vérifiées (avertissement retiré, statut réaffirmant « Image
+    exportée. », nom non daté).
   - Les tests mesurent le **fichier réellement produit** : `capterExport()` (tests/helpers.js)
     intercepte `URL.createObjectURL` et le clic de l'ancre — sinon Electron ouvrirait une boîte
     d'enregistrement et le test resterait dessus — puis on lit `width`/`height` dans le SVG.
@@ -798,7 +803,7 @@ un poste, c'est `npm run addin:install -- --enligne`.
     entre le choix et le fichier passerait inaperçu. Trois mutations vérifiées (clé de
     combinaison constante, export qui ignore la taille demandée, panneau non reconstruit).
   - **Le fichier porte le nom des filières AFFICHÉES** (`nomFichierExport`), joint par « - » :
-    « Lentilles.svg », « Blé tendre - Lentilles.png ». C'est ce qui distingue deux exports du
+    « Lentilles ‹date›.svg », « Blé tendre - Lentilles ‹date›.png ». C'est ce qui distingue deux exports du
     même classeur ; « sankey (1).png » et « sankey (2).png » ne le disaient plus. Le nom est
     assaini (caractères interdits par Windows et macOS) et borné à 80 signes — dix filières
     cochées feraient un nom qu'aucun système n'accepte. Sans filière nommée : « sankey ».

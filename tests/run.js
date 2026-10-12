@@ -2739,8 +2739,8 @@ test("export : « Taille de la fenêtre » rend un SVG aux dimensions de la fen�
       };
     } finally { c.rendre(); }
   `);
-  egal(r.nom, "Lentilles.svg",
-       "le fichier exporté est un SVG nommé d'après la filière affichée");
+  attendu(/^Lentilles \d{4}-\d{2}-\d{2} à \d{2}\.\d{2}\.\d{2}\.svg$/.test(r.nom),
+       `le fichier exporté est un SVG nommé d'après la filière affichée, et daté (« ${r.nom} »)`);
   egal(r.taille, r.fenetre, "le SVG porte les dimensions de la fenêtre");
 });
 
@@ -2817,7 +2817,7 @@ test("export : le menu dit qu'un fichier existant ne sera pas remplacé", "compl
     `l'avertissement dit qu'un fichier existant n'est pas remplacé (« ${r.note} »)`);
   attendu(/Mac/.test(r.note) && /silence/.test(r.note),
     `il nomme l'échec silencieux d'Excel pour Mac (« ${r.note} »)`);
-  attendu(/nom neuf|supprime/.test(r.note),
+  attendu(/neuf/.test(r.note) && /supprime/.test(r.note),
     `et il dit quoi faire (« ${r.note} »)`);
   // Le statut ne doit plus annoncer un succès qu'on ne peut pas connaître : le
   // clic sur le lien de téléchargement ne rend aucun compte.
@@ -2935,10 +2935,37 @@ test("export : le fichier prend le nom des filières affichées", "complexe", as
       return { seule, deux };
     } finally { c.rendre(); }
   `);
-  egal(r.seule, "Lentilles.svg",
+  // La date se retire : elle est éprouvée par le test suivant.
+  const sansDate = nom => nom.replace(/ \d{4}-\d{2}-\d{2} à \d{2}\.\d{2}\.\d{2}(?=\.)/, "");
+  egal(sansDate(r.seule), "Lentilles.svg",
        "une seule filière affichée donne son nom au fichier");
-  egal(r.deux, "Blé tendre - Lentilles.png",
+  egal(sansDate(r.deux), "Blé tendre - Lentilles.png",
        "deux filières affichées se retrouvent toutes les deux dans le nom");
+});
+
+test("export : deux exports du même diagramme ne proposent jamais le même nom", "complexe", async p => {
+  // Excel pour Mac ne remplace pas un fichier existant et échoue en silence :
+  // réexporter sous le même nom, c'était perdre l'image sans le savoir.
+  const r = await p(`
+    const c = capterExport();
+    const DateOrigine = Date;
+    let maintenant = new DateOrigine(2026, 9, 12, 14, 32, 5).getTime();
+    window.Date = class extends DateOrigine {
+      constructor(...a) { super(...(a.length ? a : [maintenant])); }
+      static now() { return maintenant; }
+    };
+    try {
+      await ouvrirMenuExport('PNG');
+      await choisirDansMenu('Taille de la fenêtre');
+      maintenant += 1000;
+      await ouvrirMenuExport('PNG');
+      await choisirDansMenu('Taille de la fenêtre');
+      return c.fichiers.map(f => f.nom);
+    } finally { window.Date = DateOrigine; c.rendre(); }
+  `);
+  egal(r[0], "Lentilles 2026-10-12 à 14.32.05.png",
+       "le nom porte la date et l'heure de l'export, à la seconde, sans « : »");
+  attendu(r[0] !== r[1], `deux exports, deux noms (« ${r[0]} », « ${r[1]} »)`);
 });
 
 test("valeurs des liens : les chiffres significatifs arrondissent le chiffre peint", "complexe", async p => {
