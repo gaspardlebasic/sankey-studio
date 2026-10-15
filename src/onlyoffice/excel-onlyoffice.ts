@@ -420,6 +420,7 @@ function decoderDonnees(brut: { feuille: string; noeuds: { valeurs: any[][] }; l
 
   const hasLane = idxN.has("Couloir");
   const hasKind = idxN.has("Type");
+  const hasParent = idxN.has("Parent") || idxN.has("ID parent");
   const hasBio = idxL.has(LINK_COL_BIO);
 
   const colonnesManquantes: ColonnesManquantes = {
@@ -455,7 +456,12 @@ function decoderDonnees(brut: { feuille: string; noeuds: { valeurs: any[][] }; l
     const rawColor = getCellN(row, "Couleur");
     const color = rawColor && String(rawColor).trim() ? String(rawColor).trim() : null;
 
-    nodes.push({ id, name, column, title, order, lane, kind, filiere, color });
+    const rawParentId = getCellN(row, "ID parent");
+    const parentId = rawParentId !== null && rawParentId !== undefined && String(rawParentId).trim() !== ""
+      ? String(rawParentId).trim() : null;
+    const parentName = String(getCellN(row, "Parent") || "").trim();
+
+    nodes.push({ id, name, column, title, order, lane, kind, filiere, color, parentId, parentName });
   }
 
   const links: LienExcel[] = [];
@@ -484,6 +490,7 @@ function decoderDonnees(brut: { feuille: string; noeuds: { valeurs: any[][] }; l
     links,
     hasLane,
     hasKind,
+    hasParent,
     hasBio,
     sheetName: brut.feuille,
     colonnesManquantes

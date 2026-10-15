@@ -50,7 +50,7 @@ function egal(reel, att, m) {
 /* ----------------------------- fixtures ----------------------------- */
 
 // Colonnes des liens : Filière | Origine | Destination | Valeur | Unité | ID org | ID dest
-const LIENS_C0 = 10;
+const LIENS_C0 = NODE_COLS.length + 1;
 
 function classeurType(opts) {
   opts = opts || {};
@@ -127,8 +127,10 @@ await test("lecture : nœuds et liens, avec couloirs et types", async () => {
   egal(d.hasKind, true, "hasKind");
   egal(d.nodes[0], {
     id: "n1", name: "Production bio", column: 1, title: "Production", order: 0,
-    lane: 2, kind: "produit", filiere: "Lait", color: "#adcb47"
+    lane: 2, kind: "produit", filiere: "Lait", color: "#adcb47",
+    parentId: null, parentName: ""
   }, "premier nœud");
+  egal(d.hasParent, true, "hasParent : les deux colonnes sont dans le tableau");
   egal(d.hasBio, true, "hasBio");
   egal(d.links[1], {
     sourceId: "n2", targetId: "n3", sourceName: "Lait cru",
@@ -137,12 +139,13 @@ await test("lecture : nœuds et liens, avec couloirs et types", async () => {
 });
 
 await test("lecture : sans « Couloir » ni « Type », l'app garde les siennes", async () => {
-  const sansExtras = NODE_COLS.filter(c => c !== "Couloir" && c !== "Type");
+  const sansExtras = NODE_COLS.filter(c => ["Couloir", "Type", "Parent", "ID parent"].indexOf(c) < 0);
   classeurType({
     entetesNoeuds: sansExtras,
     noeuds: [["Lait", "Production bio", 1, "Production", 0, "#adcb47", "n1"]]
   });
   const d = await office.lireDiagramme();
+  egal(d.hasParent, false, "hasParent faux : l'app garde sa hiérarchie");
   egal(d.hasLane, false, "hasLane faux");
   egal(d.hasKind, false, "hasKind faux");
   egal(d.nodes[0].lane, 1, "couloir par défaut");
@@ -152,15 +155,16 @@ await test("lecture : sans « Couloir » ni « Type », l'app garde les siennes"
 await test("lecture : un ordre de colonnes différent est lu correctement", async () => {
   // Les colonnes sont retrouvées par leur EN-TÊTE : l'ordre du classeur importe peu.
   classeurType({
-    entetesNoeuds: ["ID", "Noeud", "Type", "Couloir", "Filière",
+    entetesNoeuds: ["ID", "ID parent", "Noeud", "Type", "Couloir", "Filière", "Parent",
                     "Numéro de colonne d'affichage", "Intitulé de la colonne d'affichage",
                     "Ordre vertical d'affichage", "Couleur"],
-    noeuds: [["n7", "Fromage", "Industrie", 3, "Lait", 4, "Aval", 2, "#c62828"]]
+    noeuds: [["n7", "n6", "Fromage", "Industrie", 3, "Lait", "Laitages", 4, "Aval", 2, "#c62828"]]
   });
   const d = await office.lireDiagramme();
   egal(d.nodes[0], {
     id: "n7", name: "Fromage", column: 4, title: "Aval", order: 2,
-    lane: 3, kind: "industrie", filiere: "Lait", color: "#c62828"
+    lane: 3, kind: "industrie", filiere: "Lait", color: "#c62828",
+    parentId: "n6", parentName: "Laitages"
   }, "nœud lu malgré l'ordre inhabituel");
 });
 
@@ -493,9 +497,9 @@ await test("écriture : une colonne inconnue du classeur n'est pas écrasée", a
   const c = classeurType({
     entetesNoeuds: avecExtra,
     noeuds: [
-      ["Lait", "Production bio", 1, "Production", 0, "#adcb47", "n1", 2, "Produit", "à revoir"],
-      ["Lait", "Lait cru", 2, "Collecte", 0, "", "n2", 2, "Produit", "ok"],
-      ["Lait", "Transformation", 3, "Industrie", 0, "", "n3", 1, "Industrie", ""]
+      ["Lait", "Production bio", 1, "Production", 0, "#adcb47", "n1", 2, "Produit", "", "", "à revoir"],
+      ["Lait", "Lait cru", 2, "Collecte", 0, "", "n2", 2, "Produit", "", "", "ok"],
+      ["Lait", "Transformation", 3, "Industrie", 0, "", "n3", 1, "Industrie", "", "", ""]
     ]
   });
   await office.ecrireDiagramme(MODELE);
@@ -598,7 +602,8 @@ await test("écriture : la colonne de l'utilisatrice suit aussi les nœuds retri
   const avecExtra = NODE_COLS.concat(["Commentaire"]);
   const c = classeurType({
     entetesNoeuds: avecExtra,
-    noeuds: RANGS_QUATRE.map((l, i) => l.concat([["un", "deux", "trois", "quatre"][i]])),
+    // Les lignes de RANGS_QUATRE s'arrêtent à « Type » : on comble Parent et ID parent.
+    noeuds: RANGS_QUATRE.map((l, i) => l.concat(["", "", ["un", "deux", "trois", "quatre"][i]])),
     liens: [["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2"]]
   });
   await office.ecrireDiagramme(deplaceTransformation());
@@ -1201,8 +1206,42 @@ await test("verifierColonnesManquantes : pas de colonnes manquantes si tout est 
   }
 });
 
-// Note: ajouterColonnesManquantes n'est pas testée ici car le faux Office
-// ne supporte pas feuille.getRangeByIndexes. À tester manuellement avec un vrai Excel.
+/* --- Ajout des colonnes manquantes. Un classeur d'avant les niveaux
+   d'agrégation n'a ni « Parent » ni « ID parent », et le plus souvent UNE seule
+   colonne vide avant le tableau des liens : il faut lui faire de la place. --- */
+
+const NOEUDS_D_AVANT = NODE_COLS.filter(c => c !== "Parent" && c !== "ID parent");
+const tableau = (c, nom) => c.classeur.tables.find(d => d.nom === nom);
+
+await test("ajouterColonnesManquantes : insère des colonnes vides pour écarter les liens", async () => {
+  const c = monterClasseur([
+    { nom: "Noeuds", entetes: NOEUDS_D_AVANT.slice(), c0: 0,
+      lignes: [["Lait", "Production bio", 1, "Production", 0, "", "n1", 1, "Produit"]] },
+    { nom: "Liens", entetes: LINK_COLS.slice(), c0: NOEUDS_D_AVANT.length + 1,
+      lignes: [["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", 0]] }
+  ]);
+  const r = await office.ajouterColonnesManquantes();
+  egal(r.ok, true, "réussite : " + r.message);
+  egal(r.colonnesAjoutees.noeuds, ["Parent", "ID parent"], "colonnes ajoutées");
+  egal(c.entetesDe("Noeuds"), NODE_COLS.slice(), "en-têtes des nœuds complets");
+  egal(tableau(c, "Liens").c0, NODE_COLS.length + 1, "les liens ont glissé, une colonne vide reste");
+  egal(c.lignesDe("Liens"), [["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", 0]],
+       "les liens sont intacts");
+  egal(c.cellule(0, NODE_COLS.length).v, "", "la colonne qui sépare les tableaux est vide");
+  const d = await office.lireDiagramme();
+  egal([d.hasParent, d.colonnesManquantes], [true, undefined], "plus rien ne manque");
+});
+
+await test("ajouterColonnesManquantes : n'insère rien quand la place existe", async () => {
+  const c = monterClasseur([
+    { nom: "Noeuds", entetes: NOEUDS_D_AVANT.slice(), c0: 0, lignes: [] },
+    { nom: "Liens", entetes: LINK_COLS.slice(), c0: 20, lignes: [] }
+  ]);
+  const r = await office.ajouterColonnesManquantes();
+  egal(r.ok, true, "réussite : " + r.message);
+  egal(tableau(c, "Liens").c0, 20, "les liens n'ont pas bougé");
+  egal(c.entetesDe("Noeuds"), NODE_COLS.slice(), "en-têtes complets");
+});
 
 /* ------------------------------ bilan ------------------------------ */
 

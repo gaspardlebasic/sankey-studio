@@ -10,6 +10,8 @@ export interface NoeudExcel {
   kind: NodeKind;
   filiere: string;
   color: string | null;
+  parentId: string | null;
+  parentName: string;
 }
 
 export interface LienExcel {
@@ -32,6 +34,7 @@ export interface DonneesExcel {
   links: LienExcel[];
   hasLane?: boolean;
   hasKind?: boolean;
+  hasParent?: boolean;
   hasBio?: boolean;
   sheetName?: string;
   colonnesManquantes?: ColonnesManquantes;

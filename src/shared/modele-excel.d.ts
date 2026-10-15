@@ -15,6 +15,8 @@ export type Cellule =
 export interface NoeudModele {
   id: string; name: string; column: number; title?: string; order?: number;
   lane?: number; kind?: NodeKind; filiere?: string; color?: string | null;
+  /** ID du nœud parent (niveaux d'agrégation) ; absent ou null = racine. */
+  parent?: string | null;
 }
 export interface LienModele {
   source: string; target: string; value: number; unit?: string;
@@ -46,6 +48,13 @@ export function comparerFiliere(a: unknown, b: unknown): number;
 export function ancrerFormule(f: unknown): string;
 export function comparerPlacement(a: unknown, b: unknown): number;
 export function filiereDuLien(sNode: unknown, tNode: unknown): string;
+/**
+ * Parents utilisables : ID du nœud -> ID de son parent. Un parent inconnu,
+ * d'une autre filière, ou pris dans une boucle est écarté.
+ */
+export function parentsValides(nodes: NoeudModele[]): Map<string, string>;
+/** Les nœuds en plan : filière, placement, chaque enfant sous son parent. */
+export function rangerEnPlan<T extends NoeudModele>(nodes: T[]): T[];
 
 /**
  * Une formule « Valeur du flux » retrouvée dans le classeur.

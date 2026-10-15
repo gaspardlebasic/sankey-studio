@@ -20,7 +20,7 @@
  */
 
 import {
-  NODE_COLS, LINK_COLS, LINK_COL_BIO, LINK_COLS_ECRITES, NODE_START, LINK_START,
+  NODE_COLS, LINK_COLS, LINK_COL_BIO, LINK_COLS_ECRITES, NODE_START, LINK_START, GAP,
   buildModelRows, toInt, toNum, typeDepuisTexte, partBioDepuisTexte
 } from "../shared/modele-excel.js";
 import type {
@@ -33,6 +33,8 @@ import type {
 export interface NoeudExcel {
   id: string | null; name: string; column: number; title: string;
   order: number; lane: number; kind: NodeKind; filiere: string; color: string | null;
+  /** Parent (niveaux d'agrégation) : l'ID d'abord, sinon le nom saisi à la main. */
+  parentId: string | null; parentName: string;
 }
 export interface LienExcel {
   sourceId: string | null; targetId: string | null;
@@ -48,6 +50,8 @@ export interface DonneesExcel {
   hasLane?: boolean;
   /** Idem pour « Type ». */
   hasKind?: boolean;
+  /** Idem pour « Parent » / « ID parent » : sans elles, l'app garde sa hiérarchie. */
+  hasParent?: boolean;
   /** Le tableau des liens porte-t-il « Part bio / durable » ? */
   hasBio?: boolean;
   sheetName?: string;
@@ -346,7 +350,9 @@ export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel |
           lane: Math.max(1, toInt(col(ligne, "Couloir"), 1)),
           kind: typeDepuisTexte(col(ligne, "Type")),
           filiere: texte(col(ligne, "Filière")),
-          color: texte(col(ligne, "Couleur")).trim() || null
+          color: texte(col(ligne, "Couleur")).trim() || null,
+          parentId: texte(col(ligne, "ID parent")).trim() || null,
+          parentName: texte(col(ligne, "Parent")).trim()
         });
       }
     }
@@ -388,6 +394,7 @@ export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel |
       links,
       hasLane: !!(t.noeuds && t.noeuds.index.has("Couloir")),
       hasKind: !!(t.noeuds && t.noeuds.index.has("Type")),
+      hasParent: !!(t.noeuds && (t.noeuds.index.has("Parent") || t.noeuds.index.has("ID parent"))),
       hasBio: !!(t.liens && t.liens.index.has(LINK_COL_BIO)),
       colonnesManquantes: (manquantes.noeuds.length > 0 || manquantes.liens.length > 0) ? manquantes : undefined
     };
@@ -1166,24 +1173,22 @@ export async function ajouterColonnesManquantes(nomFeuille?: string): Promise<Re
 
       const noeudsEndCol = rangeNoeuds.columnIndex + rangeNoeuds.columnCount;
       const liensStartCol = rangeLiens.columnIndex;
-      
-      // Vérifier que les tableaux ne se superposent pas
-      // Ils peuvent se toucher (pas de colonne vide entre eux), mais pas se chevaucher
-      // Après ajout des colonnes manquantes, calculer la nouvelle position du tableau Nœuds
-      const colsNoeuds = rangeNoeuds.columnCount + (manquantes.noeuds.length > 0 ? manquantes.noeuds.length : 0);
-      const nouveauxNoeudsEndCol = rangeNoeuds.columnIndex + colsNoeuds;
-      
-      // Vérifier que même après ajout, les tableaux ne se superposent pas
-      // On autorise la position adjacente (noeudsEndCol === liensStartCol)
-      if (nouveauxNoeudsEndCol > liensStartCol) {
-        // Calculer combien de colonnes il faudrait pour éviter la superposition
-        const espaceNecessaire = nouveauxNoeudsEndCol - liensStartCol;
-        return {
-          ok: false,
-          message: `Pas assez d'espace entre les tableaux : le tableau Nœuds étendu empiéterait sur le tableau Liens. ` +
-                   `(Nœuds finit en colonne ${nouveauxNoeudsEndCol}, Liens commence en ${liensStartCol}). ` +
-                   `Ajoutez ${espaceNecessaire} colonne(s) vide(s) entre les deux tableaux et réessayez.`
-        };
+
+      // Le tableau des nœuds s'élargit vers la droite. Si celui des liens est
+      // juste à côté, on lui fait de la place en INSÉRANT des colonnes entières
+      // entre les deux — tout ce qui est à droite glisse d'un bloc, liens
+      // compris — et l'on garde la colonne vide qui les sépare (GAP).
+      // Les classeurs existants n'en ont souvent qu'une : sans cela, l'arrivée
+      // de « Parent » et « ID parent » y échouerait à chaque ouverture.
+      const liensADroite = liensStartCol >= noeudsEndCol;
+      const aInserer = liensADroite
+        ? noeudsEndCol + manquantes.noeuds.length + GAP - liensStartCol
+        : 0;
+      if (manquantes.noeuds.length > 0 && aInserer > 0) {
+        feuille.getRangeByIndexes(0, noeudsEndCol, 1, aInserer)
+          .getEntireColumn()
+          .insert(Excel.InsertShiftDirection.right);
+        await context.sync();
       }
 
       // Ajouter les colonnes manquantes au tableau des nœuds
@@ -1201,8 +1206,9 @@ export async function ajouterColonnesManquantes(nomFeuille?: string): Promise<Re
         const newHeaders = currentHeaders.slice();
         manquantes.noeuds.forEach(h => newHeaders.push(h));
 
-        // Réécrire l'en-tête complet
-        headerRange.values = [newHeaders];
+        // L'en-tête élargi s'écrit sur une plage ÉLARGIE : Excel refuse une
+        // affectation plus large que sa plage. Le tableau la reprend ensuite.
+        headerRange.getResizedRange(0, manquantes.noeuds.length).values = [newHeaders];
 
         // Redimensionner le tableau pour inclure les nouvelles colonnes
         const newRange = feuille.getRangeByIndexes(
@@ -1229,8 +1235,9 @@ export async function ajouterColonnesManquantes(nomFeuille?: string): Promise<Re
         const newHeaders = currentHeaders.slice();
         manquantes.liens.forEach(h => newHeaders.push(h));
 
-        // Réécrire l'en-tête complet
-        headerRange.values = [newHeaders];
+        // L'en-tête élargi s'écrit sur une plage ÉLARGIE : Excel refuse une
+        // affectation plus large que sa plage. Le tableau la reprend ensuite.
+        headerRange.getResizedRange(0, manquantes.liens.length).values = [newHeaders];
 
         // Redimensionner le tableau pour inclure les nouvelles colonnes
         const newRange = feuille.getRangeByIndexes(

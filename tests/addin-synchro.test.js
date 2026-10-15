@@ -139,7 +139,7 @@ function classeurAvecIntrus() {
       lignes: [["Lait", "Lait cru", 1, "Collecte", 0, "", "n1", 1, "Produit"]]
     },
     {
-      nom: "Liens", entetes: LINK_COLS.slice(), c0: 10,
+      nom: "Liens", entetes: LINK_COLS.slice(), c0: NODE_COLS.length + 1,
       lignes: [["Lait", "Lait cru", "Lait cru", 1, "t", "n1", "n1"]]
     },
     // Le classeur réel du poste d'essai en portait un troisième, sur une AUTRE

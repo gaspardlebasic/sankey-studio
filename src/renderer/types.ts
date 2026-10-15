@@ -29,6 +29,12 @@ export interface FlowNode {
     kind: NodeKind; // produit/commodité ou industrie/étape de transformation
     filiere: string; // filière étudiée (permet de filtrer l'affichage) ; peut être vide
     color: string | null; // couleur du nœud (nom CSS ou #hex) ; null = défaut
+    /**
+     * Nœud parent (niveaux d'agrégation, PLAN-AGREGATION.md) : ID d'un nœud de la
+     * même filière, ou absent / null pour une racine. Colonnes « Parent » et
+     * « ID parent » du classeur.
+     */
+    parent?: string | null;
     x: number; // position libre dans l'éditeur (pas utilisée par le Sankey)
     y: number;
 }

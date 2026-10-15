@@ -356,17 +356,19 @@ pousser sur `main` déclenche `.github/workflows/complement.yml` (DIFFUSION.md).
 un poste, c'est `npm run addin:install -- --enligne`.
 
 ### Modèle de données
-- **FlowNode** : `id, name, column, title, order, lane, kind, filiere, color, x, y`.
+- **FlowNode** : `id, name, column, title, order, lane, kind, filiere, color, parent?, x, y`.
   `lane` = **couloir** horizontal (entier >= 1, 1 par défaut) ;
-  `kind` = **type** du nœud, `"produit"` (défaut) ou `"industrie"`.
+  `kind` = **type** du nœud, `"produit"` (défaut) ou `"industrie"` ;
+  `parent` = ID du nœud parent (**niveaux d'agrégation**, cf. plus bas), absent = racine.
 - **FlowLink** : `id, source, target, value, unit, colorOverride?, bio?`
   (`colorOverride` = surcharge couleur propre au lien, **app only**, absente de l'Excel ;
   `bio` = part du flux en bio / durable, de 0 à 1, **lue dans le classeur et jamais réécrite**).
 - **Excel** : un onglet `Diagramme`, deux tableaux Excel (ListObjects) côte à côte :
-  - **Noeuds** (A..I) : Filière · Noeud · Numéro de colonne d'affichage · Intitulé de la colonne d'affichage · Ordre vertical d'affichage · Couleur · ID · **Couloir** · **Type**
-  - une colonne vide (`GAP = 1`), puis **Liens** (K..R) : Filière · Origine · Destination · Valeur du flux · Unité · ID origine · ID destination · **Part bio / durable**
+  - **Noeuds** (A..K) : Filière · Noeud · Numéro de colonne d'affichage · Intitulé de la colonne d'affichage · Ordre vertical d'affichage · Couleur · ID · **Couloir** · **Type** · **Parent** · **ID parent**
+  - une colonne vide (`GAP = 1`), puis **Liens** (M..T) : Filière · Origine · Destination · Valeur du flux · Unité · ID origine · ID destination · **Part bio / durable**
   - **Rangement imposé à l'écriture** : les nœuds descendent par **filière**, puis **colonne**,
-    **couloir** et **ordre vertical** ; les liens suivent leur **origine**, puis leur
+    **couloir** et **ordre vertical**, **en plan** — chaque enfant juste sous son parent
+    (`rangerEnPlan`) ; les liens suivent leur **origine**, puis leur
     **destination**. Le classeur se lit ainsi dans l'ordre où on voit le diagramme. Le tri vit
     dans `buildModelRows` (`src/shared/modele-excel.js`) et **nulle part ailleurs** — une copie
     de cette règle divergerait sans qu'on le voie. Il porte sur des **copies** : le modèle de
@@ -404,6 +406,30 @@ un poste, c'est `npm run addin:install -- --enligne`.
     `tableStyleInfo`) — attention aux attributs à préfixe (`x14ac:` …) qu'il faut retirer.
 
 ### Règles métier (importantes)
+- **Niveaux d'agrégation (`parent`)** — chantier en cours, voir **`PLAN-AGREGATION.md`**
+  (décisions, format, étapes). Ce qui est en place (étape 1) :
+  - « Parent » se saisit **à la main** (un nom), « ID parent » est rempli par le complément.
+    La relecture résout l'ID d'abord, sinon le nom **dans la même filière**
+    (`resoudreParents`) ; un nom introuvable est signalé au bandeau d'état. Sans les
+    colonnes (`hasParent` faux), l'app **garde** sa hiérarchie, comme pour les couloirs.
+  - **Cas A seulement** : un enfant suit la colonne et le couloir de sa racine
+    (`alignerSurParents`, réécriture si un enfant a bougé). Son ordre vertical se lit entre
+    frères et sœurs.
+  - Parent d'une autre filière, inconnu, ou pris dans une **boucle** : ignoré
+    (`parentsValides`). Sans cette garde, `rangerEnPlan` perdrait les membres de la boucle,
+    qui ne sont la racine de personne.
+  - **Un flux agrégé est un total** : le détail en fait partie, le reste va à un nœud virtuel
+    `nd:<id du parent>` « (non détaillé) », jamais écrit dans Excel ; un détail plus grand que
+    son total est une incohérence (on dessine le détail). Toute la règle vit dans
+    `src/shared/agregation.js` (`projeter`), pur, éprouvé par `tests/agregation.test.js`.
+  - L'aperçu passe par `modeleAffiche` : **sans parent, le modèle tel quel** (au pixel près
+    comme avant) ; avec, sa projection **tout déplié** — le ⊕ / ⊖ est l'étape 2.
+  - **Ajout des colonnes manquantes** (`ajouterColonnesManquantes`) : si le tableau des
+    liens est collé à droite, on **insère des colonnes entières** pour garder une colonne
+    vide entre les deux (autorisé par l'utilisatrice le 2026-10-15). Les vieux classeurs
+    n'en ont qu'une, et « Parent » + « ID parent » en demandent deux. ONLYOFFICE **lit** les
+    deux colonnes mais ne les ajoute pas : son ajout écrit à l'aveugle dans les colonnes
+    suivantes et écraserait le tableau des liens.
 - **Couloirs (`lane`)** : bandes horizontales empilées, une troisième coordonnée de placement à
   côté de la colonne et de l'ordre vertical. L'`order` est propre à une **cellule
   (colonne × couloir)** : deux nœuds de couloirs différents peuvent porter le même ordre dans la

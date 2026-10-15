@@ -50,6 +50,17 @@ class Grille {
     for (const [r, c] of bougees) this.cellules.delete(this.cle(r, c));
     for (const [r, c, val] of bougees) this.cellules.set(this.cle(r - n, c), val);
   }
+  /** Décale vers la droite, UNIQUEMENT dans les lignes [r0, r0+nLignes). */
+  insererColonnes(r0, nLignes, c0, nCols) {
+    const bougees = [];
+    for (const [k, val] of this.cellules) {
+      const [r, c] = k.split(",").map(Number);
+      if (r >= r0 && r < r0 + nLignes && c >= c0) bougees.push([r, c, val]);
+    }
+    bougees.sort((a, b) => b[1] - a[1]);
+    for (const [r, c] of bougees) this.cellules.delete(this.cle(r, c));
+    for (const [r, c, val] of bougees) this.cellules.set(this.cle(r, c + nCols), val);
+  }
 }
 
 /* ------------------------------ plage ------------------------------ */
@@ -82,6 +93,25 @@ class FausseP1age {
 
   get rowCount() { return this.lignes; }
   get columnCount() { return this.colonnes; }
+  get rowIndex() { return this.r0; }
+  get columnIndex() { return this.c0; }
+  /** La feuille qui porte la plage — retrouvée par sa grille. */
+  get worksheet() {
+    for (const [nom, g] of this.ctx._classeur.grilles) if (g === this.grille) return this.ctx._feuille(nom);
+    throw new Error("plage sans feuille");
+  }
+  /** Les colonnes entières de la feuille : `insert` les décale toutes, tableaux compris. */
+  getEntireColumn() {
+    const p = new FausseP1age(this.ctx, this.grille, 0, this.c0, Infinity, this.colonnes);
+    p.entiere = true;
+    return p;
+  }
+  insert(sens) {
+    if (!this.entiere || sens !== "Right") {
+      throw new Error("seule l'insertion de colonnes entières vers la droite est modélisée");
+    }
+    this.ctx._file.push({ type: "insertColumns", plage: this });
+  }
   get address() {
     return `R${this.r0 + 1}C${this.c0 + 1}:R${this.r0 + this.lignes}C${this.c0 + this.colonnes}`;
   }
@@ -157,6 +187,10 @@ class FauxTableau {
   getHeaderRowRange() {
     return new FausseP1age(this.ctx, this.def.grille, this.def.r0, this.def.c0,
                            1, this.def.entetes.length);
+  }
+  /** Le tableau prend la plage donnée ; sa première ligne devient l'en-tête. */
+  resize(plage) {
+    this.ctx._file.push({ type: "resize", table: this, plage });
   }
   getRange() {
     return new FausseP1age(this.ctx, this.def.grille, this.def.r0, this.def.c0,
@@ -325,6 +359,42 @@ class FauxContexte {
       return;
     }
 
+    if (op.type === "insertColumns") {
+      const p = op.plage;
+      // Une colonne insérée AU MILIEU d'un tableau l'élargirait : non modélisé,
+      // et ce n'est pas ce que fait l'adaptateur (il insère entre deux tableaux).
+      for (const d of this._classeur.tables) {
+        if (d.grille === p.grille && d.c0 < p.c0 && p.c0 < d.c0 + d.entetes.length) {
+          throw new Error(`insertion de colonnes au milieu du tableau « ${d.nom} »`);
+        }
+      }
+      p.grille.insererColonnes(0, Infinity, p.c0, p.colonnes);
+      for (const d of this._classeur.tables) {
+        if (d.grille === p.grille && d.c0 >= p.c0) d.c0 += p.colonnes;
+      }
+      return;
+    }
+
+    if (op.type === "resize") {
+      const def = op.table.def, p = op.plage;
+      if (p.grille !== def.grille || p.r0 !== def.r0 || p.c0 !== def.c0) {
+        throw new Error("redimensionnement qui déplace le coin du tableau : non modélisé");
+      }
+      // Excel refuse qu'un tableau en chevauche un autre.
+      for (const d of this._classeur.tables) {
+        if (d === def || d.grille !== p.grille) continue;
+        const colonnes = d.c0 < p.c0 + p.colonnes && p.c0 < d.c0 + d.entetes.length;
+        const lignes = d.r0 < p.r0 + p.lignes && p.r0 < d.r0 + d.lignes + 1;
+        if (colonnes && lignes) throw new Error(`le tableau « ${def.nom} » chevaucherait « ${d.nom} »`);
+      }
+      const entetes = [];
+      for (let c = 0; c < p.colonnes; c++) entetes.push(def.grille.lire(p.r0, p.c0 + c).v);
+      def.entetes.length = 0;
+      entetes.forEach(h => def.entetes.push(h));
+      def.lignes = p.lignes - 1;
+      return;
+    }
+
     if (op.type === "delete") {
       const p = op.plage;
       const def = this._tableauContenant(p);
@@ -353,6 +423,12 @@ class FauxContexte {
       throw new Error(
         `affectation de ${op.data.length} ligne(s) sur une plage qui en compte ` +
         `${p.lignes} (${p.address}) : Excel diffuserait la valeur sur toute la plage`);
+    }
+    // Plus large ou plus étroit que la plage : Excel refuse l'affectation.
+    if (p.lignes > 0 && op.data.some(l => l.length !== p.colonnes)) {
+      throw new Error(
+        `affectation d'une ligne de ${op.data[0].length} cellule(s) sur une plage ` +
+        `de ${p.colonnes} colonne(s) (${p.address}) : Excel la refuserait`);
     }
     op.data.forEach((ligne, r) => {
       ligne.forEach((v, c) => {
@@ -504,6 +580,7 @@ function monterClasseur(tables, options) {
 
   global.Excel = {
     DeleteShiftDirection: { up: "Up", left: "Left" },
+    InsertShiftDirection: { down: "Down", right: "Right" },
     SaveBehavior: { save: "Save", prompt: "Prompt" },
     async run(fn) {
       const ctx = new FauxContexte(classeur);

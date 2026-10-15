@@ -12,6 +12,7 @@ import {
     renderSankey, renderSankeyGroups, wrapText, policeDuType, positionDuType
 } from "./engine";
 import { openColorPopover, openMenuPopover, normalizeHex } from "./ui";
+import { projeter, alignerSurParents } from "../shared/agregation.js";
 
 const NODE_W = 132;
 const NODE_H = 38; // hauteur d'un nœud dont le nom tient sur une ligne
@@ -379,6 +380,8 @@ let hiddenFilieres = new Set<string>(); // filières masquées du schéma
 interface ExcelNode {
     id: string | null; name: string; column: number; title: string;
     order: number; lane: number; kind: NodeKind; filiere: string; color: string | null;
+    /** Parent : l'ID d'abord, sinon le nom saisi à la main (absents des vieux classeurs). */
+    parentId?: string | null; parentName?: string;
 }
 interface ExcelLink {
     sourceId: string | null; targetId: string | null;
@@ -394,6 +397,8 @@ interface ExcelData {
     hasLane?: boolean;
     /** Idem pour la colonne « Type » : sans elle, on garde les types de l'app. */
     hasKind?: boolean;
+    /** Idem pour « Parent » / « ID parent » : sans elles, on garde la hiérarchie. */
+    hasParent?: boolean;
     /** Idem pour « Part bio / durable » dans le tableau des liens. */
     hasBio?: boolean;
     /** Colonnes manquantes dans chaque tableau (pour les classeurs anciens). */
@@ -727,13 +732,37 @@ function groupesParFiliere(): { nom: string; model: FlowModel }[] {
     });
 }
 
+/**
+ * Ce que l'aperçu dessine. Sans hiérarchie, le modèle TEL QUEL — c'est ce qui
+ * garantit qu'un diagramme sans parent s'affiche au pixel près comme avant.
+ * Avec, sa projection (src/shared/agregation.js) : un parent cède sa place à
+ * ses enfants, et la part de ses flux qu'ils ne détaillent pas va à son
+ * « (non détaillé) ». Tout est déplié tant que l'aperçu n'a pas de ⊕ / ⊖
+ * (étape 2 de PLAN-AGREGATION.md).
+ */
+function modeleAffiche(m: FlowModel): FlowModel {
+    if (!m.nodes.some(n => n.parent)) return m;
+    const p = projeter(m, true);
+    const parId = new Map(m.links.map(l => [l.id, l]));
+    return {
+        nodes: p.nodes,
+        links: p.links.map(a => {
+            // Un flux affiché qui ne vient que d'un lien en garde l'apparence
+            // (couleur propre comprise) ; un flux sommé n'a que la sienne.
+            const seul = a.liens.length === 1 ? parId.get(a.liens[0] || "") : undefined;
+            const base = seul ? { ...seul } : { id: a.id, unit: a.unit };
+            return { ...base, source: a.source, target: a.target, value: a.value, bio: a.bio };
+        })
+    };
+}
+
 /** Aperçu : un seul Sankey, ou un par filière si l'option est active. */
 function dessinerApercu(svgEl: SVGSVGElement, w: number, h: number, fond = "#ffffff"): void {
-    const groupes = groupesParFiliere();
+    const groupes = groupesParFiliere().map(g => ({ nom: g.nom, model: modeleAffiche(g.model) }));
     if (options.filieres.split && groupes.length > 1) {
         renderSankeyGroups(svgEl, groupes, options, w, h, fond);
     } else {
-        renderSankey(svgEl, viewModel(), options, w, h, fond);
+        renderSankey(svgEl, modeleAffiche(viewModel()), options, w, h, fond);
     }
 }
 /**
@@ -3855,7 +3884,8 @@ async function amorcerDepuisClasseur(): Promise<void> {
     amorceFaite = true;
     render();
     buildSidebar();
-    setStatus(`Classeur lu : ${model.nodes.length} nœud(s), ${model.links.length} lien(s).`);
+    setStatus(avecAvisHierarchie(
+        `Classeur lu : ${model.nodes.length} nœud(s), ${model.links.length} lien(s).`));
     // Des lignes saisies dans Excel sans identifiant viennent d'en recevoir un :
     // il faut le leur rendre, sinon elles seront recréées à la prochaine lecture.
     if (assigned) pushToExcel({ silencieux: true });
@@ -3884,7 +3914,7 @@ async function pullExcel(manual: boolean): Promise<void> {
     buildSidebar();
     persist();
     dirtySinceSync = false;
-    setStatus("Importé depuis Excel : " + basename(excelPath));
+    setStatus(avecAvisHierarchie("Importé depuis Excel : " + basename(excelPath)));
 
     // Réécrit si des IDs ont été attribués à des lignes saisies dans Excel
     if (assigned) {
@@ -3956,8 +3986,8 @@ async function resynchroniser(): Promise<void> {
         render();
         buildSidebar();
         await pushToExcel({ valeursDejaLues: true });
-        setStatus(`Resynchronisé avec le classeur : ${model.nodes.length} nœud(s), `
-            + `${model.links.length} lien(s).`);
+        setStatus(avecAvisHierarchie(`Resynchronisé avec le classeur : ${model.nodes.length} nœud(s), `
+            + `${model.links.length} lien(s).`));
     } finally {
         resyncEnCours = false;
         majBoutonResync();
@@ -4015,6 +4045,57 @@ function layoutNew(n: FlowNode): void {
  * lignes disparues d'Excel mais déjà synchronisées sont supprimées.
  * Renvoie true si des IDs ont été attribués (nécessite une réécriture).
  */
+/**
+ * Ce que la dernière relecture a trouvé à redire à la hiérarchie : parents
+ * introuvables, enfants réalignés. Vide si rien. Ajouté au bandeau d'état.
+ */
+let avisHierarchie = "";
+function avecAvisHierarchie(message: string): string {
+    return avisHierarchie ? message + " " + avisHierarchie : message;
+}
+
+/**
+ * Rattache chaque nœud relu à son parent : l'ID d'abord, sinon le NOM dans la
+ * même filière — « Parent » se saisit à la main, « ID parent » est notre
+ * affaire. Puis réaligne les enfants sur la cellule de leur parent (cas A).
+ * Renvoie true s'il faut réécrire (ID parent à poser, enfant déplacé).
+ */
+function resoudreParents(data: ExcelData, lus: [ExcelNode, FlowNode][]): boolean {
+    avisHierarchie = "";
+    let aReecrire = false;
+    // Sans les colonnes, le classeur ne dit rien de la hiérarchie : on garde la
+    // nôtre (cf. hasLane), et seul le réalignement peut avoir à se faire.
+    if (data.hasParent) {
+        const vivants = new Set(model.nodes.map(n => n.id));
+        const parNom = new Map<string, string>();
+        model.nodes.forEach(n => {
+            const cle = (n.filiere || "") + "\u0000" + n.name;
+            if (!parNom.has(cle)) parNom.set(cle, n.id);
+        });
+        const introuvables: string[] = [];
+        lus.forEach(([E, n]) => {
+            let p: string | null = E.parentId && vivants.has(E.parentId) ? E.parentId : null;
+            if (!p && E.parentName) {
+                p = parNom.get((n.filiere || "") + "\u0000" + E.parentName) || null;
+                if (!p) introuvables.push(`« ${E.parentName} » (parent de ${n.name})`);
+            }
+            if (p === n.id) p = null;
+            if ((E.parentId || null) !== p) aReecrire = true;
+            n.parent = p;
+        });
+        if (introuvables.length) {
+            avisHierarchie = "Parent introuvable dans sa filière : " + introuvables.join(", ") + ".";
+        }
+    }
+    const bouges = alignerSurParents(model.nodes);
+    if (bouges.length) {
+        aReecrire = true;
+        avisHierarchie = (avisHierarchie ? avisHierarchie + " " : "")
+            + "Replacé dans la colonne de son parent : " + bouges.map(n => n.name).join(", ") + ".";
+    }
+    return aReecrire;
+}
+
 function reconcileFromExcel(data: ExcelData): boolean {
     let assigned = false;
 
@@ -4022,10 +4103,12 @@ function reconcileFromExcel(data: ExcelData): boolean {
     const excelNodeIds = new Set<string>();
     const newSyncedNodes = new Set<string>();
 
+    const lus: [ExcelNode, FlowNode][] = [];
     data.nodes.forEach(E => {
         let id = E.id;
         if (id && nodesById.has(id)) {
             const n = nodesById.get(id)!;
+            lus.push([E, n]);
             n.name = E.name; n.column = E.column; n.title = E.title;
             n.order = E.order; n.filiere = E.filiere; n.color = E.color;
             if (data.hasLane) n.lane = E.lane;
@@ -4043,6 +4126,7 @@ function reconcileFromExcel(data: ExcelData): boolean {
             layoutNew(n);
             model.nodes.push(n);
             nodesById.set(id, n);
+            lus.push([E, n]);
             newSyncedNodes.add(id);
         }
     });
@@ -4051,6 +4135,7 @@ function reconcileFromExcel(data: ExcelData): boolean {
         if (excelNodeIds.has(n.id) || newSyncedNodes.has(n.id)) return true;
         return !syncedNodeIds.has(n.id); // supprimé dans Excel si déjà synchronisé
     });
+    if (resoudreParents(data, lus)) assigned = true;
 
     const idSet = new Set(model.nodes.map(n => n.id));
     const nameToId = new Map<string, string>();

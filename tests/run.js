@@ -1673,6 +1673,50 @@ test("types : Excel→App applique les types du classeur, et les garde sans la c
     "sans la colonne, les types de l'app sont conservés");
 });
 
+test("agrégation : le parent relu cède sa place à ses enfants dans l'aperçu", "complexe",
+  async p => {
+  // PLAN-AGREGATION.md, étape 1. « Parent » saisi à la main (un nom) ou par ID ;
+  // un enfant posé ailleurs revient dans la colonne de son parent ; l'aperçu
+  // montre les enfants et le reste « (non détaillé) », jamais le parent.
+  const r = await p(`
+    const n = (id, name, column, extra) => Object.assign({
+      id, name, column, title: '', order: 0, lane: 1, kind: 'produit',
+      filiere: 'Lég', color: null, parentId: null, parentName: ''
+    }, extra);
+    const l = (s, t, value) => ({ sourceId: s, targetId: t, sourceName: s, targetName: t,
+                                  value, unit: 'kt' });
+    T.setSynced();
+    const reecrire = T.reconcile({
+      nodes: [
+        n('E', 'Exploitations', 1, { kind: 'industrie' }),
+        n('L', 'Légumineuses', 2),
+        n('P', 'Pois', 2, { parentName: 'Légumineuses', order: 1 }),
+        n('F', 'Féverole', 4, { parentId: 'L', order: 2 }),
+        n('A', 'Alimentation', 3, { kind: 'industrie' })
+      ],
+      links: [l('E', 'L', 100), l('E', 'P', 40), l('E', 'F', 25), l('L', 'A', 100)],
+      hasLane: true, hasKind: true, hasParent: true
+    });
+    T.refresh();
+    await sleep(80);
+    const m = T.model();
+    const parents = Object.fromEntries(m.nodes.map(x => [x.id, x.parent || null]));
+    const colonneF = m.nodes.find(x => x.id === 'F').column;
+    await versApercu();
+    const ids = rectsApercu().map(rc => rc.id).sort();
+    const ruban = (s, t) => !!document.querySelector(
+      '#canvas path[data-source="' + s + '"][data-target="' + t + '"]');
+    return { reecrire, parents, colonneF, ids,
+             rubans: [ruban('E', 'P'), ruban('E', 'F'), ruban('E', 'nd:L'), ruban('E', 'L')] };
+  `);
+  egal(r.reecrire, true, "ID parent à poser et enfant déplacé : le classeur est à réécrire");
+  egal(r.parents, { E: null, L: null, P: "L", F: "L", A: null },
+    "le parent se résout par son nom comme par son ID");
+  egal(r.colonneF, 2, "l'enfant revient dans la colonne de son parent");
+  egal(r.ids, ["A", "E", "F", "P", "nd:L"], "l'aperçu montre les enfants et le reste, pas le parent");
+  egal(r.rubans, [true, true, true, false], "les flux vont aux enfants, le reste au « (non détaillé) »");
+});
+
 test("liens : une ligne saisie dans Excel sans identifiant fait réécrire le classeur", "complexe",
   async p => {
   // Tant que les colonnes « ID origine / ID destination » sont vides, ce lien ne

@@ -25,7 +25,9 @@ const NODE_COLS = [
   "Couleur",
   "ID",
   "Couloir",
-  "Type"
+  "Type",
+  "Parent",
+  "ID parent"
 ];
 // Un lien est identifié par le couple (ID origine, ID destination) — aucune
 // donnée « externe » : les deux IDs vivent dans le tableau des nœuds.
@@ -67,7 +69,7 @@ const NODE_START = 1; // colonne A
 // adresse, un classeur déjà écrit (liens en I) reste lisible ; il n'adopte la
 // colonne vide qu'à la prochaine réécriture complète du fichier.
 const GAP = 1;
-const LINK_START = NODE_START + NODE_COLS.length + GAP; // colonne K
+const LINK_START = NODE_START + NODE_COLS.length + GAP; // colonne M
 
 /* ----------------------------- utilitaires ----------------------------- */
 
@@ -206,6 +208,63 @@ function filiereDuLien(sNode, tNode) {
   return (sNode && sNode.filiere) || (tNode && tNode.filiere) || "";
 }
 
+/**
+ * Parent d'un nœud, tel qu'il s'écrit : l'ID d'un nœud du modèle, de la même
+ * filière, et qui ne mène pas à une boucle (A parent de B parent de A). Tout
+ * le reste vaut « pas de parent » — un parent qu'on ne sait pas dessiner ne
+ * s'écrit pas non plus.
+ */
+function parentsValides(nodes) {
+  const parId = new Map(nodes.map(n => [n.id, n]));
+  const out = new Map();
+  for (const n of nodes) {
+    const p = n.parent ? parId.get(n.parent) : undefined;
+    if (p && p !== n && (p.filiere || "") === (n.filiere || "")) out.set(n.id, p.id);
+  }
+  // Un nœud est DANS une boucle quand remonter ses parents le ramène à lui.
+  // On coupe le lien de chacun de ses membres : aucun n'a de raison d'être la
+  // racine plutôt qu'un autre. Un nœud qui ne fait que MENER à une boucle garde
+  // son parent.
+  const enBoucle = [];
+  for (const n of nodes) {
+    const vus = new Set();
+    let p = out.get(n.id);
+    while (p !== undefined && p !== n.id && !vus.has(p)) { vus.add(p); p = out.get(p); }
+    if (p === n.id) enBoucle.push(n.id);
+  }
+  for (const id of enBoucle) out.delete(id);
+  return out;
+}
+
+/**
+ * Les nœuds rangés EN PLAN : par filière, puis placement, chaque enfant juste
+ * sous son parent, les frères et sœurs par ordre vertical. Sans hiérarchie,
+ * c'est exactement le tri d'avant (filière · colonne · couloir · ordre · nom).
+ */
+function rangerEnPlan(nodes) {
+  const parents = parentsValides(nodes);
+  const comparer = (a, b) =>
+    comparerFiliere(a.filiere, b.filiere) ||
+    comparerPlacement(a, b) ||
+    comparerTexte(a.name, b.name);
+  const enfants = new Map();
+  const racines = [];
+  for (const n of nodes) {
+    const p = parents.get(n.id);
+    if (p === undefined) { racines.push(n); continue; }
+    if (!enfants.has(p)) enfants.set(p, []);
+    enfants.get(p).push(n);
+  }
+  const out = [];
+  const descendre = n => {
+    out.push(n);
+    const e = enfants.get(n.id);
+    if (e) e.sort(comparer).forEach(descendre);
+  };
+  racines.sort(comparer).forEach(descendre);
+  return out;
+}
+
 /** Construit les données de nœuds/liens en lignes de cellules.
  *  formulaMap (facultatif) : préserve les formules « Valeur du flux » existantes,
  *  sous la forme clé -> { f, source } — `source` désigne la LIGNE du classeur
@@ -218,12 +277,9 @@ function buildModelRows(model, formulaMap) {
   // filière, puis colonne, couloir et ordre vertical — l'ordre dans lequel on
   // les voit à l'écran. Un lien se range d'après son origine, puis sa
   // destination. On trie des copies : le modèle de l'app n'est pas touché.
-  const noeuds = model.nodes.slice().sort(
-    (a, b) =>
-      comparerFiliere(a.filiere, b.filiere) ||
-      comparerPlacement(a, b) ||
-      comparerTexte(a.name, b.name)
-  );
+  // Une hiérarchie se lit en plan : chaque enfant juste sous son parent.
+  const noeuds = rangerEnPlan(model.nodes);
+  const parents = parentsValides(model.nodes);
   const liens = model.links.slice().sort((a, b) => {
     const sa = nodeById.get(a.source), ta = nodeById.get(a.target);
     const sb = nodeById.get(b.source), tb = nodeById.get(b.target);
@@ -244,7 +300,9 @@ function buildModelRows(model, formulaMap) {
     { t: "s", v: n.color || "" },
     { t: "s", v: n.id },
     { t: "n", v: couloirDe(n) },
-    { t: "s", v: typeDe(n) }
+    { t: "s", v: typeDe(n) },
+    { t: "s", v: parents.has(n.id) ? nomDe(nodeById.get(parents.get(n.id)), "") : "" },
+    { t: "s", v: parents.get(n.id) || "" } // ID parent
   ]);
   // Extrémités résolues une fois : l'appariement des formules s'en sert deux fois.
   const bouts = liens.map(l => {
@@ -301,5 +359,5 @@ module.exports = {
   NODE_COLS, LINK_COLS, LINK_COL_BIO, LINK_COLS_ECRITES, NODE_START, GAP, LINK_START,
   toInt, toNum, couloirDe, TYPE_LABELS, typeDe, typeDepuisTexte, partBioDepuisTexte,
   comparerTexte, comparerFiliere, comparerPlacement, filiereDuLien,
-  ancrerFormule, buildModelRows
+  ancrerFormule, parentsValides, rangerEnPlan, buildModelRows
 };
