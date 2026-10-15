@@ -439,6 +439,25 @@ un poste, c'est `npm run addin:install -- --enligne`.
     porte encore sa transformation.
   - **Niveaux** dans la barre d'outils (« Niveau [1][2][3] »), en aperçu seulement et s'il y a
     au moins deux niveaux ; un niveau n'est actif que si l'état est exactement le sien.
+  - **Vue de présentation** : `deplies` est rangé avec l'apparence (`ProjectAppearance.deplies`,
+    `document.settings`) à chaque ⊕ / ⊖ / niveau. L'aperçu se rouvre comme on l'a laissé.
+  - **Vue d'édition : tout est montré, EN PLAN** (`enPlan`, `colonneTriee`) — le parent puis
+    ses enfants, une accolade dans la marge (`dessinerAccolades`). On n'y replie rien : il
+    faut pouvoir attraper et relier chaque niveau. Les ordres des cellules qui portent une
+    hiérarchie sont **renumérotés en plan** (`renumeroterEnPlan`, à la relecture et après
+    chaque geste) : l'empilement lit `order`, le plan lit la hiérarchie, ils doivent dire
+    la même chose. Une cellule sans parent n'est jamais renumérotée.
+  - **Glisser** (`moveNodeToCell`) : un parent emmène ses descendants (le bloc). Un enfant
+    reste dans son groupe s'il est posé sous son parent, dans le bloc ; sinon il en sort
+    (bandeau d'état). Le test se fait contre le parent du **début du geste**
+    (`DragState.parentInitial`) : un glisser qui ressort puis revient le retrouve.
+  - **Ctrl+G** crée un groupe autour du nœud sélectionné (pas de sélection multiple : on
+    range ensuite d'autres nœuds avec « Regroupé dans »). Pas de `prompt()` — bloqué dans
+    certaines webviews d'Office : le groupe est sélectionné et son nom s'édite.
+    **Ctrl+Maj+G dégroupe sans rien effacer** : les enfants remontent d'un niveau, le parent
+    reste avec ses flux. Supprimer un parent fait de même pour ses enfants.
+  - Le champ « Regroupé dans » prend lui-même son `snapshot()` : celui du focus ne part pas
+    toujours (le test l'a montré).
   - **Ajout des colonnes manquantes** (`ajouterColonnesManquantes`) : si le tableau des
     liens est collé à droite, on **insère des colonnes entières** pour garder une colonne
     vide entre les deux (autorisé par l'utilisatrice le 2026-10-15). Les vieux classeurs

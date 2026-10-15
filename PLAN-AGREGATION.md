@@ -118,5 +118,8 @@ présentation, au prix d'un parent déplié plus mince que replié ?
   conserver tel quel quand l'étape 3 donnera un vrai panneau pour le corriger.
 - [x] Étape 2 — aperçu interactif (2026-10-15). Le « (non détaillé) » reste toujours
   affiché (question ouverte non tranchée) ; l'aperçu s'ouvre tout replié.
-- [ ] Étape 3 — édition
+- [x] Étape 3 — édition (2026-10-15). Écarts au plan : pas de sélection multiple (Ctrl+G
+  groupe le nœud sélectionné, « Regroupé dans » range les autres) ; la vue d'édition montre
+  tout en plan, avec des accolades, au lieu de suivre le dépliage de l'aperçu ; « Dégrouper »
+  garde le parent et ses flux.
 - [ ] Étape 4 — export HTML

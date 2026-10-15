@@ -247,6 +247,10 @@ button.linklike:hover { color: var(--dark); }
    règles ne portent donc que sur ce que l'éditeur y ajoute : la main sur les
    étiquettes, et le halo posé autour de celle du nœud choisi. */
 #canvas.apercu g[data-label-for] { cursor: pointer; }
+/* Vue d'édition : accolade d'un groupe (niveaux d'agrégation) */
+#canvas .accolade-groupe { fill: none; stroke: var(--dark); stroke-width: 2; pointer-events: none; }
+#sidebar .liste-enfants { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+#sidebar .alerte-niveaux { color: #b3261e; }
 /* ⊕ / ⊖ des niveaux d'agrégation (src/renderer/depliage.ts) */
 #canvas .bouton-depliage { cursor: pointer; }
 #canvas .bouton-depliage circle { transition: fill .15s var(--ease); }

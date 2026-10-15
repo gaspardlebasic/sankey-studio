@@ -13,8 +13,9 @@ import {
 } from "./engine";
 import { openColorPopover, openMenuPopover, normalizeHex } from "./ui";
 import {
-    projeter, alignerSurParents, depliesAuNiveau, nombreDeNiveaux
+    projeter, alignerSurParents, depliesAuNiveau, nombreDeNiveaux, hierarchie, PREFIXE_RESTE
 } from "../shared/agregation.js";
+import { parentsValides } from "../shared/modele-excel.js";
 import type { Cadre } from "../shared/agregation.js";
 import {
     poserCommandes, commandeCliquee, instantane, animerTransition, Instantane
@@ -110,11 +111,84 @@ function laneAtY(y: number, bandes?: Bandes): number {
     return lanes[lanes.length - 1] + 1;
 }
 
-/** Nœuds visibles d'une cellule (colonne × couloir), dans l'ordre d'empilement. */
+/**
+ * Nœuds visibles d'une cellule (colonne × couloir), dans l'ordre d'empilement :
+ * EN PLAN, chaque enfant juste sous son parent. Sans hiérarchie, c'est le tri
+ * par ordre vertical d'avant. `sauf` écarte un nœud ET ses descendants : ils
+ * se déplacent ensemble.
+ */
 function colonneTriee(column: number, lane: number, sauf?: FlowNode): FlowNode[] {
-    return viewNodes()
-        .filter(n => n.column === column && laneOf(n) === lane && n !== sauf)
-        .sort((a, b) => a.order - b.order);
+    const exclus = sauf ? descendantsDe(sauf.id) : null;
+    return enPlan(viewNodes().filter(n => n.column === column && laneOf(n) === lane
+        && n !== sauf && !(exclus && exclus.has(n.id))));
+}
+
+/* -------- niveaux d'agrégation : la hiérarchie dans la vue d'édition --------
+
+   La vue d'édition montre TOUS les nœuds, en plan : un parent, puis ses enfants,
+   avec une accolade dans la marge (PLAN-AGREGATION.md, étape 3). L'ordre vertical
+   y est renuméroté dans l'ordre du plan, cellule par cellule : l'empilement (par
+   ordre) et le plan disent alors la même chose. */
+
+/** Descendants d'un nœud (hiérarchie valide), à toute profondeur. */
+function descendantsDe(id: string): Set<string> {
+    const h = hierarchie(model.nodes);
+    const out = new Set<string>();
+    const pile = [id];
+    while (pile.length) {
+        (h.enfants.get(pile.pop()!) || []).forEach(e => {
+            if (!out.has(e)) { out.add(e); pile.push(e); }
+        });
+    }
+    return out;
+}
+
+/** Des nœuds EN PLAN : racines par ordre, chaque enfant sous son parent. */
+function enPlan(noeuds: FlowNode[]): FlowNode[] {
+    const parents = parentsValides(model.nodes);
+    if (!parents.size) return noeuds.slice().sort((a, b) => a.order - b.order);
+    const ici = new Set(noeuds.map(n => n.id));
+    const enfants = new Map<string, FlowNode[]>();
+    const racines: FlowNode[] = [];
+    noeuds.forEach(n => {
+        const p = parents.get(n.id);
+        if (p !== undefined && ici.has(p)) {
+            if (!enfants.has(p)) enfants.set(p, []);
+            enfants.get(p)!.push(n);
+        } else racines.push(n);
+    });
+    const parOrdre = (a: FlowNode, b: FlowNode) => a.order - b.order;
+    const out: FlowNode[] = [];
+    const descendre = (n: FlowNode) => {
+        out.push(n);
+        (enfants.get(n.id) || []).sort(parOrdre).forEach(descendre);
+    };
+    racines.sort(parOrdre).forEach(descendre);
+    return out;
+}
+
+/**
+ * Renumérote en plan chaque cellule qui porte une hiérarchie. Renvoie true si
+ * un ordre a changé (le classeur est alors à réécrire). Une cellule sans parent
+ * n'est jamais touchée : un diagramme sans niveaux garde ses ordres.
+ */
+function renumeroterEnPlan(): boolean {
+    const parents = parentsValides(model.nodes);
+    if (!parents.size) return false;
+    const cellules = new Map<string, FlowNode[]>();
+    model.nodes.forEach(n => {
+        const k = n.column + " " + laneOf(n);
+        if (!cellules.has(k)) cellules.set(k, []);
+        cellules.get(k)!.push(n);
+    });
+    let change = false;
+    cellules.forEach(liste => {
+        if (!liste.some(n => parents.has(n.id))) return;
+        enPlan(liste).forEach((n, i) => {
+            if (n.order !== i) { n.order = i; change = true; }
+        });
+    });
+    return change;
 }
 
 /**
@@ -338,20 +412,40 @@ function setLaneTitle(lane: number, titre: string): void {
  * ordres. L'ordre vertical est propre à une cellule : deux nœuds de couloirs
  * différents peuvent porter le même ordre dans la même colonne.
  */
-function moveNodeToCell(n: FlowNode, column: number, lane: number, rank: number): void {
+function moveNodeToCell(
+    n: FlowNode, column: number, lane: number, rank: number,
+    parentVoulu: string | null | undefined = n.parent
+): void {
     const oldCol = n.column;
     const oldLane = laneOf(n);
     lane = Math.max(1, Math.round(lane) || 1);
     // L'intitulé caractérise la COLONNE : en changeant de colonne, le nœud adopte
     // celui de sa nouvelle place, sinon l'entête ne correspond plus à ses nœuds.
     if (oldCol !== column) n.title = columnTitle(column, n);
+    // Un parent emmène ses enfants : ils partagent sa cellule (cas A).
+    const desc = descendantsDe(n.id);
+    const bloc = [n, ...enPlan(model.nodes.filter(x => desc.has(x.id)))];
     // On ne réordonne que parmi les nœuds VISIBLES de la cellule cible.
     const others = colonneTriee(column, lane, n);
     const r = Math.max(0, Math.min(rank, others.length));
-    others.splice(r, 0, n);
-    n.column = column;
-    n.lane = lane;
+    others.splice(r, 0, ...bloc);
+    bloc.forEach(x => {
+        x.column = column;
+        x.lane = lane;
+        if (x !== n) x.title = n.title;
+    });
+    // Reste-t-il dans son groupe ? Oui s'il est posé sous son parent, dans le
+    // bloc de celui-ci ; ailleurs, il en sort. `parentVoulu` est le parent du
+    // début du geste : un glisser qui ressort puis revient le retrouve.
+    if (parentVoulu) {
+        const dessus = others[r - 1];
+        const dedans = !!dessus
+            && (dessus.id === parentVoulu || descendantsDe(parentVoulu).has(dessus.id));
+        n.parent = dedans ? parentVoulu : null;
+    }
     others.forEach((x, i) => (x.order = i));
+    // Puis en plan : un nœud posé entre un parent et ses enfants passe après le groupe.
+    enPlan(others).forEach((x, i) => (x.order = i));
     if (oldCol !== column || oldLane !== lane) {
         colonneTriee(oldCol, oldLane).forEach((x, i) => (x.order = i));
     }
@@ -385,7 +479,9 @@ let hiddenFilieres = new Set<string>(); // filières masquées du schéma
 
 /**
  * Niveaux d'agrégation : les parents DÉPLIÉS dans l'aperçu. Vide au départ —
- * on montre d'abord le diagramme agrégé, le détail se demande (⊕).
+ * on montre d'abord le diagramme agrégé, le détail se demande (⊕). C'est aussi
+ * la VUE DE PRÉSENTATION : rangée avec l'apparence, elle revient à l'ouverture
+ * et c'est elle qu'ouvre l'export HTML.
  */
 let deplies = new Set<string>();
 /** Les cadres du dernier aperçu peint : d'où partent les nœuds qu'on replie. */
@@ -656,6 +752,11 @@ function deleteSelected(): void {
     if (!selection.type) return;
     snapshot();
     if (selection.type === "node") {
+        // Ses enfants remontent d'un niveau : ils ne perdent pas leur place.
+        const parti = nodeById(selection.id);
+        model.nodes.forEach(n => {
+            if (n.parent === selection.id) n.parent = (parti && parti.parent) || null;
+        });
         model.nodes = model.nodes.filter(n => n.id !== selection.id);
         model.links = model.links.filter(
             l => l.source !== selection.id && l.target !== selection.id
@@ -819,6 +920,8 @@ function basculerDepliage(id: string, deplier: boolean): void {
     else deplies.delete(id);
     animerProchainRendu = true;
     render();
+    // L'état de l'aperçu EST la vue de présentation : il est rangé avec l'apparence.
+    planifierEnregistrementApparence();
 }
 
 /** Les boutons de niveaux : n'apparaissent qu'en aperçu, et s'il y a des niveaux. */
@@ -854,6 +957,7 @@ function majNiveaux(): void {
             deplies = depliesAuNiveau(viewNodes(), k);
             animerProchainRendu = true;
             render();
+            planifierEnregistrementApparence();
         });
         groupe.appendChild(b);
     }
@@ -1061,6 +1165,8 @@ function renderEditor(): void {
         gl.appendChild(g);
         linkEls.push({ link: l, line, hit });
     });
+
+    dessinerAccolades();
 
     // Nœuds
     const gn = document.createElementNS(SVGNS, "g");
@@ -1316,6 +1422,8 @@ interface DragState {
     raf: number;
     /** Alt était enfoncé : c'est une COPIE qu'on emporte (cf. onDragMove). */
     dupliquer: boolean;
+    /** Le parent du nœud au début du geste (niveaux d'agrégation). */
+    parentInitial: string | null;
 }
 let dragState: DragState | null = null;
 
@@ -1440,6 +1548,7 @@ function onNodeMouseDown(e: MouseEvent, n: FlowNode): void {
         // Alt relevé ICI, à l'enfoncement : relâcher la touche en cours de
         // glisser ne doit pas transformer la copie en déplacement.
         dupliquer: e.altKey,
+        parentInitial: n.parent || null,
         freeX: n.x,
         freeY: n.y,
         lastCol: n.column,
@@ -1478,6 +1587,7 @@ function onDragMove(e: MouseEvent): void {
             render();
             buildSidebar();
             ds.lastRank = currentRank(n);
+            ds.parentInitial = n.parent || null;
             setStatus("Nœud dupliqué, avec ses liens.");
         }
         // Positions affichées initiales = grille actuelle
@@ -1502,7 +1612,7 @@ function onDragMove(e: MouseEvent): void {
     const lane = laneAtY(ds.freeY + nodeH(n) / 2, ds.bandes);
     const rank = rankAtY(column, lane, ds.freeY, n);
     if (column !== ds.lastCol || lane !== ds.lastLane || rank !== ds.lastRank) {
-        moveNodeToCell(n, column, lane, rank);
+        moveNodeToCell(n, column, lane, rank, ds.parentInitial);
         layoutGrid(); // met à jour les cibles ; l'animation fait glisser les autres nœuds
         ds.lastCol = column;
         ds.lastLane = lane;
@@ -1557,6 +1667,12 @@ function onDragEnd(): void {
         cancelAnimationFrame(dragState.raf);
         canvas.classList.remove("dragging-active");
         if (dragState.moved) persist();
+        // Sortir d'un groupe ne se voit qu'à peine : on le dit.
+        const n = nodeById(dragState.id);
+        if (dragState.moved && n && dragState.parentInitial && !n.parent) {
+            const p = nodeById(dragState.parentInitial);
+            setStatus(`« ${n.name} » est sorti du groupe « ${p ? p.name : "?"} ».`);
+        }
     }
     const moved = dragState?.moved;
     dragState = null;
@@ -1616,6 +1732,16 @@ function onGlobalKey(e: KeyboardEvent): void {
         e.preventDefault();
         if (e.shiftKey) redo();
         else undo();
+        return;
+    }
+    // Ctrl+G : groupe autour du nœud sélectionné ; Ctrl+Maj+G : le dégrouper.
+    if (meta && key === "g" && view === "edit" && selection.type === "node") {
+        const n = nodeById(selection.id);
+        if (n) {
+            e.preventDefault();
+            if (e.shiftKey) degrouper(n);
+            else creerGroupe(n);
+        }
         return;
     }
     if (meta && key === "y") {
@@ -1964,6 +2090,209 @@ function controleDuRepere(repere: string): HTMLElement | null {
  * (cf. `textField`, dont l'`onCommit` attend la validation). Le filet est là
  * pour les reconstructions qui ne viennent pas du champ lui-même.
  */
+/**
+ * Vue d'édition : une accolade dans la marge gauche de chaque groupe, du parent
+ * à son dernier descendant, avec un cran vers chaque enfant direct. Les groupes
+ * emboîtés se décalent vers la droite.
+ */
+function dessinerAccolades(): void {
+    const h = hierarchie(model.nodes);
+    if (!h.parents.size) return;
+    const g = document.createElementNS(SVGNS, "g");
+    g.setAttribute("class", "accolades-groupes");
+    canvas.appendChild(g);
+    viewNodes().forEach(p => {
+        const enfants = (h.enfants.get(p.id) || []).map(id => nodeById(id))
+            .filter(v => v && isVisibleNode(v)) as FlowNode[];
+        if (!enfants.length) return;
+        const desc = descendantsDe(p.id);
+        const tous = viewNodes().filter(v => desc.has(v.id));
+        const milieu = (v: FlowNode) => v.y + nodeH(v) / 2;
+        const x = p.x - 11 + 4 * h.profondeur(p.id);
+        const bas = Math.max(...tous.map(milieu));
+        let d = `M${p.x},${milieu(p)} H${x} V${bas}`;
+        enfants.forEach(c => { d += ` M${x},${milieu(c)} H${c.x}`; });
+        const trait = document.createElementNS(SVGNS, "path");
+        trait.setAttribute("class", "accolade-groupe");
+        trait.setAttribute("data-groupe", p.id);
+        trait.setAttribute("d", d);
+        g.appendChild(trait);
+    });
+}
+
+/* ------------------- niveaux d'agrégation : le panneau ------------------- */
+
+/**
+ * Partie « Niveaux d'agrégation » de la carte d'un nœud : son groupe, et s'il en
+ * est un, ses enfants, son bilan et les gestes qui le défont.
+ */
+function panneauNiveaux(s: HTMLElement, n: FlowNode): void {
+    s.appendChild(subhead("Niveaux d'agrégation"));
+    const h = hierarchie(model.nodes);
+    const desc = descendantsDe(n.id);
+    // Un parent possible : même filière, même cellule (cas A), pas un descendant.
+    const candidats = model.nodes.filter(x => x !== n && !desc.has(x.id)
+        && (x.filiere || "") === (n.filiere || "")
+        && x.column === n.column && laneOf(x) === laneOf(n));
+    const retrait = (x: FlowNode) => "\u2003".repeat(h.profondeur(x.id));
+    const opts: [string, string][] = [["", "— aucun —"]];
+    enPlan(candidats).forEach(x => opts.push([x.id, retrait(x) + x.name]));
+    s.appendChild(selectField("Regroupé dans", h.parents.get(n.id) || "", opts, v => {
+        // Le snapshot du focus (attachSnapshotOnFocus) ne part pas toujours :
+        // une liste choisie au clavier, ou sans focus de fenêtre. Doublon évité.
+        snapshot();
+        n.parent = v || null;
+        renumeroterEnPlan();
+        render();
+        buildSidebar();
+        persist();
+    }));
+    const nouveau = document.createElement("button");
+    nouveau.className = "linklike";
+    nouveau.textContent = "Nouveau groupe autour de ce nœud (Ctrl+G)";
+    nouveau.addEventListener("click", () => creerGroupe(n));
+    s.appendChild(nouveau);
+
+    const enfants = (h.enfants.get(n.id) || []).map(id => nodeById(id)).filter(Boolean) as FlowNode[];
+    if (!enfants.length) return;
+
+    const liste = document.createElement("div");
+    liste.className = "liste-enfants";
+    enPlan(enfants).forEach(e => {
+        const b = document.createElement("button");
+        b.className = "linklike";
+        b.textContent = e.name;
+        b.title = "Sélectionner ce nœud";
+        b.addEventListener("click", () => select("node", e.id));
+        liste.appendChild(b);
+    });
+    s.appendChild(field(`Contient ${enfants.length} nœud(s)`, liste));
+    const ajout = document.createElement("button");
+    ajout.className = "linklike";
+    ajout.textContent = "＋ Ajouter un sous-nœud";
+    ajout.addEventListener("click", () => ajouterSousNoeud(n));
+    s.appendChild(ajout);
+
+    const b = bilanDuGroupe(n);
+    const fmt = (v: number) => formatValue(v) + (b.unite ? " " + b.unite : "");
+    s.appendChild(readonly("Entrées", fmt(b.entrees)
+        + (b.entreesNonDetaillees > 0 ? ` (dont ${fmt(b.entreesNonDetaillees)} non détaillé)` : "")));
+    s.appendChild(readonly("Sorties", fmt(b.sorties)
+        + (b.sortiesNonDetaillees > 0 ? ` (dont ${fmt(b.sortiesNonDetaillees)} non détaillé)` : "")));
+    b.incoherences.forEach(t => {
+        const p = document.createElement("p");
+        p.className = "hint alerte-niveaux";
+        p.textContent = t;
+        s.appendChild(p);
+    });
+
+    const voir = document.createElement("button");
+    voir.className = "linklike";
+    voir.textContent = "Voir le détail dans l'aperçu";
+    voir.addEventListener("click", () => {
+        h.ascendants(n.id).forEach(id => deplies.add(id));
+        planifierEnregistrementApparence();
+        setView("preview");
+    });
+    s.appendChild(voir);
+    const degroupe = document.createElement("button");
+    degroupe.className = "linklike";
+    degroupe.textContent = "Dégrouper (Ctrl+Maj+G)";
+    degroupe.title = "Les enfants remontent d'un niveau ; ce nœud reste, avec ses flux.";
+    degroupe.addEventListener("click", () => degrouper(n));
+    s.appendChild(degroupe);
+}
+
+/**
+ * Bilan d'un parent : ce qui entre et sort de lui replié, la part qu'aucun
+ * enfant ne détaille, et les incohérences (un détail plus grand que son total).
+ */
+function bilanDuGroupe(n: FlowNode): {
+    entrees: number; sorties: number; entreesNonDetaillees: number;
+    sortiesNonDetaillees: number; unite: string; incoherences: string[];
+} {
+    const h = hierarchie(model.nodes);
+    const ascendants = h.ascendants(n.id).slice(1);
+    const replie = projeter(model, new Set(ascendants));
+    const deplie = projeter(model, new Set([...ascendants, n.id]));
+    const reste = PREFIXE_RESTE + n.id;
+    const somme = (liens: { source: string; target: string; value: number }[],
+                   garder: (l: { source: string; target: string }) => boolean) =>
+        liens.filter(garder).reduce((t, l) => t + l.value, 0);
+    const touche = replie.links.find(l => (l.source === n.id || l.target === n.id) && l.unit);
+    const desc = descendantsDe(n.id);
+    const nom = (id: string) => (nodeById(id) || { name: "?" }).name;
+    const incoherences = deplie.incoherences
+        .filter(i => [i.lien.source, i.lien.target].some(id => id === n.id || desc.has(id)))
+        .map(i => `⚠️ ${nom(i.lien.source)} → ${nom(i.lien.target)} : le détail `
+            + `(${formatValue(i.detail)}) dépasse le total (${formatValue(i.total)}).`);
+    return {
+        entrees: somme(replie.links, l => l.target === n.id),
+        sorties: somme(replie.links, l => l.source === n.id),
+        entreesNonDetaillees: somme(deplie.links, l => l.target === reste),
+        sortiesNonDetaillees: somme(deplie.links, l => l.source === reste),
+        unite: touche ? touche.unit : "",
+        incoherences
+    };
+}
+
+/**
+ * Crée un groupe autour d'un nœud : un parent neuf, à sa place, qui le contient.
+ * Il prend la place du nœud dans son propre groupe éventuel. On n'ouvre pas de
+ * boîte de saisie (bloquées dans certaines webviews d'Office) : le groupe est
+ * sélectionné et son nom s'édite comme celui de tout nœud.
+ */
+function creerGroupe(n: FlowNode): void {
+    snapshot();
+    const g: FlowNode = {
+        id: newId("n"), name: "Groupe " + n.name, column: n.column, title: n.title,
+        order: n.order - 0.5, lane: laneOf(n), kind: kindOf(n), filiere: n.filiere || "",
+        color: n.color, parent: n.parent || null, x: 0, y: 0
+    };
+    model.nodes.push(g);
+    n.parent = g.id;
+    renumeroterEnPlan();
+    selection = { type: "node", id: g.id };
+    render();
+    buildSidebar();
+    persist();
+    setStatus(`Groupe créé autour de « ${n.name} ». Renomme-le, puis range d'autres nœuds `
+        + `de la colonne dedans (« Regroupé dans »).`);
+    if (view === "edit") editNodeName(g);
+}
+
+/** Un enfant neuf, au bout du groupe. Toujours un produit, sans couleur propre. */
+function ajouterSousNoeud(p: FlowNode): void {
+    snapshot();
+    const c: FlowNode = {
+        id: newId("n"), name: "Nouveau nœud", column: p.column, title: p.title,
+        order: Number.MAX_SAFE_INTEGER, lane: laneOf(p), kind: "produit",
+        filiere: p.filiere || "", color: null, parent: p.id, x: 0, y: 0
+    };
+    model.nodes.push(c);
+    renumeroterEnPlan();
+    selection = { type: "node", id: c.id };
+    render();
+    buildSidebar();
+    persist();
+    if (view === "edit") editNodeName(c);
+}
+
+/** Dégroupe : les enfants remontent d'un niveau, le parent reste avec ses flux. */
+function degrouper(p: FlowNode): void {
+    const enfants = model.nodes.filter(x => x.parent === p.id);
+    if (!enfants.length) return;
+    snapshot();
+    enfants.forEach(x => (x.parent = p.parent || null));
+    deplies.delete(p.id);
+    renumeroterEnPlan();
+    render();
+    buildSidebar();
+    persist();
+    setStatus(`« ${p.name} » dégroupé : ${enfants.length} nœud(s) remonté(s) d'un niveau. `
+        + "Le nœud reste, avec ses flux — Suppr pour l'effacer.");
+}
+
 function buildSidebar(): void {
     const defilement = sidebar.scrollTop;
     const actif = document.activeElement;
@@ -2008,7 +2337,15 @@ function buildSidebar(): void {
                 v => { n.color = v; render(); persist(); }
             ));
             s.appendChild(divider());
-            s.appendChild(numberField("Colonne", n.column, v => { n.column = Math.max(1, Math.round(v)); render(); persist(); }));
+            s.appendChild(numberField("Colonne", n.column, v => {
+                const col = Math.max(1, Math.round(v));
+                // Un parent emmène ses enfants ; un enfant qui change de colonne
+                // sort de son groupe (cas A). Sans hiérarchie, rien ne change.
+                if (n.parent || descendantsDe(n.id).size) {
+                    if (col !== n.column) moveNodeToCell(n, col, laneOf(n), Number.MAX_SAFE_INTEGER);
+                } else n.column = col;
+                render(); persist();
+            }));
             // L'intitulé vaut pour toute la colonne : l'appliquer au seul nœud
             // sélectionné créerait un désaccord avec l'entête affiché.
             s.appendChild(textField("Intitulé de colonne", n.title, v => {
@@ -2024,6 +2361,8 @@ function buildSidebar(): void {
                 persist();
             }));
             s.appendChild(numberField("Ordre vertical", n.order, v => { n.order = v; render(); persist(); }));
+            s.appendChild(divider());
+            panneauNiveaux(s, n);
             s.appendChild(divider());
             s.appendChild(dangerBtn("Supprimer le nœud", deleteSelected));
             attachSnapshotOnFocus(s);
@@ -3488,6 +3827,8 @@ interface ProjectAppearance {
     hiddenFilieres: string[];
     /** Indexé « <ID origine> <ID destination> », comme les liens eux-mêmes. */
     colorOverrides: Record<string, string>;
+    /** Vue de présentation : les parents dépliés à l'ouverture de l'aperçu. */
+    deplies?: string[];
 }
 
 /** Surcharges relues, en attente des liens que le classeur va fournir. */
@@ -3500,7 +3841,8 @@ function serialiserApparence(): string {
     });
     const a: ProjectAppearance = {
         version: 1, options, idCounter,
-        hiddenFilieres: Array.from(hiddenFilieres), colorOverrides
+        hiddenFilieres: Array.from(hiddenFilieres), colorOverrides,
+        deplies: Array.from(deplies)
     };
     return JSON.stringify(a);
 }
@@ -3515,6 +3857,7 @@ function appliquerApparence(json: string): void {
     normaliserCadre();
     idCounter = Math.max(a.idCounter || 0, idCounter);
     hiddenFilieres = new Set(a.hiddenFilieres || []);
+    deplies = new Set(Array.isArray(a.deplies) ? a.deplies : []);
     // Les liens n'existent pas encore : ils viendront du classeur.
     couleursLiensEnAttente = a.colorOverrides || {};
 }
@@ -4194,6 +4537,9 @@ function resoudreParents(data: ExcelData, lus: [ExcelNode, FlowNode][]): boolean
         }
     }
     const bouges = alignerSurParents(model.nodes);
+    // Les ordres se renumérotent en plan : l'ordre d'un enfant ne vaut qu'entre
+    // frères et sœurs, l'empilement de la vue d'édition lit un ordre continu.
+    if (renumeroterEnPlan()) aReecrire = true;
     if (bouges.length) {
         aReecrire = true;
         avisHierarchie = (avisHierarchie ? avisHierarchie + " " : "")

@@ -1776,6 +1776,89 @@ test("agrégation : les boutons de niveaux, en aperçu seulement", "complexe", a
   egal(r.ids, ["A", "E", "F", "P", "nd:L"], "et tout est déplié");
 });
 
+test("agrégation (édition) : Ctrl+G groupe, « Regroupé dans » range, Ctrl+Maj+G dégroupe",
+  "complexe", async p => {
+  const r = await p(CLASSEUR_NIVEAUX + `
+    await versEdition();
+    const touche = (key, shift) => {
+      if (document.activeElement) document.activeElement.blur();
+      window.dispatchEvent(new KeyboardEvent('keydown',
+        { key, ctrlKey: true, shiftKey: !!shift, bubbles: true }));
+    };
+    await selectNode('P');
+    touche('g');
+    await sleep(80);
+    if (document.activeElement) document.activeElement.blur();   // ferme la saisie du nom
+    await sleep(80);
+    const G = nodes().find(n => n.name === 'Groupe Pois');
+    const apresGroupe = {
+      parentDuGroupe: G && G.parent, parentDePois: byId('P').parent, choisi: T.selection().id === (G && G.id),
+      accolades: [...document.querySelectorAll('#canvas .accolade-groupe')]
+                   .map(a => a.getAttribute('data-groupe')).sort(),
+      // L'empilement suit le plan : L, puis le groupe, puis Pois, puis Féverole.
+      plan: ['L', G.id, 'P', 'F'].map(id => Math.round(elOf(id).getBoundingClientRect().top))
+    };
+    await selectNode('F');
+    await setField('Regroupé dans', G.id);
+    const fDansG = byId('F').parent === G.id;
+    touche('z');
+    await sleep(80);
+    const annule = byId('F').parent;
+    await selectNode(G.id);
+    touche('g', true);
+    await sleep(80);
+    return { G: !!G, apresGroupe, fDansG, annule, apresDegroupe: byId('P').parent,
+             groupeReste: !!byId(G.id), statut: document.querySelector('#status').textContent };
+  `);
+  egal(r.G, true, "Ctrl+G crée un groupe nommé d'après le nœud");
+  egal([r.apresGroupe.parentDuGroupe, r.apresGroupe.parentDePois, r.apresGroupe.choisi],
+       ["L", r.apresGroupe.parentDePois, true], "le groupe prend la place du nœud, sélectionné");
+  attendu(r.apresGroupe.parentDePois && r.apresGroupe.parentDePois !== "L", "Pois est dans le nouveau groupe");
+  egal(r.apresGroupe.accolades.length, 2, "une accolade par groupe (L et le nouveau)");
+  attendu(r.apresGroupe.plan.every((y, i, t) => i === 0 || y > t[i - 1]),
+    "la cellule s'empile en plan : " + r.apresGroupe.plan.join(", "));
+  egal(r.fDansG, true, "« Regroupé dans » range Féverole dans le groupe");
+  egal(r.annule, "L", "Cmd+Z annule le rangement");
+  egal(r.apresDegroupe, "L", "dégrouper fait remonter Pois d'un niveau");
+  egal(r.groupeReste, true, "le nœud dégroupé reste, avec ses flux");
+  attendu(/dégroupé/.test(r.statut), "le bandeau le dit : " + r.statut);
+});
+
+test("agrégation (édition) : un parent emmène ses enfants, un enfant déplacé sort du groupe",
+  "complexe", async p => {
+  const r = await p(CLASSEUR_NIVEAUX + `
+    await versEdition();
+    await dragNode('L', 1, 0);
+    const ensemble = ['L', 'P', 'F'].map(id => byId(id).column);
+    const parents = ['P', 'F'].map(id => byId(id).parent);
+    await dragNode('P', 1, 0);
+    return { ensemble, parents, colonneP: byId('P').column, parentP: byId('P').parent || null,
+             statut: document.querySelector('#status').textContent };
+  `);
+  egal(r.ensemble, [3, 3, 3], "le parent part avec ses enfants");
+  egal(r.parents, ["L", "L"], "ils restent ses enfants");
+  egal([r.colonneP, r.parentP], [4, null], "un enfant posé ailleurs sort du groupe");
+  attendu(/sorti du groupe/.test(r.statut), "et le bandeau le dit : " + r.statut);
+});
+
+test("agrégation (édition) : le panneau d'un parent montre ses enfants et son bilan", "complexe",
+  async p => {
+  const r = await p(CLASSEUR_NIVEAUX + `
+    await versEdition();
+    await selectNode('L');
+    const lu = label => {
+      const f = [...document.querySelectorAll('#sidebar .field')]
+        .find(x => x.querySelector('span') && x.querySelector('span').textContent.trim() === label);
+      return f ? f.textContent.replace(label, '').trim() : null;
+    };
+    const enfants = [...document.querySelectorAll('#sidebar .liste-enfants button')].map(b => b.textContent);
+    return { enfants, entrees: lu('Entrées'), sorties: lu('Sorties') };
+  `);
+  egal(r.enfants, ["Pois", "Féverole"], "les enfants, dans l'ordre");
+  egal(r.entrees, "100 kt (dont 35 kt non détaillé)", "entrées et part non détaillée");
+  egal(r.sorties, "100 kt (dont 100 kt non détaillé)", "sorties : aucune n'est détaillée");
+});
+
 test("liens : une ligne saisie dans Excel sans identifiant fait réécrire le classeur", "complexe",
   async p => {
   // Tant que les colonnes « ID origine / ID destination » sont vides, ce lien ne
