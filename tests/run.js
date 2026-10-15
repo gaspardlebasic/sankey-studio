@@ -1859,6 +1859,58 @@ test("agrégation (édition) : le panneau d'un parent montre ses enfants et son 
   egal(r.sorties, "100 kt (dont 100 kt non détaillé)", "sorties : aucune n'est détaillée");
 });
 
+test("agrégation (export HTML) : une page autonome qui s'ouvre sur la vue de présentation",
+  "complexe", async p => {
+  const r = await p(CLASSEUR_NIVEAUX + `
+    // Un nom piège : sans échappement, il fermerait la balise des données.
+    byId('A').name = 'Alim </script><b>x</b>';
+    await versApercu();
+    cliquer(document.querySelector('#canvas [data-deplier="L"] circle'));
+    await sleep(600);
+    const capte = capterExport();
+    try {
+      [...document.querySelectorAll('#toolbar button')].find(b => b.textContent.includes('HTML')).click();
+      await sleep(400);
+    } finally { capte.rendre(); }
+    const f = capte.fichiers[0];
+    const html = await f.blob.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const donnees = JSON.parse(doc.getElementById('sankey-donnees').textContent);
+    // La page elle-même, dans un cadre : elle doit se dessiner et répondre aux clics.
+    const cadre = document.createElement('iframe');
+    cadre.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:600px;';
+    document.body.appendChild(cadre);
+    cadre.srcdoc = html;
+    await new Promise(res => cadre.onload = res);
+    await sleep(300);
+    const d = cadre.contentDocument;
+    const ids = () => [...d.querySelectorAll('rect[data-id]')].map(rc => rc.getAttribute('data-id')).sort();
+    const ouverture = ids();
+    const niveaux = [...d.querySelectorAll('#niveaux button')].map(b => b.textContent);
+    d.querySelector('[data-replier="L"] circle').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await sleep(600);
+    const replie = ids();
+    d.querySelector('[data-deplier="L"] circle').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await sleep(600);
+    const redeplie = ids();
+    const nomA = (d.querySelector('[data-label-for="A"]') || {}).textContent || '';
+    cadre.remove();
+    return { nom: f.nom, type: f.blob.type, deplies: donnees.deplies,
+             noeuds: donnees.model.nodes.length, sansXY: donnees.model.nodes.every(n => !('x' in n)),
+             ouverture, niveaux, replie, redeplie, nomA, scripts: doc.querySelectorAll('script').length };
+  `);
+  attendu(/\.html$/.test(r.nom), "un fichier .html daté : " + r.nom);
+  egal(r.type, "text/html", "type de la page");
+  egal(r.deplies, ["L"], "la vue de présentation part dans la page");
+  egal([r.noeuds, r.sansXY], [5, true], "les nœuds, sans les positions de la grille d'édition");
+  egal(r.scripts, 2, "un nom « </script> » ne casse pas la page");
+  egal(r.ouverture, ["A", "E", "F", "P", "nd:L"], "la page s'ouvre dépliée comme l'aperçu");
+  egal(r.niveaux, ["1", "2"], "les boutons de niveaux sont là");
+  egal(r.replie, ["A", "E", "L"], "⊖ replie dans la page");
+  egal(r.redeplie, ["A", "E", "F", "P", "nd:L"], "⊕ redéplie");
+  attendu(r.nomA.includes("</script>"), "le nom piège s'affiche tel quel : " + r.nomA);
+});
+
 test("liens : une ligne saisie dans Excel sans identifiant fait réécrire le classeur", "complexe",
   async p => {
   // Tant que les colonnes « ID origine / ID destination » sont vides, ce lien ne

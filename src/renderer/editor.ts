@@ -9,7 +9,7 @@ import {
     defaultFormatValeurNoeud, defaultFleches
 } from "./types";
 import {
-    renderSankey, renderSankeyGroups, wrapText, policeDuType, positionDuType
+    wrapText, policeDuType, positionDuType
 } from "./engine";
 import { openColorPopover, openMenuPopover, normalizeHex } from "./ui";
 import {
@@ -17,9 +17,13 @@ import {
 } from "../shared/agregation.js";
 import { parentsValides } from "../shared/modele-excel.js";
 import type { Cadre } from "../shared/agregation.js";
+import { commandeCliquee, instantane, animerTransition, Instantane } from "./depliage";
 import {
-    poserCommandes, commandeCliquee, instantane, animerTransition, Instantane
-} from "./depliage";
+    CODE_VISIONNEUSE, FICHIERS_POLICE, PoliceEmbarquee, graissesEmployees, pageInteractive
+} from "./export-html";
+import {
+    dessinerAgrege, poserCommandesAgregees, aDesNiveaux as aDesNiveauxModele
+} from "./apercu-agrege";
 
 const NODE_W = 132;
 const NODE_H = 38; // hauteur d'un nœud dont le nom tient sur une ligne
@@ -488,8 +492,6 @@ let deplies = new Set<string>();
 let derniersCadres: Cadre[] = [];
 /** Le prochain rendu de l'aperçu suit un ⊕ / ⊖ : il s'anime. */
 let animerProchainRendu = false;
-/** Teinte du nœud « (non détaillé) » : un reste, pas une catégorie. */
-const COULEUR_RESTE = "#bdbdbd";
 
 interface ExcelNode {
     id: string | null; name: string; column: number; title: string;
@@ -625,6 +627,10 @@ function buildToolbar(): void {
     const svgBtn = exportBtn("SVG", b => ouvrirMenuExport(b, "svg"));
     svgBtn.title = "Exporter le Sankey en SVG vectoriel";
     toolbar.appendChild(svgBtn);
+    // Pas de menu de taille : la page s'adapte à la fenêtre qui l'ouvre.
+    const htmlBtn = exportBtn("HTML", () => { exportHtml(); });
+    htmlBtn.title = "Exporter une page HTML interactive (⊕ / ⊖, niveaux), lisible sans Excel";
+    toolbar.appendChild(htmlBtn);
 
     updateToolbarState();
 }
@@ -848,70 +854,23 @@ function viewModel(): FlowModel {
     return { nodes: viewNodes(), links: viewLinks() };
 }
 
-/**
- * Un sous-diagramme par filière visible, dans l'ordre d'apparition des nœuds.
- * Les liens qui traversent deux filières n'appartiennent à aucun bloc : ils
- * disparaissent de l'aperçu séparé, par construction.
- */
-function groupesParFiliere(): { nom: string; model: FlowModel }[] {
-    const visibles = viewNodes();
-    const ordre: string[] = [];
-    visibles.forEach(n => {
-        const f = n.filiere || "";
-        if (!ordre.includes(f)) ordre.push(f);
-    });
-    return ordre.map(f => {
-        const ns = visibles.filter(n => (n.filiere || "") === f);
-        const ids = new Set(ns.map(n => n.id));
-        return {
-            nom: f,
-            model: {
-                nodes: ns,
-                links: model.links.filter(l => ids.has(l.source) && ids.has(l.target))
-            }
-        };
-    });
-}
-
-/**
- * Ce que l'aperçu dessine. Sans hiérarchie, le modèle TEL QUEL — c'est ce qui
- * garantit qu'un diagramme sans parent s'affiche au pixel près comme avant.
- * Avec, sa projection (src/shared/agregation.js) : un parent cède sa place à
- * ses enfants, et la part de ses flux qu'ils ne détaillent pas va à son
- * « (non détaillé) », grisé. L'état de dépliage est `deplies`.
- */
-function modeleAffiche(m: FlowModel): FlowModel {
-    if (!m.nodes.some(n => n.parent)) return m;
-    const p = projeter(m, deplies);
-    const parId = new Map(m.links.map(l => [l.id, l]));
-    return {
-        nodes: p.nodes.map(n => n.virtuel ? { ...n, color: COULEUR_RESTE } : n),
-        links: p.links.map(a => {
-            // Un flux affiché qui ne vient que d'un lien en garde l'apparence
-            // (couleur propre comprise) ; un flux sommé n'a que la sienne.
-            const seul = a.liens.length === 1 ? parId.get(a.liens[0] || "") : undefined;
-            const base = seul ? { ...seul } : { id: a.id, unit: a.unit };
-            return { ...base, source: a.source, target: a.target, value: a.value, bio: a.bio };
-        })
-    };
-}
-
 /** Le modèle affiché a-t-il des niveaux ? Sinon, ni ⊕ ni boutons de niveaux. */
 function aDesNiveaux(): boolean {
-    return viewNodes().some(n => n.parent);
+    return aDesNiveauxModele(viewModel());
 }
 
 /**
- * Pose les ⊕ / ⊖ sur l'aperçu à l'écran (jamais sur un export). La projection
- * est celle de toutes les filières visibles : elle vaut celle de chaque bloc,
- * un parent et ses enfants partageant toujours leur filière.
+ * Pose les ⊕ / ⊖ sur l'aperçu à l'écran — jamais sur un export PNG / SVG.
+ * Le dessin et les commandes viennent de src/renderer/apercu-agrege.ts, que la
+ * visionneuse de l'export HTML partage.
  */
 function poserCommandesApercu(): void {
-    derniersCadres = [];
-    if (!aDesNiveaux()) return;
-    const p = projeter(viewModel(), deplies);
-    derniersCadres = p.cadres;
-    poserCommandes(canvas, p.nodes, p.cadres);
+    derniersCadres = poserCommandesAgregees(canvas, viewModel(), deplies);
+}
+
+/** Aperçu : un seul Sankey, ou un par filière si l'option est active. */
+function dessinerApercu(svgEl: SVGSVGElement, w: number, h: number, fond = "#ffffff"): void {
+    dessinerAgrege(svgEl, viewModel(), options, deplies, w, h, fond);
 }
 
 /** ⊕ / ⊖ : bascule un parent, puis redessine en animant. */
@@ -964,15 +923,6 @@ function majNiveaux(): void {
     niveauxEl.appendChild(groupe);
 }
 
-/** Aperçu : un seul Sankey, ou un par filière si l'option est active. */
-function dessinerApercu(svgEl: SVGSVGElement, w: number, h: number, fond = "#ffffff"): void {
-    const groupes = groupesParFiliere().map(g => ({ nom: g.nom, model: modeleAffiche(g.model) }));
-    if (options.filieres.split && groupes.length > 1) {
-        renderSankeyGroups(svgEl, groupes, options, w, h, fond);
-    } else {
-        renderSankey(svgEl, modeleAffiche(viewModel()), options, w, h, fond);
-    }
-}
 /**
  * Repère de sélection dans l'APERÇU.
  *
@@ -3593,6 +3543,8 @@ function applyProject(p: ProjectFile): void {
         );
     }
     hiddenFilieres = new Set(p.hiddenFilieres || []);
+    // Un autre projet, une autre hiérarchie : on repart du niveau agrégé.
+    deplies = new Set();
     selection = { type: null, id: "" };
 }
 /**
@@ -3991,7 +3943,7 @@ function cleFilieresAffichees(): string {
  * même nom, donc l'échec, à chaque fois. Un nom neuf à chaque export rend le
  * chemin par défaut toujours bon. Les « : » sont exclus : macOS les refuse.
  */
-function nomFichierExport(format: "png" | "svg", quand: Date = new Date()): string {
+function nomFichierExport(format: "png" | "svg" | "html", quand: Date = new Date()): string {
     const visibles = distinctFilieres().filter(f => !hiddenFilieres.has(f));
     const base = visibles.map(assainirNomFichier).filter(n => n !== "").join(" - ");
     return (base ? tronquer(base, 80) : "sankey") + " " + horodatage(quand) + "." + format;
@@ -4140,6 +4092,63 @@ async function exportImage(format: "png" | "svg", taille: TailleExport): Promise
 }
 
 /**
+ * Export HTML interactif (PLAN-AGREGATION.md, étape 4) : une page autonome qui
+ * porte les filières affichées, l'apparence, la vue de présentation (`deplies`),
+ * la visionneuse et les polices. Lecture seule.
+ */
+async function exportHtml(): Promise<void> {
+    if (!CODE_VISIONNEUSE) {
+        setStatus("Export HTML indisponible : la visionneuse n'a pas été construite (build.mjs).");
+        return;
+    }
+    const m = viewModel();
+    if (!m.nodes.length) {
+        setStatus("Rien à exporter : aucune filière affichée.");
+        return;
+    }
+    const visibles = distinctFilieres().filter(f => !hiddenFilieres.has(f) && f);
+    const titre = visibles.join(" · ") || "Diagramme de Sankey";
+    const donnees = {
+        version: 1, titre,
+        // Les positions de la grille d'édition n'ont rien à faire dans la page.
+        model: {
+            nodes: m.nodes.map(n => { const c: Partial<FlowNode> = { ...n }; delete c.x; delete c.y; return c; }),
+            links: m.links
+        },
+        options,
+        deplies: Array.from(deplies)
+    };
+    const polices = await policesEmbarquees();
+    const html = pageInteractive({ titre, donnees, code: CODE_VISIONNEUSE, polices });
+    await saveExport(nomFichierExport("html"), "text/html", html, false, "Page");
+}
+
+/**
+ * Les graisses de Source Sans Pro que le diagramme emploie, lues à côté de la
+ * page (fonts/) et passées en base64. Sans elles, la page exportée prendrait
+ * la police du poste qui l'ouvre — et des étiquettes mesurées pour une autre
+ * police déborderaient. Une police introuvable n'empêche pas l'export.
+ */
+async function policesEmbarquees(): Promise<PoliceEmbarquee[]> {
+    const json = JSON.stringify(options);
+    if (!/Source Sans Pro/.test(json)) return [];
+    const out: PoliceEmbarquee[] = [];
+    for (const weight of graissesEmployees(json)) {
+        try {
+            const r = await fetch("fonts/" + FICHIERS_POLICE[weight]);
+            if (!r.ok) continue;
+            const octets = new Uint8Array(await r.arrayBuffer());
+            let bin = "";
+            for (let i = 0; i < octets.length; i += 0x8000) {
+                bin += String.fromCharCode.apply(null, Array.from(octets.subarray(i, i + 0x8000)));
+            }
+            out.push({ weight, base64: btoa(bin) });
+        } catch { /* police absente : la page prendra celle du poste */ }
+    }
+    return out;
+}
+
+/**
  * Le navigateur d'Office télécharge le fichier : pas de dialogue natif ici.
  *
  * Et pas d'accusé de réception non plus — le clic sur le lien ne dit ni si le
@@ -4147,7 +4156,9 @@ async function exportImage(format: "png" | "svg", taille: TailleExport): Promise
  * même quand rien ne l'avait été, sur un fichier existant que la webview
  * refusait de remplacer. Il dit maintenant ce qu'on sait, et seulement ça.
  */
-async function saveExport(name: string, mime: string, data: string, binary: boolean): Promise<void> {
+async function saveExport(
+    name: string, mime: string, data: string, binary: boolean, quoi = "Image"
+): Promise<void> {
     let blob: Blob;
     if (binary) {
         const bin = atob(data);
@@ -4162,7 +4173,7 @@ async function saveExport(name: string, mime: string, data: string, binary: bool
     a.download = name;
     a.click();
     setStatus(
-        "Image proposée sous « " + name + " » — un fichier existant, lui, "
+        quoi + " proposée sous « " + name + " » — un fichier existant, lui, "
         + "n'est pas remplacé."
     );
 }

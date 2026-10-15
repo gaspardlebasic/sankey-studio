@@ -122,4 +122,5 @@ présentation, au prix d'un parent déplié plus mince que replié ?
   groupe le nœud sélectionné, « Regroupé dans » range les autres) ; la vue d'édition montre
   tout en plan, avec des accolades, au lieu de suivre le dépliage de l'aperçu ; « Dégrouper »
   garde le parent et ses flux.
-- [ ] Étape 4 — export HTML
+- [x] Étape 4 — export HTML (2026-10-15). Bouton « HTML » de la barre d'outils ; la page
+  porte les filières affichées et s'ouvre sur la vue de présentation.

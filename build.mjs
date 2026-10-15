@@ -24,13 +24,31 @@ mkdirSync("dist/renderer", { recursive: true });
  */
 const DATE_BUILD = new Date().toISOString();
 
+/*
+ * La visionneuse de l'export HTML interactif (src/visionneuse) : construite
+ * EN PREMIER, en mémoire, puis gravée comme texte dans les autres bundles
+ * (__VISIONNEUSE__, lu par src/renderer/export-html.ts). L'export la recopie
+ * dans la page qu'il produit — une page autonome, sans rien à aller chercher.
+ * En mode --watch, elle n'est pas reconstruite : relancer le build.
+ */
+const visionneuse = await esbuild.build({
+  entryPoints: ["src/visionneuse/visionneuse.ts"],
+  bundle: true, platform: "browser", format: "iife", target: "es2019",
+  minify: true, write: false, logLevel: "warning",
+  define: { __VISIONNEUSE__: '""' }
+});
+const CODE_VISIONNEUSE = visionneuse.outputFiles[0].text;
+
 const commun = {
   bundle: true,
   platform: "browser",
   format: "iife",
   sourcemap: true,
   target: "es2019",
-  define: { __DATE_BUILD__: JSON.stringify(DATE_BUILD) },
+  define: {
+    __DATE_BUILD__: JSON.stringify(DATE_BUILD),
+    __VISIONNEUSE__: JSON.stringify(CODE_VISIONNEUSE)
+  },
   logLevel: "info"
 };
 

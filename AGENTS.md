@@ -306,6 +306,11 @@ Mesures de la phase 0 dans `RESULTATS-PHASE-0.md`, fonctionnement dans « La coq
     phase 6 (H · poids et délai des messages du tunnel, I · polices dans la webview).
     `sonde-fenetre.html` est la fenêtre qu'ouvre H — elle n'utilise pas `protocole.ts`, dont les
     délais de garde masqueraient justement ce qu'on mesure.
+  - `src/renderer/depliage.ts` — ⊕ / ⊖ et animation des niveaux d'agrégation ;
+    `src/renderer/apercu-agrege.ts` — dessin d'un diagramme à niveaux (aperçu et export) ;
+    `src/renderer/export-html.ts` — gabarit de la page exportée ;
+    `src/visionneuse/visionneuse.ts` — le code de la page exportée ;
+    `src/shared/agregation.js` — la règle du total (projection), pure.
   - `src/renderer/ui.ts` — surcouches ancrées sur un bouton : sélecteur de couleurs (grille
     teintes × nuances) et menu de choix (`openMenuPopover`, employé par les exports). Les deux
     passent par la même coquille `ouvrirSurcouche` — voile, Échap, clic dehors, replacement,
@@ -458,6 +463,24 @@ un poste, c'est `npm run addin:install -- --enligne`.
     reste avec ses flux. Supprimer un parent fait de même pour ses enfants.
   - Le champ « Regroupé dans » prend lui-même son `snapshot()` : celui du focus ne part pas
     toujours (le test l'a montré).
+  - **Le dessin agrégé est partagé** : `src/renderer/apercu-agrege.ts` (`modeleAffiche`,
+    `groupesParFiliere`, `dessinerAgrege`, `poserCommandesAgregees`) sert l'aperçu de
+    l'éditeur ET la visionneuse de l'export HTML. Une copie divergerait sans qu'on le voie.
+  - **Export HTML interactif** (bouton « HTML », `exportHtml`) : une page **autonome** —
+    filières affichées, apparence, vue de présentation, visionneuse, polices. Lecture seule :
+    ⊕ / ⊖, niveaux, infobulles (celles des rubans viennent du moteur, celles des nœuds de la
+    visionneuse).
+    - La visionneuse (`src/visionneuse/visionneuse.ts`) est un bundle **construit en premier**
+      par `build.mjs`, en mémoire et minifié, puis **gravé comme texte** dans les autres
+      (`__VISIONNEUSE__`, lu par `src/renderer/export-html.ts`). En `--watch`, elle n'est pas
+      reconstruite.
+    - Les données vont dans `<script type="application/json">` **sans aucun `<` brut**
+      (`\u003c`) : un nom de nœud « </script> » fermerait la balise. Mutation vérifiée.
+    - Polices : Source Sans Pro, **seulement les graisses employées** (`graissesEmployees`),
+      lues dans `fonts/` à côté de la page et passées en base64 (~690 Ko pour deux graisses).
+      Une police introuvable n'empêche pas l'export (les bancs Electron, en `file://`).
+    - Charger un projet remet `deplies` à zéro (`applyProject`) : un état de dépliage ne
+      vaut que pour sa hiérarchie — et il fuyait d'un test à l'autre.
   - **Ajout des colonnes manquantes** (`ajouterColonnesManquantes`) : si le tableau des
     liens est collé à droite, on **insère des colonnes entières** pour garder une colonne
     vide entre les deux (autorisé par l'utilisatrice le 2026-10-15). Les vieux classeurs
