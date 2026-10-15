@@ -117,6 +117,8 @@ function couvreurs(links, h) {
  *    couleur prend celle de son parent.
  *  - `links` : les flux affichés, sommés par couple d'extrémités affichées.
  *  - `incoherences` : les liens dont le détail dépasse le total.
+ *  - `cadres` : un par parent déplié — `{ id, name, profondeur, membres }`,
+ *    `membres` étant les nœuds affichés qu'il contient, à toute profondeur.
  */
 function projeter(model, deplies) {
   const nodes = model.nodes;
@@ -191,17 +193,32 @@ function projeter(model, deplies) {
     if (!cellules.has(cle)) cellules.set(cle, []);
     cellules.get(cle).push(n.id);
   }
+  // Un cadre par parent déplié : les nœuds affichés qu'il contient, à toute
+  // profondeur. `chaine` = les parents dépliés qui encadrent, du plus large au
+  // plus proche.
+  const cadres = new Map();
+  const ajouterAuxCadres = (chaine, id) => {
+    chaine.forEach((p, i) => {
+      if (!cadres.has(p)) {
+        cadres.set(p, { id: p, name: parId.get(p).name, profondeur: i, membres: [] });
+      }
+      cadres.get(p).membres.push(id);
+    });
+  };
   for (const racines of cellules.values()) {
     let rang = 0;
-    const poser = (id, encadrant) => {
+    const poser = (id, chaine) => {
       const n = parId.get(id);
+      const encadrant = chaine.length ? chaine[chaine.length - 1] : null;
       if (estDeplie(id)) {
-        h.enfants.get(id).slice().sort(comparerOrdre).forEach(e => poser(e, id));
+        const dedans = chaine.concat([id]);
+        h.enfants.get(id).slice().sort(comparerOrdre).forEach(e => poser(e, dedans));
         if (restesUtiles.has(PREFIXE_RESTE + id)) {
           affiches.push(Object.assign({}, n, {
             id: PREFIXE_RESTE + id, name: NOM_RESTE, order: rang++,
             color: couleurDe(id), depliable: false, parentAffiche: id, virtuel: true
           }));
+          ajouterAuxCadres(dedans, PREFIXE_RESTE + id);
         }
         return;
       }
@@ -210,11 +227,15 @@ function projeter(model, deplies) {
         column: racine.column, lane: racine.lane, order: rang++,
         color: couleurDe(id), depliable: h.enfants.has(id), parentAffiche: encadrant
       }));
+      ajouterAuxCadres(chaine, id);
     };
-    racines.slice().sort(comparerOrdre).forEach(id => poser(id, null));
+    racines.slice().sort(comparerOrdre).forEach(id => poser(id, []));
   }
 
-  return { nodes: affiches, links: Array.from(flux.values()), incoherences };
+  return {
+    nodes: affiches, links: Array.from(flux.values()), incoherences,
+    cadres: Array.from(cadres.values())
+  };
 }
 
 /**

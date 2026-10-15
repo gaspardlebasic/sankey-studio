@@ -125,6 +125,19 @@ test("trois niveaux : niveau, dépliage partiel, part bio pondérée", () => {
   egal(Math.round(n1.links[0].bio * 100), 24, "part bio pondérée par les parts propres");
 });
 
+test("cadres : un par parent déplié, membres à toute profondeur", () => {
+  const m = modele([lien("Expl", "Leg", 100), lien("Expl", "Pois", 60), lien("Expl", "PoisH", 20)]);
+  m.nodes.push(noeud("PoisH", { column: 2, parent: "Pois" }));
+  egal(projeter(m, []).cadres, [], "tout replié : aucun cadre");
+  egal(projeter(m, ["Leg"]).cadres.map(c => [c.id, c.profondeur, c.membres]),
+       [["Leg", 0, ["Pois", "Fev", "nd:Leg"]]], "un niveau");
+  egal(projeter(m, true).cadres.map(c => [c.id, c.profondeur, c.membres]), [
+    ["Leg", 0, ["PoisH", "nd:Pois", "Fev", "nd:Leg"]],
+    ["Pois", 1, ["PoisH", "nd:Pois"]]
+  ], "emboîtés");
+  egal(projeter(m, ["Pois"]).cadres, [], "un parent déplié sous un parent replié ne se voit pas");
+});
+
 test("un parent invalide est ignoré : autre filière, boucle, inconnu", () => {
   const nodes = [
     noeud("A", { parent: "B" }), noeud("B", { parent: "A" }),       // boucle

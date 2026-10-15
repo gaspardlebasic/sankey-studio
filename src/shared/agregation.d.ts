@@ -37,6 +37,9 @@ export interface LienAffiche {
   liens: (string | undefined)[];
 }
 
+/** Un parent déplié et les nœuds affichés qu'il encadre (à toute profondeur). */
+export interface Cadre { id: string; name: string; profondeur: number; membres: string[]; }
+
 export interface Incoherence<L> { lien: L; total: number; detail: number; }
 
 export function hierarchie(nodes: NoeudModele[]): Hierarchie;
@@ -44,6 +47,8 @@ export function alignerSurParents<N extends NoeudModele>(nodes: N[]): N[];
 export function projeter<N extends NoeudModele & { id: string }, L extends LienAgregeable>(
   model: { nodes: N[]; links: L[] },
   deplies: Set<string> | string[] | true | null | undefined
-): { nodes: NoeudAffiche<N>[]; links: LienAffiche[]; incoherences: Incoherence<L>[] };
+): {
+  nodes: NoeudAffiche<N>[]; links: LienAffiche[]; incoherences: Incoherence<L>[]; cadres: Cadre[];
+};
 export function depliesAuNiveau(nodes: NoeudModele[], niveau: number): Set<string>;
 export function nombreDeNiveaux(nodes: NoeudModele[]): number;

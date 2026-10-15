@@ -12,7 +12,13 @@ import {
     renderSankey, renderSankeyGroups, wrapText, policeDuType, positionDuType
 } from "./engine";
 import { openColorPopover, openMenuPopover, normalizeHex } from "./ui";
-import { projeter, alignerSurParents } from "../shared/agregation.js";
+import {
+    projeter, alignerSurParents, depliesAuNiveau, nombreDeNiveaux
+} from "../shared/agregation.js";
+import type { Cadre } from "../shared/agregation.js";
+import {
+    poserCommandes, commandeCliquee, instantane, animerTransition, Instantane
+} from "./depliage";
 
 const NODE_W = 132;
 const NODE_H = 38; // hauteur d'un nœud dont le nom tient sur une ligne
@@ -377,6 +383,18 @@ let amorceFaite = false;
 
 let hiddenFilieres = new Set<string>(); // filières masquées du schéma
 
+/**
+ * Niveaux d'agrégation : les parents DÉPLIÉS dans l'aperçu. Vide au départ —
+ * on montre d'abord le diagramme agrégé, le détail se demande (⊕).
+ */
+let deplies = new Set<string>();
+/** Les cadres du dernier aperçu peint : d'où partent les nœuds qu'on replie. */
+let derniersCadres: Cadre[] = [];
+/** Le prochain rendu de l'aperçu suit un ⊕ / ⊖ : il s'anime. */
+let animerProchainRendu = false;
+/** Teinte du nœud « (non détaillé) » : un reste, pas une catégorie. */
+const COULEUR_RESTE = "#bdbdbd";
+
 interface ExcelNode {
     id: string | null; name: string; column: number; title: string;
     order: number; lane: number; kind: NodeKind; filiere: string; color: string | null;
@@ -428,6 +446,14 @@ export function createApp(root: HTMLElement): void {
 
     canvas.addEventListener("click", onApercuClick);
     canvas.addEventListener("dblclick", onCanvasDblClick);
+    // Les ⊕ / ⊖ se prennent aussi au clavier (Tab, puis Entrée ou Espace).
+    canvas.addEventListener("keydown", e => {
+        if (view !== "preview" || (e.key !== "Enter" && e.key !== " ")) return;
+        const commande = commandeCliquee(e.target);
+        if (!commande) return;
+        e.preventDefault();
+        basculerDepliage(commande.id, commande.deplier);
+    });
     window.addEventListener("keydown", onGlobalKey);
     window.addEventListener("resize", render);
 
@@ -455,7 +481,8 @@ export function createApp(root: HTMLElement): void {
         links: () => model.links,
         selection: () => selection,
         view: () => view,
-        hidden: () => Array.from(hiddenFilieres)
+        hidden: () => Array.from(hiddenFilieres),
+        deplies: () => Array.from(deplies)
     };
 
     dirtySinceSync = false; // le chargement initial n'est pas une « modification »
@@ -473,6 +500,12 @@ function buildToolbar(): void {
     toolbar.appendChild(sep());
 
     toolbar.appendChild(viewToggle());
+
+    // Niveaux d'agrégation : visibles en aperçu seulement (majNiveaux).
+    niveauxEl = document.createElement("span");
+    niveauxEl.className = "niveaux";
+    niveauxEl.hidden = true;
+    toolbar.appendChild(niveauxEl);
 
     // Ni « Enregistrer sous… » ni « Ouvrir » : il n'y a pas de fichier projet.
     // Le diagramme vit dans les tableaux, l'apparence dans le classeur (Cmd+S).
@@ -652,14 +685,21 @@ function render(): void {
     const wrap = canvas.parentElement as HTMLElement;
     const visW = Math.max(1, wrap.clientWidth);
     const visH = Math.max(1, wrap.clientHeight);
+    // Un ⊕ / ⊖ vient d'être cliqué : on relève l'ancien dessin pour l'animer.
+    const avant: Instantane | null = animerProchainRendu && view === "preview"
+        && canvas.classList.contains("apercu") ? instantane(canvas, derniersCadres) : null;
+    animerProchainRendu = false;
     while (canvas.firstChild) canvas.removeChild(canvas.firstChild);
 
     canvas.classList.toggle("apercu", view === "preview");
+    majNiveaux();
 
     if (view === "preview") {
         wrap.style.overflow = "hidden";
         sizeCanvas(visW, visH);
         dessinerApercu(canvas, visW, visH);
+        poserCommandesApercu();
+        if (avant) animerTransition(canvas, avant, derniersCadres);
         marquerSelectionApercu();
         return;
     }
@@ -737,15 +777,14 @@ function groupesParFiliere(): { nom: string; model: FlowModel }[] {
  * garantit qu'un diagramme sans parent s'affiche au pixel près comme avant.
  * Avec, sa projection (src/shared/agregation.js) : un parent cède sa place à
  * ses enfants, et la part de ses flux qu'ils ne détaillent pas va à son
- * « (non détaillé) ». Tout est déplié tant que l'aperçu n'a pas de ⊕ / ⊖
- * (étape 2 de PLAN-AGREGATION.md).
+ * « (non détaillé) », grisé. L'état de dépliage est `deplies`.
  */
 function modeleAffiche(m: FlowModel): FlowModel {
     if (!m.nodes.some(n => n.parent)) return m;
-    const p = projeter(m, true);
+    const p = projeter(m, deplies);
     const parId = new Map(m.links.map(l => [l.id, l]));
     return {
-        nodes: p.nodes,
+        nodes: p.nodes.map(n => n.virtuel ? { ...n, color: COULEUR_RESTE } : n),
         links: p.links.map(a => {
             // Un flux affiché qui ne vient que d'un lien en garde l'apparence
             // (couleur propre comprise) ; un flux sommé n'a que la sienne.
@@ -754,6 +793,71 @@ function modeleAffiche(m: FlowModel): FlowModel {
             return { ...base, source: a.source, target: a.target, value: a.value, bio: a.bio };
         })
     };
+}
+
+/** Le modèle affiché a-t-il des niveaux ? Sinon, ni ⊕ ni boutons de niveaux. */
+function aDesNiveaux(): boolean {
+    return viewNodes().some(n => n.parent);
+}
+
+/**
+ * Pose les ⊕ / ⊖ sur l'aperçu à l'écran (jamais sur un export). La projection
+ * est celle de toutes les filières visibles : elle vaut celle de chaque bloc,
+ * un parent et ses enfants partageant toujours leur filière.
+ */
+function poserCommandesApercu(): void {
+    derniersCadres = [];
+    if (!aDesNiveaux()) return;
+    const p = projeter(viewModel(), deplies);
+    derniersCadres = p.cadres;
+    poserCommandes(canvas, p.nodes, p.cadres);
+}
+
+/** ⊕ / ⊖ : bascule un parent, puis redessine en animant. */
+function basculerDepliage(id: string, deplier: boolean): void {
+    if (deplier) deplies.add(id);
+    else deplies.delete(id);
+    animerProchainRendu = true;
+    render();
+}
+
+/** Les boutons de niveaux : n'apparaissent qu'en aperçu, et s'il y a des niveaux. */
+let niveauxEl: HTMLElement | null = null;
+function majNiveaux(): void {
+    if (!niveauxEl) return;
+    niveauxEl.innerHTML = "";
+    const n = view === "preview" && aDesNiveaux() ? nombreDeNiveaux(viewNodes()) : 0;
+    niveauxEl.hidden = n < 2;
+    if (n < 2) return;
+    const etiquette = document.createElement("span");
+    etiquette.className = "niveaux-titre";
+    etiquette.textContent = "Niveau";
+    niveauxEl.appendChild(etiquette);
+    const groupe = document.createElement("div");
+    groupe.className = "segmented";
+    groupe.setAttribute("role", "group");
+    // Un niveau est « actif » quand l'état de dépliage est exactement le sien —
+    // après un ⊕ isolé, aucun ne l'est.
+    const parents = new Set(viewNodes().map(x => x.parent).filter(Boolean) as string[]);
+    const effectifs = Array.from(deplies).filter(id => parents.has(id));
+    for (let k = 1; k <= n; k++) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "seg";
+        b.textContent = String(k);
+        b.dataset.niveau = String(k);
+        b.title = k === 1 ? "Tout replier" : k === n ? "Tout déplier" : `Déplier ${k} niveaux`;
+        const voulu = depliesAuNiveau(viewNodes(), k);
+        b.classList.toggle("active",
+            voulu.size === effectifs.length && effectifs.every(id => voulu.has(id)));
+        b.addEventListener("click", () => {
+            deplies = depliesAuNiveau(viewNodes(), k);
+            animerProchainRendu = true;
+            render();
+        });
+        groupe.appendChild(b);
+    }
+    niveauxEl.appendChild(groupe);
 }
 
 /** Aperçu : un seul Sankey, ou un par filière si l'option est active. */
@@ -1482,6 +1586,8 @@ function onNodeClick(e: MouseEvent, n: FlowNode): void {
  */
 function onApercuClick(e: MouseEvent): void {
     if (view !== "preview") return;
+    const commande = commandeCliquee(e.target);
+    if (commande) { basculerDepliage(commande.id, commande.deplier); return; }
     const cible = (e.target as Element).closest("g[data-label-for], rect[data-id]");
     const id = cible && (cible.getAttribute("data-label-for") || cible.getAttribute("data-id"));
     if (!id) { if (selection.type) select(null, ""); return; }

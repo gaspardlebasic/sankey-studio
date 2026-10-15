@@ -423,7 +423,22 @@ un poste, c'est `npm run addin:install -- --enligne`.
     son total est une incohérence (on dessine le détail). Toute la règle vit dans
     `src/shared/agregation.js` (`projeter`), pur, éprouvé par `tests/agregation.test.js`.
   - L'aperçu passe par `modeleAffiche` : **sans parent, le modèle tel quel** (au pixel près
-    comme avant) ; avec, sa projection **tout déplié** — le ⊕ / ⊖ est l'étape 2.
+    comme avant) ; avec, sa projection selon `deplies` — **vide au départ** : on montre
+    d'abord le niveau agrégé. Le « (non détaillé) » est grisé (`COULEUR_RESTE`).
+  - **⊕ / ⊖** : `src/renderer/depliage.ts`, qui ne connaît ni l'éditeur ni Excel (l'export
+    HTML s'en sert aussi). Les commandes sont posées **après coup** sur le dessin à
+    l'écran (`poserCommandesApercu`) : jamais dans un export PNG / SVG. ⊕ au centre du
+    nœud — au milieu du ruban pour un produit de largeur 0 —, cadre pointillé et ⊖ autour
+    des enfants (`cadres` de la projection, emboîtés). Un cadre qui touche le haut du
+    dessin passe son ⊖ et son nom sur son bord bas. Clavier : Tab puis Entrée / Espace.
+  - **Animation** (`instantane` puis `animerTransition`, Web Animations) : un nœud qui
+    reste glisse, les enfants d'un parent déplié partent de sa boîte, un parent replié part
+    de celle de ses enfants ; rubans et textes en fondu, l'ancien dessin s'efface par-dessus
+    (et disparaît au plus tard après 2 × la durée). Rien si `prefers-reduced-motion`.
+    Les tests attendent ~600 ms après un clic : une boîte mesurée en cours d'animation
+    porte encore sa transformation.
+  - **Niveaux** dans la barre d'outils (« Niveau [1][2][3] »), en aperçu seulement et s'il y a
+    au moins deux niveaux ; un niveau n'est actif que si l'état est exactement le sien.
   - **Ajout des colonnes manquantes** (`ajouterColonnesManquantes`) : si le tableau des
     liens est collé à droite, on **insère des colonnes entières** pour garder une colonne
     vide entre les deux (autorisé par l'utilisatrice le 2026-10-15). Les vieux classeurs

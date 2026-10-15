@@ -1673,12 +1673,8 @@ test("types : Excel→App applique les types du classeur, et les garde sans la c
     "sans la colonne, les types de l'app sont conservés");
 });
 
-test("agrégation : le parent relu cède sa place à ses enfants dans l'aperçu", "complexe",
-  async p => {
-  // PLAN-AGREGATION.md, étape 1. « Parent » saisi à la main (un nom) ou par ID ;
-  // un enfant posé ailleurs revient dans la colonne de son parent ; l'aperçu
-  // montre les enfants et le reste « (non détaillé) », jamais le parent.
-  const r = await p(`
+/** Classeur à deux niveaux : Légumineuses (Pois, Féverole), et un reste de 35. */
+const CLASSEUR_NIVEAUX = `
     const n = (id, name, column, extra) => Object.assign({
       id, name, column, title: '', order: 0, lane: 1, kind: 'produit',
       filiere: 'Lég', color: null, parentId: null, parentName: ''
@@ -1699,22 +1695,85 @@ test("agrégation : le parent relu cède sa place à ses enfants dans l'aperçu"
     });
     T.refresh();
     await sleep(80);
-    const m = T.model();
-    const parents = Object.fromEntries(m.nodes.map(x => [x.id, x.parent || null]));
-    const colonneF = m.nodes.find(x => x.id === 'F').column;
-    await versApercu();
-    const ids = rectsApercu().map(rc => rc.id).sort();
+    const idsApercu = () => rectsApercu().map(rc => rc.id).sort();
     const ruban = (s, t) => !!document.querySelector(
       '#canvas path[data-source="' + s + '"][data-target="' + t + '"]');
-    return { reecrire, parents, colonneF, ids,
-             rubans: [ruban('E', 'P'), ruban('E', 'F'), ruban('E', 'nd:L'), ruban('E', 'L')] };
+    const cliquer = el => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+`;
+
+test("agrégation : le parent relu se résout et ramène ses enfants dans sa colonne", "complexe",
+  async p => {
+  const r = await p(CLASSEUR_NIVEAUX + `
+    const m = T.model();
+    return { reecrire, parents: Object.fromEntries(m.nodes.map(x => [x.id, x.parent || null])),
+             colonneF: m.nodes.find(x => x.id === 'F').column };
   `);
   egal(r.reecrire, true, "ID parent à poser et enfant déplacé : le classeur est à réécrire");
   egal(r.parents, { E: null, L: null, P: "L", F: "L", A: null },
     "le parent se résout par son nom comme par son ID");
   egal(r.colonneF, 2, "l'enfant revient dans la colonne de son parent");
-  egal(r.ids, ["A", "E", "F", "P", "nd:L"], "l'aperçu montre les enfants et le reste, pas le parent");
-  egal(r.rubans, [true, true, true, false], "les flux vont aux enfants, le reste au « (non détaillé) »");
+});
+
+test("agrégation : l'aperçu s'ouvre replié, ⊕ déplie, ⊖ replie", "complexe", async p => {
+  const r = await p(CLASSEUR_NIVEAUX + `
+    await versApercu();
+    const replie = { ids: idsApercu(), rubans: [ruban('E', 'L'), ruban('E', 'P')],
+                     plus: [...document.querySelectorAll('#canvas [data-deplier]')]
+                             .map(el => el.getAttribute('data-deplier')) };
+    cliquer(document.querySelector('#canvas [data-deplier="L"] circle'));
+    await sleep(600);
+    const deplie = {
+      ids: idsApercu(),
+      rubans: [ruban('E', 'P'), ruban('E', 'F'), ruban('E', 'nd:L'), ruban('E', 'L')],
+      cadres: [...document.querySelectorAll('#canvas [data-cadre]')].map(el => el.getAttribute('data-cadre')),
+      reste: document.querySelector('#canvas rect[data-id="nd:L"]').getAttribute('fill'),
+      deplies: T.deplies(),
+      anciens: document.querySelectorAll('#canvas .ancien-dessin').length
+    };
+    // Le cadre entoure bien ses enfants, tels qu'ils sont peints.
+    const boite = el => el.getBoundingClientRect();
+    const cadre = boite(document.querySelector('#canvas [data-cadre="L"] rect'));
+    const dedans = ['P', 'F', 'nd:L'].every(id => {
+      const b = boite(document.querySelector('#canvas rect[data-id="' + id + '"]'));
+      return b.top >= cadre.top && b.bottom <= cadre.bottom
+          && b.left >= cadre.left - 0.5 && b.right <= cadre.right + 0.5;
+    });
+    cliquer(document.querySelector('#canvas [data-replier="L"] circle'));
+    await sleep(600);
+    return { replie, deplie, dedans, rereplie: idsApercu(), selection: T.selection().type };
+  `);
+  egal(r.replie.ids, ["A", "E", "L"], "au départ, le niveau agrégé");
+  egal(r.replie.rubans, [true, false], "le flux va au parent");
+  egal(r.replie.plus, ["L"], "un ⊕ sur le seul nœud qui a du détail");
+  egal(r.deplie.ids, ["A", "E", "F", "P", "nd:L"], "déplié : les enfants et le reste, plus le parent");
+  egal(r.deplie.rubans, [true, true, true, false], "les flux vont aux enfants et au reste");
+  egal(r.deplie.cadres, ["L"], "un cadre autour des enfants");
+  egal(r.deplie.reste, "#bdbdbd", "le « (non détaillé) » est grisé");
+  egal(r.deplie.deplies, ["L"], "l'état retient le parent déplié");
+  egal(r.deplie.anciens, 0, "l'ancien dessin a fini de s'effacer");
+  egal(r.dedans, true, "le cadre contient ses enfants peints");
+  egal(r.rereplie, ["A", "E", "L"], "⊖ revient au niveau agrégé");
+  egal(r.selection, null, "un clic sur ⊕ / ⊖ ne sélectionne rien");
+});
+
+test("agrégation : les boutons de niveaux, en aperçu seulement", "complexe", async p => {
+  const r = await p(CLASSEUR_NIVEAUX + `
+    const boutons = () => [...document.querySelectorAll('#toolbar [data-niveau]')];
+    await versEdition();
+    const enEdition = boutons().length;
+    await versApercu();
+    const libelles = boutons().map(b => b.textContent);
+    const actif = () => boutons().filter(b => b.classList.contains('active')).map(b => b.textContent);
+    const auDepart = actif();
+    cliquer(boutons()[1]);
+    await sleep(600);
+    return { enEdition, libelles, auDepart, apres: actif(), ids: idsApercu() };
+  `);
+  egal(r.enEdition, 0, "pas de niveaux en vue d'édition");
+  egal(r.libelles, ["1", "2"], "deux niveaux");
+  egal(r.auDepart, ["1"], "le niveau 1 est actif au départ");
+  egal(r.apres, ["2"], "le niveau 2 devient actif");
+  egal(r.ids, ["A", "E", "F", "P", "nd:L"], "et tout est déplié");
 });
 
 test("liens : une ligne saisie dans Excel sans identifiant fait réécrire le classeur", "complexe",

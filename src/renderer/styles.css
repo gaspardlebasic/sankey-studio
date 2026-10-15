@@ -73,6 +73,12 @@ html, body {
 #toolbar .segmented .seg:hover { background: var(--light); color: var(--dark); }
 #toolbar .segmented .seg.active { background: var(--dark); color: var(--bright); }
 
+/* Niveaux d'agrégation : « Niveau [1][2][3] », en aperçu seulement */
+#toolbar .niveaux { display: inline-flex; align-items: center; gap: 8px; margin-left: 10px; }
+#toolbar .niveaux[hidden] { display: none; }
+#toolbar .niveaux-titre { font-size: 13px; font-weight: 600; color: var(--dark); }
+#toolbar .niveaux .segmented .seg { padding: 8px 11px; }
+
 #main { flex: 1 1 auto; display: flex; min-height: 0; }
 #content { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
@@ -241,6 +247,12 @@ button.linklike:hover { color: var(--dark); }
    règles ne portent donc que sur ce que l'éditeur y ajoute : la main sur les
    étiquettes, et le halo posé autour de celle du nœud choisi. */
 #canvas.apercu g[data-label-for] { cursor: pointer; }
+/* ⊕ / ⊖ des niveaux d'agrégation (src/renderer/depliage.ts) */
+#canvas .bouton-depliage { cursor: pointer; }
+#canvas .bouton-depliage circle { transition: fill .15s var(--ease); }
+#canvas .bouton-depliage:hover circle,
+#canvas .bouton-depliage:focus-visible circle { fill: var(--light); }
+#canvas .bouton-depliage:focus { outline: none; }
 #canvas .apercu-selection { fill: none; stroke: var(--dark); stroke-width: 1.5;
     stroke-dasharray: 4 3; }
 

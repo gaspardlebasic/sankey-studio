@@ -116,6 +116,7 @@ présentation, au prix d'un parent déplié plus mince que replié ?
 - [x] Étape 1 — modèle et classeur (2026-10-15). Reste connu : un nom de parent
   introuvable est signalé, mais la réécriture suivante vide la case « Parent » — à
   conserver tel quel quand l'étape 3 donnera un vrai panneau pour le corriger.
-- [ ] Étape 2 — aperçu interactif
+- [x] Étape 2 — aperçu interactif (2026-10-15). Le « (non détaillé) » reste toujours
+  affiché (question ouverte non tranchée) ; l'aperçu s'ouvre tout replié.
 - [ ] Étape 3 — édition
 - [ ] Étape 4 — export HTML
