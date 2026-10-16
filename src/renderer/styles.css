@@ -213,11 +213,18 @@ button.linklike:hover { color: var(--dark); }
 
 /* ---- Éléments de l'éditeur (SVG) ---- */
 #canvas .edit-link { cursor: pointer; }
+/* stroke-opacity et non opacity : même rendu pour un trait seul, mais opacity
+   force le moteur à peindre chaque lien dans un calque à part — des centaines
+   de calques sur un diagramme maillé, repeints à chaque image d'un glisser. */
 #canvas .link-line { fill: none; stroke-width: 3.5; stroke-linecap: butt;
-    opacity: 0.9; transition: stroke-width 0.12s var(--ease), opacity 0.12s var(--ease); }
+    stroke-opacity: 0.9; transition: stroke-width 0.12s var(--ease), stroke-opacity 0.12s var(--ease); }
 #canvas .link-hit { fill: none; stroke: transparent; stroke-width: 18; }
-#canvas .edit-link.selected .link-line { stroke-width: 5.5; opacity: 1; }
-#canvas .edit-link:hover .link-line { stroke-width: 7; opacity: 1; }
+#canvas .edit-link.selected .link-line { stroke-width: 5.5; stroke-opacity: 1; }
+#canvas .edit-link:hover .link-line { stroke-width: 7; stroke-opacity: 1; }
+/* Pendant un glisser, les liens ne se survolent ni ne se cliquent : pas de
+   test de survol sur des centaines de tracés à chaque mouvement de souris. */
+#canvas.dragging-active .edit-link { pointer-events: none; }
+#canvas.dragging-active .link-hit { display: none; }
 
 #canvas .edit-node .node-box { fill: var(--bright); stroke: var(--grey); stroke-width: 1;
     transition: stroke 0.12s var(--ease), stroke-width 0.12s var(--ease); }

@@ -1369,6 +1369,8 @@ interface DragState {
     lastRank: number;
     bandes: Bandes; // couloirs figés à l'instant du « mousedown »
     disp: Map<string, { x: number; y: number }>; // positions affichées (animées)
+    /** Liens à faire suivre, préparés à chaque mise en page (cf. preparerLiensDuDrag). */
+    liens: LienAnime[];
     raf: number;
     /** Alt était enfoncé : c'est une COPIE qu'on emporte (cf. onDragMove). */
     dupliquer: boolean;
@@ -1506,6 +1508,7 @@ function onNodeMouseDown(e: MouseEvent, n: FlowNode): void {
         lastRank: currentRank(n),
         bandes: new Map(),
         disp: new Map(),
+        liens: [],
         raf: 0
     };
     window.addEventListener("mousemove", onDragMove);
@@ -1544,6 +1547,7 @@ function onDragMove(e: MouseEvent): void {
         layoutGrid();
         ds.bandes = new Map(laneBounds);
         viewNodes().forEach(v => ds.disp.set(v.id, { x: v.x, y: v.y }));
+        ds.liens = preparerLiensDuDrag();
         // Le nœud saisi passe au premier plan + style « en cours de déplacement »
         const g = nodeEls.get(n.id);
         if (g) {
@@ -1564,6 +1568,7 @@ function onDragMove(e: MouseEvent): void {
     if (column !== ds.lastCol || lane !== ds.lastLane || rank !== ds.lastRank) {
         moveNodeToCell(n, column, lane, rank, ds.parentInitial);
         layoutGrid(); // met à jour les cibles ; l'animation fait glisser les autres nœuds
+        ds.liens = preparerLiensDuDrag(); // les escales ont pu changer
         ds.lastCol = column;
         ds.lastLane = lane;
         ds.lastRank = rank;
@@ -1571,38 +1576,84 @@ function onDragMove(e: MouseEvent): void {
     applyDragFrame(); // réponse immédiate à la souris (le RAF lisse entre deux événements)
 }
 
-/** Une étape d'animation : les nœuds glissent vers leur cible, les liens suivent. */
+/** Un lien du canevas tel que l'animation du glisser le redessine. */
+interface LienAnime {
+    line: SVGPathElement;
+    source: string;
+    target: string;
+    demiHs: number; // demi-hauteurs des extrémités : le trait part du milieu
+    demiHt: number;
+    via: { x: number; y: number }[];
+}
+
+/**
+ * Ce que chaque image du glisser relit, calculé une fois par mise en page :
+ * retrouver les nœuds et les escales à chaque image coûtait, sur un diagramme
+ * très maillé, des centaines de parcours du modèle par image.
+ */
+function preparerLiensDuDrag(): LienAnime[] {
+    const parId = new Map(model.nodes.map(n => [n.id, n]));
+    const out: LienAnime[] = [];
+    linkEls.forEach(({ link, line }) => {
+        const s = parId.get(link.source);
+        const t = parId.get(link.target);
+        if (!s || !t) return;
+        out.push({
+            line, source: s.id, target: t.id,
+            demiHs: nodeH(s) / 2, demiHt: nodeH(t) / 2,
+            via: pointsDePassage(link)
+        });
+    });
+    return out;
+}
+
+/**
+ * Une étape d'animation : les nœuds glissent vers leur cible, les liens suivent.
+ *
+ * Seul ce qui bouge est réécrit. Un nœud arrivé à moins d'un demi-pixel de sa
+ * case s'y pose, et un lien n'est redessiné que si l'une de ses extrémités a
+ * bougé : souris immobile, une image ne touche plus au DOM. Les zones de clic
+ * des liens (`.link-hit`) sont masquées pendant le geste et refaites par le
+ * `render()` final.
+ */
 function applyDragFrame(): void {
     const ds = dragState;
     if (!ds || !ds.moved) return;
+    const bouges = new Set<string>();
     viewNodes().forEach(v => {
         let p = ds.disp.get(v.id);
         if (!p) {
             p = { x: v.x, y: v.y };
             ds.disp.set(v.id, p);
+            bouges.add(v.id);
         }
+        const x0 = p.x;
+        const y0 = p.y;
         if (v.id === ds.id) {
             p.x = ds.freeX; // le nœud saisi colle à la souris
             p.y = ds.freeY;
         } else {
             p.x += (v.x - p.x) * 0.25; // les autres glissent vers leur case
             p.y += (v.y - p.y) * 0.25;
+            if (Math.abs(v.x - p.x) < 0.5 && Math.abs(v.y - p.y) < 0.5) {
+                p.x = v.x;
+                p.y = v.y;
+            }
         }
+        if (p.x === x0 && p.y === y0 && !bouges.has(v.id)) return;
+        bouges.add(v.id);
         const g = nodeEls.get(v.id);
         if (g) g.setAttribute("transform", `translate(${p.x},${p.y})`);
     });
-    linkEls.forEach(({ link, line, hit }) => {
-        const s = ds.disp.get(link.source);
-        const t = ds.disp.get(link.target);
-        // disp ne porte que des positions animées : les hauteurs viennent du modèle.
-        const ns = nodeById(link.source);
-        const nt = nodeById(link.target);
-        if (!s || !t || !ns || !nt) return;
-        const d = linkPathD(
-            s.x + NODE_W, s.y + nodeH(ns) / 2, t.x, t.y + nodeH(nt) / 2, pointsDePassage(link)
+    if (!bouges.size) return;
+    ds.liens.forEach(l => {
+        if (!bouges.has(l.source) && !bouges.has(l.target)) return;
+        const s = ds.disp.get(l.source);
+        const t = ds.disp.get(l.target);
+        if (!s || !t) return;
+        l.line.setAttribute(
+            "d", linkPathD(s.x + NODE_W, s.y + l.demiHs, t.x, t.y + l.demiHt, l.via)
         );
-        line.setAttribute("d", d);
-        hit.setAttribute("d", d);
     });
 }
 
