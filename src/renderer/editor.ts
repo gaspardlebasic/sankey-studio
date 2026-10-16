@@ -3880,6 +3880,12 @@ function appliquerCouleursDeLiens(): void {
 let minuteurProjet = 0;
 let minuteurExcel = 0;
 let minuteurApparence = 0;
+/**
+ * La dernière apparence rangée dans le classeur. `persist()` repasse après
+ * chaque écriture Excel : sans ce repère, chaque modification enregistrait
+ * deux fois les mêmes réglages (`saveAsync`, qui fait travailler Excel).
+ */
+let derniereApparence = "";
 
 /** Délai d'apaisement avant d'écrire vers Excel, comme `notifyTimer` (main.js:62). */
 const DELAI_ENVOI_EXCEL = 300;
@@ -3890,7 +3896,10 @@ function planifierEnregistrementApparence(): void {
     if (!d || typeof d.ecrireApparence !== "function") return;
     clearTimeout(minuteurApparence);
     minuteurApparence = setTimeout(() => {
-        d.ecrireApparence(serialiserApparence())
+        const json = serialiserApparence();
+        if (json === derniereApparence) return;
+        d.ecrireApparence(json)
+            .then((r: { ok?: boolean } | undefined) => { if (!r || r.ok !== false) derniereApparence = json; })
             .catch(() => { /* réessayé au prochain changement */ });
     }, 800) as unknown as number;
 }

@@ -408,6 +408,54 @@ await test("écriture : aller-retour neutre — réécrire ce qu'on a lu ne chan
   egal(apres, avant, "les cellules sont identiques après un aller-retour neutre");
 });
 
+/**
+ * Espionne les cellules réellement écrites dans la feuille, par en-tête de
+ * colonne : « Noeuds/Couleur », « Liens/Valeur du flux »… Posé APRÈS le
+ * montage du classeur, il ne voit que l'écriture éprouvée.
+ */
+function espionnerEcritures(c) {
+  const grille = c.classeur.grillePour("Diagramme");
+  const touchees = new Set();
+  const ecrire = grille.ecrire.bind(grille);
+  grille.ecrire = (r, col, val) => {
+    for (const d of c.classeur.tables) {
+      if (d.grille === grille && col >= d.c0 && col < d.c0 + d.entetes.length && r > d.r0) {
+        touchees.add(d.nom + "/" + d.entetes[col - d.c0]);
+      }
+    }
+    return ecrire(r, col, val);
+  };
+  return () => Array.from(touchees).sort();
+}
+
+await test("écriture : réécrire ce que porte déjà le classeur n'écrit aucune cellule", async () => {
+  // Chaque écriture fait travailler Excel — recalcul, évènements, et sur Mac
+  // la fenêtre d'édition figée le temps qu'il finisse. Ce qui n'a pas changé
+  // ne part donc pas.
+  const c = classeurType();
+  // Une première écriture ancre la formule (C68 -> $C$68) : c'est l'état d'un
+  // classeur où le complément a déjà écrit, celui de toutes les écritures suivantes.
+  await office.ecrireDiagramme(MODELE);
+  const vues = espionnerEcritures(c);
+  const r = await office.ecrireDiagramme(MODELE);
+  attendu(r.ok, "écriture réussie : " + (r.error || ""));
+  egal(vues(), [], "aucune colonne réécrite");
+  egal(r.formules, 1, "la formule compte toujours comme préservée");
+});
+
+await test("écriture : changer une couleur ne réécrit que la colonne « Couleur »", async () => {
+  const c = classeurType();
+  await office.ecrireDiagramme(MODELE);
+  const vues = espionnerEcritures(c);
+  const modele = JSON.parse(JSON.stringify(MODELE));
+  modele.nodes[1].color = "#123456";
+  const r = await office.ecrireDiagramme(modele);
+  attendu(r.ok, "écriture réussie : " + (r.error || ""));
+  egal(vues(), ["Noeuds/Couleur"], "seule la colonne qui a changé part vers Excel");
+  const iCouleur = NODE_COLS.indexOf("Couleur");
+  attendu(c.lignesDe("Noeuds").some(l => l[iCouleur] === "#123456"), "la couleur est écrite");
+});
+
 await test("écriture : la formule « Valeur du flux » est préservée", async () => {
   const c = classeurType();
   const r = await office.ecrireDiagramme(MODELE);
@@ -959,7 +1007,17 @@ await test("écriture : une formule qui déborde sur une autre formule est vue, 
   // sur lesquels on a posé des formules DIFFÉRENTES n'en rendent qu'UNE. Aucune
   // réécriture d'Excel ne confond deux formules distinctes ; une colonne
   // calculée, si. Les valeurs, elles, viennent du modèle : rien n'est perdu.
-  const c = classeurAFormulesDistinctes();
+  // Formules saisies à la main, sans ancrage : l'écriture doit les réémettre
+  // ancrées, donc écrire la colonne — c'est cette écriture qu'Excel recopie.
+  // (Un classeur qui porte déjà nos formules n'est pas réécrit du tout.)
+  const c = classeurType({
+    noeuds: RANGS_QUATRE,
+    liens: [
+      ["Lait", "Production bio", "Lait cru", { f: "='Blé tendre'!C8", v: 120 }, "t", "n1", "n2", 0],
+      ["Lait", "Lait cru", "Transformation", { f: "='Blé tendre'!C9", v: 95 }, "t", "n2", "n3", 0],
+      ["Lait", "Transformation", "Beurre", { f: "='Blé tendre'!C10", v: 30 }, "t", "n3", "n4", 0]
+    ]
+  });
   c.classeur.recopie = "colonneCalculee";       // Excel tient sa colonne
   const r = await office.ecrireDiagramme({ nodes: QUATRE, links: LIENS_QUATRE });
   attendu(r.ok, "écriture réussie");

@@ -717,7 +717,7 @@ function blocDuCorps(corps: Excel.Range, c: number, r0: number, n: number): Exce
  */
 function reporterEtrangeres(
   t: TableauTrouve, colonnes: number[], sources: (Contenu[] | undefined)[],
-  hauteur: number, zeroSiVide?: number
+  hauteur: number, actuel: Contenu[][] | null, zeroSiVide?: number
 ): void {
   if (!colonnes.length) return;
   const corps = t.table.getDataBodyRange();
@@ -732,6 +732,7 @@ function reporterEtrangeres(
       if (v === "" && c === zeroSiVide && r < sources.length) v = 0;
       donnees.push([v]);
     }
+    if (dejaEnPlace(actuel, c, donnees)) continue;
     if (donnees.some(estUneFormule)) poserLesFormules(corps, c, donnees, hauteur);
     else colonneDuCorps(corps, c, hauteur).values = donnees;
   }
@@ -838,23 +839,33 @@ export async function ecrireDiagramme(
                        rLiens.values, rLiens.formulas, linkRows)
       : [];
 
+    // Ce que le classeur porte déjà, cellule par cellule — de quoi n'écrire
+    // que les colonnes qui changent. Nul si la hauteur change : tout repart.
+    const actuelNoeuds = corpsActuel(rNoeuds, nLignes.count, nodeRows.length);
+    const actuelLiens = corpsActuel(rLiens, lLignes.count, linkRows.length);
+
     // --- sync 4 : ajuster la hauteur avant d'écrire.
     ajusterLignes(t.noeuds, nLignes.count, nodeRows.length);
     ajusterLignes(t.liens, lLignes.count, linkRows.length);
     await context.sync();                                          // sync 4
 
     // --- sync 5 : écrire, colonne par colonne, par nom d'en-tête.
-    ecrireColonnes(t.noeuds, NODE_COLS, nodeRows);
-    ecrireColonnes(t.liens, LINK_COLS_ECRITES, linkRows, "Valeur du flux");
-    reporterEtrangeres(t.noeuds, etrNoeuds, srcNoeuds, Math.max(MIN_LIGNES, nodeRows.length));
+    ecrireColonnes(t.noeuds, NODE_COLS, nodeRows, actuelNoeuds);
+    const ecritesLiens = ecrireColonnes(
+      t.liens, LINK_COLS_ECRITES, linkRows, actuelLiens, "Valeur du flux");
+    reporterEtrangeres(t.noeuds, etrNoeuds, srcNoeuds, Math.max(MIN_LIGNES, nodeRows.length),
+                       actuelNoeuds);
     reporterEtrangeres(t.liens, etrLiens, srcLiens, Math.max(MIN_LIGNES, linkRows.length),
-                       t.liens.index.get(LINK_COL_BIO));
+                       actuelLiens, t.liens.index.get(LINK_COL_BIO));
     await context.sync();                                          // sync 5
 
     // Ce que nous avons écrit et ce que le classeur porte ensuite sont deux
     // choses différentes : Excel a pu faire de « Valeur du flux » une colonne
-    // calculée et y étendre notre formule. On relit avant d'enregistrer.
-    const recopie = await verifierColonneValeur(context, t.liens, linkRows);
+    // calculée et y étendre notre formule. On relit avant d'enregistrer — si
+    // nous y avons écrit : une colonne laissée telle quelle n'a rien déclenché.
+    const recopie = ecritesLiens.has("Valeur du flux")
+      ? await verifierColonneValeur(context, t.liens, linkRows)
+      : null;
 
     let enregistre = false;
     if (options && options.save) {
@@ -973,6 +984,35 @@ async function verifierColonneValeur(
 }
 
 /**
+ * Le corps du tableau tel que la sync 3 l'a lu, en `Contenu` (la formule si la
+ * cellule en porte une, sa valeur sinon) — ou `null` si sa hauteur va changer :
+ * les lignes ne se font alors plus face, et tout est réécrit.
+ *
+ * POURQUOI. Chaque colonne écrite fait travailler Excel : recalcul de ce qui en
+ * dépend, évènements `onChanged`, et sur Mac la fenêtre d'édition figée le
+ * temps qu'il finisse — plusieurs secondes sur un diagramme de 239 liens, pour
+ * une couleur changée. Écrire coûte des allers-retours, mais aussi ce
+ * qu'Excel fait de ce qu'il reçoit.
+ */
+function corpsActuel(r: Excel.Range, actuel: number, voulu: number): Contenu[][] | null {
+  const hauteur = Math.max(MIN_LIGNES, voulu);
+  if (actuel !== hauteur) return null;
+  const v = lignesDonnees(r.values);
+  const f = lignesDonnees(r.formulas);
+  if (v.length !== hauteur) return null;
+  return v.map((ligne, i) => ligne.map((cel, c) => contenu(cel, (f[i] || [])[c])));
+}
+
+/** La colonne `c` du classeur porte-t-elle déjà exactement `donnees` ? */
+function dejaEnPlace(actuel: Contenu[][] | null, c: number, donnees: Contenu[][]): boolean {
+  if (!actuel || actuel.length !== donnees.length) return false;
+  for (let r = 0; r < donnees.length; r++) {
+    if (actuel[r][c] !== donnees[r][0]) return false;
+  }
+  return true;
+}
+
+/**
  * Amène le tableau à `voulu` lignes de données (au moins une : un tableau Excel
  * ne peut pas être vide). N'affecte QUE les colonnes du tableau — sinon le
  * tableau voisin, sur les mêmes lignes, se décalerait avec lui.
@@ -1008,10 +1048,12 @@ function ajusterLignes(t: TableauTrouve, actuel: number, voulu: number): void {
  * `.values` : c'est « Valeur du flux », la seule qui peut porter un calcul.
  */
 function ecrireColonnes(
-  t: TableauTrouve, nos: string[], lignes: Cellule[][], colonneFormule?: string
-): void {
+  t: TableauTrouve, nos: string[], lignes: Cellule[][], actuel: Contenu[][] | null,
+  colonneFormule?: string
+): Set<string> {
   const corps = t.table.getDataBodyRange();
   const hauteur = Math.max(MIN_LIGNES, lignes.length);
+  const ecrites = new Set<string>();
 
   nos.forEach((nom, iNotre) => {
     const iClasseur = t.index.get(nom);
@@ -1025,6 +1067,8 @@ function ecrireColonnes(
       donnees.push([formule ? formuleDe(cellule) : valeurDe(cellule)]);
       valeurs.push([valeurDe(cellule)]);
     }
+    if (dejaEnPlace(actuel, iClasseur, donnees)) return;
+    ecrites.add(nom);
     if (formule && donnees.some(estUneFormule)) {
       poserLesFormules(corps, iClasseur, donnees, hauteur, valeurs);
     } else {
@@ -1034,6 +1078,7 @@ function ecrireColonnes(
       colonneDuCorps(corps, iClasseur, hauteur).values = donnees;
     }
   });
+  return ecrites;
 }
 
 /**
