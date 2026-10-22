@@ -556,6 +556,15 @@ export function createApp(root: HTMLElement): void {
     window.addEventListener("resize", render);
 
     wireExcelWatchers();
+    // Valider ou quitter un champ envoie la saisie retenue par
+    // planifierEnvoiExcel(). `change` couvre Entrée et la sortie d'un champ
+    // modifié ; `focusout` le reste. Au tour suivant : pendant ces évènements,
+    // le focus n'a pas toujours quitté le champ.
+    const saisieFinie = () => {
+        setTimeout(() => { if (dirtySinceSync) planifierEnvoiExcel(true); }, 0);
+    };
+    document.addEventListener("change", saisieFinie, true);
+    document.addEventListener("focusout", saisieFinie);
 
     // Crochet de test (bancs de tests/, hors Excel)
     (window as any).__sankeyTest = {
@@ -3889,6 +3898,9 @@ let derniereApparence = "";
 
 /** Délai d'apaisement avant d'écrire vers Excel, comme `notifyTimer` (main.js:62). */
 const DELAI_ENVOI_EXCEL = 300;
+/** Pendant une saisie : l'envoi part en quittant le champ, ou après ce silence. */
+const DELAI_ENVOI_SAISIE = 2000;
+
 
 /** Range l'apparence dans le classeur (`document.settings`, PLAN §5.2). */
 function planifierEnregistrementApparence(): void {
@@ -3912,15 +3924,21 @@ function planifierEnregistrementApparence(): void {
  * `envoiAutomatique` est faux — Excel sans ExcelApi 1.7 — ce sont les deux
  * boutons du panneau qui font le travail.
  */
-function planifierEnvoiExcel(): void {
+function planifierEnvoiExcel(finDeSaisie = false): void {
     if (!caps().envoiAutomatique || !amorceFaite) return;
     clearTimeout(minuteurExcel);
+    // Une saisie en cours attend qu'on quitte le champ (cf. `focusout` dans
+    // l'initialisation) : une frappe humaine marque des pauses, et chacune
+    // déclenchait une écriture complète — six pour un mot, chacune figeant la
+    // fenêtre le temps qu'Excel la digère. Le long délai n'est qu'un filet,
+    // pour un champ qu'on laisserait sélectionné sans plus y toucher.
+    const delai = !finDeSaisie && saisieEnCours(document.activeElement) ? DELAI_ENVOI_SAISIE : DELAI_ENVOI_EXCEL;
     minuteurExcel = setTimeout(() => {
         // `persist()` est aussi appelée APRÈS une écriture réussie : sans ce
         // garde-fou, chaque écriture en programmerait une autre, sans fin.
         if (!dirtySinceSync) return;
         pushToExcel({ silencieux: true });
-    }, DELAI_ENVOI_EXCEL) as unknown as number;
+    }, delai) as unknown as number;
 }
 /* ------------------------------ Export ----------------------------- */
 

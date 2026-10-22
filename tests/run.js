@@ -665,6 +665,38 @@ test("synchro automatique : une modification part seule dans le classeur", "comp
     "la modification doit partir d'elle-même dans le classeur — écritures : " + excel.ecritures);
 });
 
+test("synchro automatique : une saisie en cours ne part pas à chaque pause", "complexe", async (p, excel) => {
+  // Chaque écriture fait travailler Excel — et, sur Mac, fige la fenêtre le
+  // temps qu'il finisse. Taper un nom avec les pauses d'une frappe humaine
+  // déclenchait une écriture complète par pause : six pour un seul mot.
+  excel.ecritures = 0;
+  try {
+    await p(`
+      T.amorce(true);
+      await selectNode(one('Féverolle').id);
+      const i = field('Nom');
+      i.focus();
+      for (const ch of 'Pois') {
+        i.value += ch;
+        i.dispatchEvent(new Event('input', { bubbles: true }));
+        await sleep(450);          // une pause : au-delà des 300 ms d'apaisement
+      }
+      return true;
+    `);
+    egal(excel.ecritures, 0, "rien ne part tant que le champ est en cours de saisie");
+    await p(`
+      const i = field('Nom');
+      i.dispatchEvent(new Event('change', { bubbles: true }));
+      i.blur();
+      await sleep(600);
+      return true;
+    `);
+    egal(excel.ecritures, 1, "quitter le champ envoie la saisie, une seule fois");
+  } finally {
+    await p(`T.amorce(false); return true;`);
+  }
+});
+
 test("alerte : un remplissage d'Excel est montré, et pas seulement corrigé", "complexe", async (p, excel) => {
   // Le complément DÉFAIT la recopie d'Excel, mais il ne peut pas rendre les
   // valeurs qu'elle a écrasées. Se taire, c'est laisser l'utilisatrice croire
