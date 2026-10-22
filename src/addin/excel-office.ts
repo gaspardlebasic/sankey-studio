@@ -771,6 +771,8 @@ export interface ResultatEcriture {
   remplissage?: Remplissage;
   /** Cellules envoyées à Excel par cette écriture (0 : rien n'avait changé). */
   cellules?: number;
+  /** Millisecondes passées dans chaque étape — de quoi dire OÙ une écriture lente traîne. */
+  durees?: Partial<Record<EtapeEcriture, number>>;
   ms: number;
   error?: string;
 }
@@ -796,7 +798,10 @@ export async function ecrireDiagramme(
   const t0 = Date.now();
   cellulesEcrites = 0;
   lots = [];
+  const progression = options && options.progression;
+  const chrono = new Chrono(progression);
   return Excel.run(async context => {
+    chrono.etape("reperage");
     const t = await trouverTableaux(context, nomFeuille);
     if (!t.noeuds || !t.liens) {
       return {
@@ -819,6 +824,7 @@ export async function ecrireDiagramme(
     const lLignes = t.liens.table.rows;
     nLignes.load("count");
     lLignes.load("count");
+    chrono.etape("lecture");
     await context.sync();                                          // sync 3
 
     // Une même formule produisant la même valeur sur plusieurs liens est un
@@ -861,6 +867,7 @@ export async function ecrireDiagramme(
     else ajusterLignes(t.noeuds, nLignes.count, nodeRows.length);
     if (planLiens) appliquerPlan(t.liens, planLiens);
     else ajusterLignes(t.liens, lLignes.count, linkRows.length);
+    chrono.etape("lignes");
     await context.sync();                                          // sync 4
     const actuelNoeuds = planNoeuds ? planNoeuds.actuel : null;
     const actuelLiens = planLiens ? planLiens.actuel : null;
@@ -873,12 +880,17 @@ export async function ecrireDiagramme(
                        actuelNoeuds);
     reporterEtrangeres(t.liens, etrLiens, srcLiens, Math.max(MIN_LIGNES, linkRows.length),
                        actuelLiens, t.liens.index.get(LINK_COL_BIO));
-    await envoyerLesLots(context, options && options.progression); // sync 5 (par tranches)
+    chrono.etape("cellules");
+    await envoyerLesLots(context, progression);                    // sync 5 (par tranches)
 
     // Ce que nous avons écrit et ce que le classeur porte ensuite sont deux
     // choses différentes : Excel a pu faire de « Valeur du flux » une colonne
     // calculée et y étendre notre formule. On relit avant d'enregistrer — si
     // nous y avons écrit : une colonne laissée telle quelle n'a rien déclenché.
+    // Elle ne fait un aller-retour que si une formule a été posée.
+    if (ecritesLiens.has("Valeur du flux") && nombreDeFormulesReemises(linkRows)) {
+      chrono.etape("verification");
+    }
     const recopie = ecritesLiens.has("Valeur du flux")
       ? await verifierColonneValeur(context, t.liens, linkRows)
       : null;
@@ -886,6 +898,7 @@ export async function ecrireDiagramme(
     let enregistre = false;
     if (options && options.save) {
       context.workbook.save(Excel.SaveBehavior.save);
+      chrono.etape("enregistrement");
       await context.sync();                                        // sync 6
       enregistre = true;
     }
@@ -896,6 +909,7 @@ export async function ecrireDiagramme(
       formules: recopie ? 0 : nombreDeFormulesReemises(linkRows),
       enregistre,
       cellules: cellulesEcrites,
+      durees: chrono.fin(),
       ms: Date.now() - t0,
       // La recopie d'après-écriture prime : c'est celle qui vient de se
       // produire. L'autre a été trouvée dans le classeur, et défaite avant.
@@ -1163,8 +1177,55 @@ function poser(plage: () => Excel.Range, quoi: "values" | "formulas", donnees: C
   });
 }
 
-/** Où en est l'écriture : cellules parties vers Excel, sur le total à envoyer. */
-export interface Progression { faites: number; total: number }
+/**
+ * Les étapes d'une écriture, chacune un aller-retour (ou plusieurs) avec Excel :
+ * repérage des tableaux, relecture de leur contenu, ajout / retrait de lignes,
+ * cellules, vérification de « Valeur du flux », enregistrement.
+ */
+export type EtapeEcriture =
+  "reperage" | "lecture" | "lignes" | "cellules" | "verification" | "enregistrement";
+
+/**
+ * Où en est l'écriture : l'étape en cours et, pour les cellules, combien sont
+ * parties vers Excel sur le total à envoyer (0 / 0 pour les autres étapes).
+ */
+export interface Progression { etape: EtapeEcriture; faites: number; total: number }
+
+/**
+ * Annonce chaque étape au moment où elle part, et mesure le temps qu'elle a
+ * pris. POURQUOI : une écriture de vingt secondes pour un nœud ajouté ne dit
+ * pas, de l'extérieur, si c'est l'insertion de la ligne (Excel recalcule) ou
+ * l'écriture des cellules qui coûte. Le voile dit l'étape, le bilan les durées.
+ */
+class Chrono {
+  private durees: Partial<Record<EtapeEcriture, number>> = {};
+  private enCours: EtapeEcriture | null = null;
+  private depuis = 0;
+
+  constructor(private progression?: (p: Progression) => void) {}
+
+  etape(e: EtapeEcriture): void {
+    this.clore();
+    this.enCours = e;
+    this.depuis = Date.now();
+    if (e === "cellules") return;                 // envoyerLesLots annonce avec ses comptes
+    if (this.progression) {
+      try { this.progression({ etape: e, faites: 0, total: 0 }); } catch { /* affichage seul */ }
+    }
+  }
+
+  fin(): Partial<Record<EtapeEcriture, number>> {
+    this.clore();
+    return this.durees;
+  }
+
+  private clore(): void {
+    if (this.enCours) {
+      this.durees[this.enCours] = (this.durees[this.enCours] || 0) + Date.now() - this.depuis;
+    }
+    this.enCours = null;
+  }
+}
 
 /**
  * Cellules par envoi. En deçà, tout part d'un seul `sync`, comme avant ; au-delà,
@@ -1187,7 +1248,7 @@ async function envoyerLesLots(
   cellulesEcrites += total;
   const dire = (faites: number): void => {
     if (progression && total) {
-      try { progression({ faites, total }); } catch { /* l'affichage ne casse pas l'écriture */ }
+      try { progression({ etape: "cellules", faites, total }); } catch { /* l'affichage ne casse pas l'écriture */ }
     }
   };
   dire(0);

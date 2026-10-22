@@ -4411,16 +4411,42 @@ let pontInstrumente: any = null;
 const operationsEnCours: { id: number; libelle: string; bloquante: boolean }[] = [];
 let operationSuivante = 1;
 /**
- * Où en est l'écriture en vol, « 480 / 1 920 cellules » — poussé par le pont
- * après chaque tranche envoyée à Excel (`envoyerLesLots`). Vide sinon.
+ * Où en est l'écriture en vol — « insertion / retrait de lignes », puis
+ * « 480 / 1 920 cellules » — poussé par le pont à chaque étape et après chaque
+ * tranche envoyée à Excel (`ecrireDiagramme`). Vide sinon.
  */
 let progressionEcriture = "";
 
-function majProgressionEcriture(p: { faites: number; total: number }): void {
-    if (!p || !p.total) return;
+/** Les étapes d'une écriture, telles que le voile les annonce. */
+const ETAPES_ECRITURE: Record<string, string> = {
+    reperage: "repérage des tableaux",
+    lecture: "relecture des tableaux",
+    lignes: "insertion / retrait de lignes",
+    verification: "vérification des formules",
+    enregistrement: "enregistrement"
+};
+/** Les mêmes, en court, pour le bilan des durées. */
+const ETAPES_COURTES: Record<string, string> = {
+    reperage: "repérage", lecture: "relecture", lignes: "lignes",
+    cellules: "cellules", verification: "vérification", enregistrement: "enregistrement"
+};
+
+function majProgressionEcriture(p: { etape?: string; faites: number; total: number }): void {
+    if (!p) return;
     const nombre = (n: number) => n.toLocaleString("fr-FR");
-    progressionEcriture = `${nombre(p.faites)} / ${nombre(p.total)} cellules`;
+    if (p.total) progressionEcriture = `— ${nombre(p.faites)} / ${nombre(p.total)} cellules`;
+    else if (p.etape && ETAPES_ECRITURE[p.etape]) progressionEcriture = "— " + ETAPES_ECRITURE[p.etape];
+    else return;
     afficherTemoinExcel();
+}
+
+/** « (lignes 19,5 s · cellules 0,3 s) » : où une écriture lente a passé son temps. */
+function bilanDurees(durees: Record<string, number> | undefined): string {
+    if (!durees) return "";
+    const morceaux = Object.keys(durees)
+        .filter(k => durees[k] >= 100)
+        .map(k => `${ETAPES_COURTES[k] || k} ${(durees[k] / 1000).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} s`);
+    return morceaux.length ? ` (${morceaux.join(" · ")})` : "";
 }
 
 /** Ce que dit le témoin pour chaque méthode du pont qui parle à Excel. */
@@ -4523,6 +4549,7 @@ async function operationExcel<T>(
         if (r && typeof r.cellules === "number") {
             detail = r.cellules === 0 ? " · rien à écrire"
                 : ` · ${r.cellules} cellule${r.cellules > 1 ? "s" : ""} écrite${r.cellules > 1 ? "s" : ""}`;
+            detail += bilanDurees(r.durees);
         }
         return r;
     } catch (e) {

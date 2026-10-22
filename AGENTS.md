@@ -1114,7 +1114,10 @@ volet ↔ fenêtre » plus bas.
   `options.progression({ faites, total })` après chaque tranche. Le pont du volet relaie ce
   rappel (`onProgression`), le courtier le pousse à la fenêtre (`pousse` avec un `d`
   facultatif, même version du protocole), et le témoin comme le voile affichent
-  « 480 / 1 920 cellules ». Une plage d'écriture se crée **dans** la fermeture (`poser(() =>
+  « 480 / 1 920 cellules ». Avant les cellules, **chaque étape s'annonce** (`Chrono` :
+  repérage, relecture, insertion / retrait de lignes, vérification, enregistrement) et le
+  résultat porte `durees` — le bilan du témoin dit « (lignes 19,5 s · cellules 0,3 s) » dès
+  qu'une étape dépasse 100 ms. C'est l'outil pour savoir OÙ une écriture lente traîne. Une plage d'écriture se crée **dans** la fermeture (`poser(() =>
   …)`) : une borne capturée doit être une constante, pas le `debut` de la boucle.
 - **Colonne entière ou cellules : décidé colonne par colonne, sur la forme des différences**,
   pas sur le moment (ouverture ou modification). Au-delà de `BLOCS_MAX` (6) blocs de cellules

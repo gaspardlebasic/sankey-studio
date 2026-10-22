@@ -19,11 +19,12 @@
 
 import { Mandataire, type Accueil } from "./protocole.js";
 import type { Modele } from "../shared/modele-excel.js";
+import type { Progression } from "./excel-office.js";
 
 /** Le rappel du renderer pour « le classeur a changé ». */
 let rappelChangement: (() => void) | null = null;
 /** Le rappel du renderer pour « l'écriture avance ». */
-let rappelProgression: ((p: { faites: number; total: number }) => void) | null = null;
+let rappelProgression: ((p: Progression) => void) | null = null;
 
 /**
  * Passe un appel au volet et, s'il échoue, rend `secours` — la forme d'échec
@@ -58,7 +59,7 @@ function construirePontFenetre(mandataire: Mandataire, accueil: Accueil) {
     onExcelChanged(cb: () => void) { rappelChangement = cb; },
 
     /** Le volet pousse l'avancée d'une écriture, tranche par tranche. */
-    onProgression(cb: (p: { faites: number; total: number }) => void) { rappelProgression = cb; },
+    onProgression(cb: (p: Progression) => void) { rappelProgression = cb; },
 
     async lireApparence(): Promise<string | null> {
       try { return await mandataire.appeler("lireApparence") as string | null; }
@@ -84,7 +85,7 @@ export async function installerPontFenetre(mandataire: Mandataire): Promise<Accu
   mandataire.surPousse((nom, donnee) => {
     if (nom === "excel" && rappelChangement) rappelChangement();
     if (nom === "progression" && rappelProgression && donnee) {
-      rappelProgression(donnee as { faites: number; total: number });
+      rappelProgression(donnee as Progression);
     }
   });
   return accueil;

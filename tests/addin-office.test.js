@@ -620,26 +620,31 @@ await test("écriture : une grosse écriture dit où elle en est, tranche par tr
     { nom: "Noeuds", entetes: NODE_COLS.slice(), c0: 0, lignes: [] },
     { nom: "Liens", entetes: LINK_COLS.slice(), c0: LIENS_C0, lignes: [] }
   ]);
-  const etapes = [];
-  const r = await office.ecrireDiagramme(modeleLarge(), undefined, { progression: p => etapes.push(p) });
+  const recus = [];
+  const r = await office.ecrireDiagramme(modeleLarge(), undefined, { progression: p => recus.push(p) });
   attendu(r.ok, "écriture réussie : " + (r.error || ""));
+  egal(recus.filter(p => p.etape !== "cellules").map(p => p.etape),
+       ["reperage", "lecture", "lignes"], "chaque étape s'annonce avant son aller-retour");
+  const etapes = recus.filter(p => p.etape === "cellules").map(p => ({ faites: p.faites, total: p.total }));
   attendu(etapes.length >= 3, "au moins le départ, une tranche et la fin — reçu : " + JSON.stringify(etapes));
   egal(etapes[0], { faites: 0, total: r.cellules }, "le total est connu avant le premier envoi");
   egal(etapes[etapes.length - 1], { faites: r.cellules, total: r.cellules }, "et atteint à la fin");
   for (let i = 1; i < etapes.length; i++) {
     attendu(etapes[i].faites > etapes[i - 1].faites, "la progression avance à chaque tranche");
   }
+  egal(Object.keys(r.durees).sort(), ["cellules", "lecture", "lignes", "reperage"],
+       "le résultat dit combien de temps chaque étape a pris");
   const { linkRows } = buildModelRows(modeleLarge(), null);
   verifierTableau(c, "Liens", LINK_COLS, linkRows, LINK_COLS_ECRITES_TEST, "liens");
 });
 
-await test("écriture : rien à écrire, rien à annoncer", async () => {
+await test("écriture : rien à écrire, aucun compte de cellules annoncé", async () => {
   const m = modeleLarge();
   classeurDepuis(m);
-  const etapes = [];
-  const r = await office.ecrireDiagramme(m, undefined, { progression: p => etapes.push(p) });
+  const recus = [];
+  const r = await office.ecrireDiagramme(m, undefined, { progression: p => recus.push(p) });
   egal(r.cellules, 0, "aucune cellule");
-  egal(etapes, [], "aucun rappel");
+  egal(recus.filter(p => p.etape === "cellules"), [], "pas de « 0 / 0 cellules »");
 });
 
 await test("écriture : la formule « Valeur du flux » est préservée", async () => {
