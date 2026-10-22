@@ -303,6 +303,21 @@ function union(boites: DOMRect[]): DOMRect | null {
     return new DOMRect(x0, y0, x1 - x0, y1 - y0);
 }
 
+/**
+ * La boîte d'où part un parent qu'on REPLIE : la hauteur cumulée de ses
+ * enfants, centrée sur leur milieu moyen (pondéré par leur hauteur). Pas la
+ * boîte qui les englobe : elle compte les écarts entre eux, et le parent
+ * naissait en grand rectangle avant de se réduire.
+ */
+function reunies(boites: DOMRect[]): DOMRect | null {
+    const u = union(boites);
+    if (!u) return null;
+    const h = boites.reduce((s, b) => s + b.height, 0);
+    if (h <= 0) return u;
+    const centre = boites.reduce((s, b) => s + (b.y + b.height / 2) * b.height, 0) / h;
+    return new DOMRect(u.x, centre - h / 2, u.width, h);
+}
+
 /** Une géométrie ramenée dans le repère d'un autre groupe. */
 function deplacee(r: RubanReleve, ox: number, oy: number): GeometrieRuban {
     const dx = r.ox - ox, dy = r.oy - oy;
@@ -438,8 +453,8 @@ export function animerTransition(svg: SVGSVGElement, avant: Instantane, cadres: 
         const ancienne = avant.boites.get(id);
         if (ancienne) { depart.set(id, ancienne); return; }
         const membres = membresDe.get(id);
-        const u = membres && union(membres.map(m => avant.boites.get(m)).filter(Boolean) as DOMRect[]);
-        if (u) depart.set(id, u);
+        const r = membres && reunies(membres.map(m => avant.boites.get(m)).filter(Boolean) as DOMRect[]);
+        if (r) depart.set(id, r);
     });
     nouveauxCadres.forEach((membres, parent) => {
         const p = avant.boites.get(parent);

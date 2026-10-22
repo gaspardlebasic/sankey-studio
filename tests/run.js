@@ -1863,6 +1863,26 @@ test("agrégation : ⊖ fait naître le ruban du parent à l'épaisseur de ceux 
     + r.epaisseurDepart.toFixed(1));
 });
 
+test("agrégation : ⊖ fait naître le nœud parent à la hauteur cumulée de ses enfants", "complexe", async p => {
+  // Signalé : au repli, un grand rectangle apparaissait d'un coup puis se
+  // réduisait. Il partait de la boîte englobant les enfants, écarts compris.
+  const r = await p(CLASSEUR_NIVEAUX + `
+    await versApercu();
+    cliquer(document.querySelector('#canvas [data-deplier="L"] circle'));
+    await sleep(1800);
+    const haut = id => document.querySelector('#canvas rect[data-id="' + id + '"]').getBoundingClientRect().height;
+    const cumul = ['P', 'F', 'nd:L'].reduce((s, id) => s + haut(id), 0);
+    cliquer(document.querySelector('#canvas [data-replier="L"] circle'));
+    // Aussitôt après le clic : la boîte peinte, animation comprise.
+    const depart = haut('L');
+    await sleep(1800);
+    return { cumul, depart, final: haut('L') };
+  `);
+  attendu(Math.abs(r.depart - r.cumul) < 1,
+    "le parent naît à la hauteur cumulée de ses enfants (" + r.cumul.toFixed(1) + ") — vu : "
+    + r.depart.toFixed(1));
+});
+
 test("agrégation : le parent relu se résout et ramène ses enfants dans sa colonne", "complexe",
   async p => {
   const r = await p(CLASSEUR_NIVEAUX + `
