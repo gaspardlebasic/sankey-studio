@@ -84,9 +84,18 @@ function viderDossier(chemin) {
         throw new Error("refus d'effacer un chemin qui n'est pas un cache d'Excel : " + chemin);
     }
     if (!existsSync(chemin) || !statSync(chemin).isDirectory()) return null;
+    let entrees;
+    try {
+        entrees = readdirSync(chemin);
+    } catch (e) {
+        // macOS protège les données des autres applications : sans « Accès
+        // complet au disque », le dossier existe mais ne se lit pas.
+        if (e && (e.code === "EPERM" || e.code === "EACCES")) return { refuse: true };
+        throw e;
+    }
     const avant = tailleDe(chemin);
     let echecs = 0;
-    for (const entree of readdirSync(chemin)) {
+    for (const entree of entrees) {
         try {
             rmSync(join(chemin, entree), { recursive: true, force: true });
         } catch {
@@ -121,10 +130,16 @@ function main(argv) {
 
     let total = 0;
     let bloques = 0;
+    let refuses = 0;
     for (const [chemin, nom] of CACHES) {
         const r = viderDossier(chemin);
         if (r === null) {
             console.log(`  –  ${nom} : absent`);
+            continue;
+        }
+        if (r.refuse) {
+            refuses++;
+            console.log(`  ✗  ${nom} : accès refusé par macOS`);
             continue;
         }
         total += r.libere;
@@ -139,6 +154,12 @@ function main(argv) {
         + (manifestePresent ? "" : " (npm run addin:install -- --enligne pour le reposer)"));
 
     console.log(`\n${lisible(total)} libéré(s).`);
+    if (refuses) {
+        console.log("\nmacOS a refusé l'accès aux données d'Excel : rien n'a été vidé là.");
+        console.log("Réglages Système ▸ Confidentialité et sécurité ▸ Accès complet au disque :");
+        console.log("autorise l'application qui lance cette commande (Terminal, ou l'app Claude),");
+        console.log("quitte-la et rouvre-la, puis relance « npm run excel:cache ».");
+    }
     if (bloques) {
         console.log("Des fichiers étaient tenus par Excel : relance après l'avoir quitté.");
     }
@@ -147,7 +168,7 @@ function main(argv) {
     if (ouvert) {
         console.log("Excel étant ouvert : quitte-le et rouvre-le pour voir la nouvelle version.");
     }
-    return 0;
+    return refuses ? 1 : 0;
 }
 
 if (process.argv[1] && process.argv[1].endsWith("vider-cache-excel.mjs")) {
