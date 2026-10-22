@@ -941,6 +941,44 @@ test("couloirs (aperçu) : les nœuds d'un couloir restent dans leur bande", "co
     `le couloir 2 doit être entièrement sous le couloir 1 (${Math.round(r.bas1)} -> ${Math.round(r.haut2)})`);
 });
 
+test("tri par valeur : le bouton d'une colonne la range, couloir par couloir", "complexe", async p => {
+  const r = await p(`
+    const n = (id, name, column, order, lane) =>
+      ({ id, name, column, title: '', order, lane, filiere: '', color: null, x: 0, y: 0 });
+    const l = (id, source, target, value) => ({ id, source, target, value, unit: 't' });
+    T.loadProject({ version: 1, idCounter: 20, model: {
+      nodes: [
+        n('s1', 'Petit amont', 1, 0, 1), n('s2', 'Gros amont', 1, 1, 1),
+        n('a', 'Petit', 2, 0, 1), n('b', 'Moyen', 2, 1, 1), n('c', 'Gros', 2, 2, 1),
+        n('d', 'Faible', 2, 0, 2), n('e', 'Fort', 2, 1, 2)
+      ],
+      links: [
+        l('l1', 's1', 'a', 10), l('l2', 's2', 'b', 50), l('l3', 's2', 'c', 200),
+        l('l4', 's1', 'd', 5), l('l5', 's2', 'e', 80)
+      ]
+    }});
+    await sleep(150);
+    const haut = id => elOf(id).querySelector('.node-box').getBoundingClientRect().top;
+    const bouton = document.querySelector('#canvas .grid-col-sort[data-column="2"]');
+    if (!bouton) return { bouton: false };
+    const b = bouton.getBoundingClientRect();
+    clickAt(b.left + b.width / 2, b.top + b.height / 2);
+    await sleep(150);
+    const apres = { c: haut('c'), b: haut('b'), a: haut('a'), e: haut('e'), d: haut('d'),
+      s1: byId('s1').order, s2: byId('s2').order };
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true }));
+    await sleep(150);
+    return { bouton: true, apres, annule: ['a', 'b', 'c', 'd', 'e'].map(id => byId(id).order) };
+  `);
+  attendu(r.bouton, "la colonne 2 doit porter un bouton de tri à côté de son intitulé");
+  const a = r.apres;
+  attendu(a.c < a.b && a.b < a.a, "couloir 1 : Gros, puis Moyen, puis Petit, dans l'ordre peint");
+  attendu(a.e < a.d, "couloir 2 : Fort au-dessus de Faible, sans se mêler au couloir 1");
+  attendu(a.c < a.e, "le couloir 1 doit rester au-dessus du couloir 2");
+  egal([a.s1, a.s2], [0, 1], "une autre colonne ne doit pas être rangée");
+  egal(r.annule, [0, 1, 2, 0, 1], "Cmd+Z doit rendre l'ordre d'avant");
+});
+
 test("couloirs (aperçu) : un flux venant d'en haut arrive en haut du nœud", "complexe", async p => {
   const r = await p(`
     // Cas signalé sur « Flux légumineuses » : le nœud du couloir DU DESSUS porte

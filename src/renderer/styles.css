@@ -230,6 +230,12 @@ button.linklike:hover { color: var(--dark); }
 /* Colonne sans intitulé : on affiche « Colonne n » en repère, plus discret. */
 #canvas .grid-col-label.placeholder { fill: var(--grey); font-weight: 600; }
 #canvas .grid-col-label:hover { fill: var(--dark); text-decoration: underline; }
+/* Tri d'une colonne par valeur : discret, il s'affirme au survol. */
+#canvas .grid-col-sort { cursor: pointer; }
+#canvas .grid-col-sort line { stroke: var(--grey); stroke-width: 1.6; stroke-linecap: round; }
+#canvas .grid-col-sort-hit { fill: transparent; }
+#canvas .grid-col-sort:hover line { stroke: var(--dark); }
+#canvas .grid-col-sort:hover .grid-col-sort-hit { fill: var(--paper); }
 
 /* Couloirs horizontaux : un filet de séparation et un nom, à gauche. */
 #canvas .grid-lane-line { stroke: var(--grey); stroke-width: 1; stroke-dasharray: 3 4; }

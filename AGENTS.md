@@ -509,6 +509,14 @@ un poste, c'est `npm run addin:install -- --enligne`.
     arriver en bas du nœud un flux venu d'en haut, et les rubans se croisaient. Un flux venu d'en
     haut doit arriver en haut. Les rubans portent `data-source`/`data-target` pour que les tests
     puissent le vérifier sur le tracé réellement peint.
+  - **Trier une colonne par valeur** (demandé le 2026-10-22) : un picto à droite de
+    l'intitulé de chaque colonne, en vue d'édition (`boutonTriColonne`,
+    `trierColonneParValeur`). Il range la colonne **couloir par couloir**, du plus grand flux
+    au plus petit — la valeur d'un nœud est le plus grand de ce qui entre et de ce qui sort,
+    comme son épaisseur dans l'aperçu. Toute la cellule est rangée, **filières masquées
+    comprises** (sinon leurs ordres se télescoperaient) ; une hiérarchie reste en plan
+    (racines par valeur, enfants rangés entre frères et sœurs). Un geste annulable, et rien
+    n'est écrit si la colonne était déjà rangée.
   - Les **noms de couloirs** vivent dans `options.lanes.titles` (apparence, pas dans Excel) et
     s'affichent dans une **gouttière réservée à gauche** : posés sur le dessin, ils
     chevaucheraient le premier nœud et la barre des entêtes de colonnes.

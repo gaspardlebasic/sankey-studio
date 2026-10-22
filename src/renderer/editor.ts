@@ -1044,6 +1044,47 @@ function pointsDePassage(l: FlowLink): { x: number; y: number }[] {
     return pts;
 }
 
+/**
+ * Petit bouton posé juste à droite de l'intitulé d'une colonne : trois traits
+ * de plus en plus courts, le picto usuel d'un tri décroissant. Il range la
+ * colonne par valeur (trierColonneParValeur), couloir par couloir.
+ */
+function boutonTriColonne(column: number, label: SVGTextElement): SVGGElement {
+    const centre = gridX(column) + NODE_W / 2;
+    let largeur = 0;
+    try { largeur = label.getComputedTextLength(); } catch { /* pas encore peint */ }
+    // Collé au libellé, sans jamais sortir de la bande de la colonne.
+    const x = Math.min(centre + largeur / 2 + 6, bandLeft(column) + COL_W - 18);
+    const g = document.createElementNS(SVGNS, "g");
+    g.setAttribute("class", "grid-col-sort");
+    g.dataset.column = String(column);
+    g.setAttribute("transform", `translate(${x},18)`);
+    g.setAttribute("role", "button");
+    const fond = document.createElementNS(SVGNS, "rect");
+    fond.setAttribute("class", "grid-col-sort-hit");
+    fond.setAttribute("width", "16");
+    fond.setAttribute("height", "16");
+    fond.setAttribute("rx", "3");
+    g.appendChild(fond);
+    [12, 9, 6].forEach((l, i) => {
+        const trait = document.createElementNS(SVGNS, "line");
+        trait.setAttribute("x1", "2");
+        trait.setAttribute("x2", String(2 + l));
+        trait.setAttribute("y1", String(4 + i * 4));
+        trait.setAttribute("y2", String(4 + i * 4));
+        g.appendChild(trait);
+    });
+    g.appendChild(svgTitle("Trier la colonne par valeur, du plus grand flux au plus petit (dans chaque couloir)"));
+    // Arrêté dès l'appui : sinon le canevas désélectionnerait ou amorcerait un geste.
+    g.addEventListener("mousedown", e => e.stopPropagation());
+    g.addEventListener("dblclick", e => e.stopPropagation());
+    g.addEventListener("click", e => {
+        e.stopPropagation();
+        trierColonneParValeur(column);
+    });
+    return g;
+}
+
 function renderEditor(): void {
     canvas.setAttribute("class", "mode-move");
     nodeEls = new Map();
@@ -1078,6 +1119,7 @@ function renderEditor(): void {
             editColumnTitle(col);
         });
         gGrid.appendChild(label);
+        if (viewNodes().some(n => n.column === c)) gGrid.appendChild(boutonTriColonne(c, label));
     }
 
     // Couloirs : trait de séparation + nom, seulement s'il y en a plusieurs
@@ -2061,6 +2103,63 @@ function editColumnTitle(column: number): void {
         else if (e.key === "Escape") { e.preventDefault(); commit(false); }
     });
     input.addEventListener("blur", () => commit(true));
+}
+
+/**
+ * Flux d'un nœud : le plus grand de ce qui entre et de ce qui sort, comme
+ * l'épaisseur que lui donne d3 (et la valeur que l'aperçu écrit sous son nom).
+ */
+function valeurNoeud(id: string): number {
+    let entree = 0, sortie = 0;
+    model.links.forEach(l => {
+        const v = l.value > 0 ? l.value : 0;
+        if (l.target === id) entree += v;
+        if (l.source === id) sortie += v;
+    });
+    return Math.max(entree, sortie);
+}
+
+/**
+ * Range une colonne du plus grand flux au plus petit, couloir par couloir :
+ * l'ordre vertical est propre à une cellule (colonne × couloir), on ne mêle
+ * donc jamais deux couloirs. Toute la cellule est rangée, filières masquées
+ * comprises — sinon leurs ordres se télescoperaient avec ceux qu'on pose.
+ * Une hiérarchie reste EN PLAN : les racines par valeur, chaque enfant sous
+ * son parent, rangé par valeur parmi ses frères et sœurs.
+ */
+function trierColonneParValeur(column: number): void {
+    const cellules = new Map<number, FlowNode[]>();
+    model.nodes.forEach(n => {
+        if (n.column !== column) return;
+        const l = laneOf(n);
+        if (!cellules.has(l)) cellules.set(l, []);
+        cellules.get(l)!.push(n);
+    });
+    const valeurs = new Map<string, number>();
+    const voulu = new Map<FlowNode, number>();
+    cellules.forEach(liste => {
+        liste.forEach(n => valeurs.set(n.id, valeurNoeud(n.id)));
+        // À valeur égale, l'ordre d'avant départage (tri stable).
+        const parValeur = liste.slice()
+            .sort((a, b) => a.order - b.order)
+            .sort((a, b) => valeurs.get(b.id)! - valeurs.get(a.id)!);
+        // enPlan relit `order` : on le lui donne sur des copies, puis on
+        // reporte le rang obtenu sur les vrais nœuds.
+        const copies = parValeur.map((n, i) => ({ ...n, order: i }));
+        enPlan(copies).forEach((c, i) => voulu.set(liste.find(n => n.id === c.id)!, i));
+    });
+    const change = Array.from(voulu).some(([n, o]) => n.order !== o);
+    const nom = columnTitle(column) || "Colonne " + column;
+    if (!change) {
+        setStatus(`« ${nom} » est déjà rangée par valeur.`);
+        return;
+    }
+    snapshot();
+    voulu.forEach((o, n) => { n.order = o; });
+    render();
+    buildSidebar();
+    persist();
+    setStatus(`« ${nom} » rangée par valeur, du plus grand flux au plus petit.`);
 }
 
 function toCanvas(e: MouseEvent): { x: number; y: number } {
