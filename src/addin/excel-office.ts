@@ -734,7 +734,7 @@ function reporterEtrangeres(
     }
     if (dejaEnPlace(actuel, c, donnees)) continue;
     if (donnees.some(estUneFormule)) poserLesFormules(corps, c, donnees, hauteur);
-    else colonneDuCorps(corps, c, hauteur).values = donnees;
+    else poser(colonneDuCorps(corps, c, hauteur), "values", donnees);
   }
 }
 
@@ -765,6 +765,8 @@ export interface ResultatEcriture {
    * savoir et restaurer une version antérieure du classeur.
    */
   remplissage?: Remplissage;
+  /** Cellules envoyées à Excel par cette écriture (0 : rien n'avait changé). */
+  cellules?: number;
   ms: number;
   error?: string;
 }
@@ -786,6 +788,7 @@ export async function ecrireDiagramme(
   model: Modele, nomFeuille?: string, options?: OptionsEcriture
 ): Promise<ResultatEcriture> {
   const t0 = Date.now();
+  cellulesEcrites = 0;
   return Excel.run(async context => {
     const t = await trouverTableaux(context, nomFeuille);
     if (!t.noeuds || !t.liens) {
@@ -879,6 +882,7 @@ export async function ecrireDiagramme(
       sheetName: t.feuille || nomFeuille || FEUILLE_DEFAUT,
       formules: recopie ? 0 : nombreDeFormulesReemises(linkRows),
       enregistre,
+      cellules: cellulesEcrites,
       ms: Date.now() - t0,
       // La recopie d'après-écriture prime : c'est celle qui vient de se
       // produire. L'autre a été trouvée dans le classeur, et défaite avant.
@@ -975,7 +979,7 @@ async function verifierColonneValeur(
     const c = notre(r);
     valeurs.push([c ? valeurDe(c) : ""]);
   }
-  colonneDuCorps(liens.table.getDataBodyRange(), iVal, hauteur).values = valeurs;
+  poser(colonneDuCorps(liens.table.getDataBodyRange(), iVal, hauteur), "values", valeurs);
   await context.sync();                                          // sync 5 ter
 
   let occupes = 0;
@@ -1001,6 +1005,46 @@ function corpsActuel(r: Excel.Range, actuel: number, voulu: number): Contenu[][]
   const f = lignesDonnees(r.formulas);
   if (v.length !== hauteur) return null;
   return v.map((ligne, i) => ligne.map((cel, c) => contenu(cel, (f[i] || [])[c])));
+}
+
+/**
+ * Cellules envoyées par l'écriture en cours — rendu dans le résultat, que la
+ * barre d'état affiche : c'est ce qu'Excel a eu à digérer.
+ */
+let cellulesEcrites = 0;
+
+/** Toute affectation de l'écriture passe ici : elle se compte. */
+function poser(plage: Excel.Range, quoi: "values" | "formulas", donnees: Contenu[][]): void {
+  cellulesEcrites += donnees.length;
+  if (quoi === "values") plage.values = donnees;
+  else plage.formulas = donnees;
+}
+
+/** La colonne `c`, telle que lue, porte-t-elle au moins une formule ? */
+function porteUneFormule(actuel: Contenu[][], c: number): boolean {
+  return actuel.some(ligne => estUneFormule([ligne[c]]));
+}
+
+/**
+ * N'écrit d'une colonne que les cellules qui diffèrent de `actuel`, par blocs
+ * contigus — tous dans l'envoi en cours : le nombre d'allers-retours ne bouge
+ * pas, seule la quantité de travail confiée à Excel diminue.
+ */
+function ecrireLesDifferences(
+  corps: Excel.Range, c: number, donnees: Contenu[][], actuel: Contenu[][]
+): void {
+  let debut = -1;
+  for (let r = 0; r <= donnees.length; r++) {
+    const differe = r < donnees.length && actuel[r][c] !== donnees[r][0];
+    if (differe) {
+      if (debut < 0) debut = r;
+      continue;
+    }
+    if (debut >= 0) {
+      poser(blocDuCorps(corps, c, debut, r - debut), "values", donnees.slice(debut, r));
+      debut = -1;
+    }
+  }
 }
 
 /** La colonne `c` du classeur porte-t-elle déjà exactement `donnees` ? */
@@ -1071,11 +1115,17 @@ function ecrireColonnes(
     ecrites.add(nom);
     if (formule && donnees.some(estUneFormule)) {
       poserLesFormules(corps, iClasseur, donnees, hauteur, valeurs);
+    } else if (actuel && !porteUneFormule(actuel, iClasseur)) {
+      // Une colonne de simples valeurs : seules les cellules qui changent
+      // partent. Renommer un nœud touche sa ligne et celles de ses liens, pas
+      // les colonnes entières.
+      ecrireLesDifferences(corps, iClasseur, donnees, actuel);
     } else {
       // Écrire des nombres en `.values` dit simplement ce qu'on fait — et
       // efface au passage les formules présentes, ce qui défait une colonne
-      // calculée.
-      colonneDuCorps(corps, iClasseur, hauteur).values = donnees;
+      // calculée. C'est pour cela que la colonne part ENTIÈRE dès qu'elle en
+      // porte une : une écriture partielle, Excel la recouvrirait.
+      poser(colonneDuCorps(corps, iClasseur, hauteur), "values", donnees);
     }
   });
   return ecrites;
@@ -1107,9 +1157,9 @@ function poserLesFormules(
   corps: Excel.Range, c: number, donnees: Contenu[][], hauteur: number,
   valeurs?: Contenu[][]
 ): void {
-  if (valeurs) colonneDuCorps(corps, c, hauteur).values = valeurs;
+  if (valeurs) poser(colonneDuCorps(corps, c, hauteur), "values", valeurs);
   for (let r = 0; r < donnees.length; r++) {
-    if (estUneFormule(donnees[r])) blocDuCorps(corps, c, r, 1).formulas = [donnees[r]];
+    if (estUneFormule(donnees[r])) poser(blocDuCorps(corps, c, r, 1), "formulas", [donnees[r]]);
   }
   reposerLesNombres(corps, c, donnees);
 }
@@ -1145,7 +1195,7 @@ function reposerLesNombres(
       continue;
     }
     if (debut >= 0) {
-      blocDuCorps(corps, c, debut, r - debut).values = donnees.slice(debut, r);
+      poser(blocDuCorps(corps, c, debut, r - debut), "values", donnees.slice(debut, r));
       debut = -1;
     }
   }

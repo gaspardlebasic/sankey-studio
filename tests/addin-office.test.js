@@ -456,6 +456,41 @@ await test("écriture : changer une couleur ne réécrit que la colonne « Coule
   attendu(c.lignesDe("Noeuds").some(l => l[iCouleur] === "#123456"), "la couleur est écrite");
 });
 
+/** Comme espionnerEcritures, mais compte les CELLULES écrites par colonne. */
+function compterCellules(c) {
+  const grille = c.classeur.grillePour("Diagramme");
+  const compte = {};
+  const ecrire = grille.ecrire.bind(grille);
+  grille.ecrire = (r, col, val) => {
+    for (const d of c.classeur.tables) {
+      if (d.grille === grille && col >= d.c0 && col < d.c0 + d.entetes.length && r > d.r0) {
+        const k = d.nom + "/" + d.entetes[col - d.c0];
+        compte[k] = (compte[k] || 0) + 1;
+      }
+    }
+    return ecrire(r, col, val);
+  };
+  return () => Object.fromEntries(Object.keys(compte).sort().map(k => [k, compte[k]]));
+}
+
+await test("écriture : renommer un nœud n'écrit que les cellules de son nom", async () => {
+  // Le nom d'un nœud vit dans sa ligne ET dans les liens qui le touchent. Ce
+  // sont ces cellules-là, et elles seules, qui doivent partir : réécrire des
+  // colonnes entières fait travailler Excel pour rien (et fige la fenêtre).
+  const c = classeurType();
+  await office.ecrireDiagramme(MODELE);
+  const cellules = compterCellules(c);
+  const modele = JSON.parse(JSON.stringify(MODELE));
+  modele.nodes[1].name = "Lait cru bio";               // n2 : arrivée du lien 1, départ du lien 2
+  const r = await office.ecrireDiagramme(modele);
+  attendu(r.ok, "écriture réussie : " + (r.error || ""));
+  egal(cellules(), { "Liens/Destination": 1, "Liens/Origine": 1, "Noeuds/Noeud": 1 },
+       "trois cellules, pas trois colonnes");
+  egal(r.cellules, 3, "le résultat dit combien de cellules sont parties");
+  const iNom = NODE_COLS.indexOf("Noeud");
+  attendu(c.lignesDe("Noeuds").some(l => l[iNom] === "Lait cru bio"), "le nom est écrit");
+});
+
 await test("écriture : la formule « Valeur du flux » est préservée", async () => {
   const c = classeurType();
   const r = await office.ecrireDiagramme(MODELE);

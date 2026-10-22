@@ -4296,7 +4296,9 @@ const LIBELLES_EXCEL: Record<string, (args: any[]) => string> = {
         const m = a[0] || {};
         const n = (m.nodes || []).length;
         const l = (m.links || []).length;
-        return `écriture du classeur (${n} nœuds, ${l} liens)`;
+        // Le modèle entier part, mais le complément n'écrit que ce qui diffère
+        // du classeur : ce sont des nœuds et des liens COMPARÉS.
+        return `écriture du classeur (${n} nœuds, ${l} liens comparés)`;
     },
     lireApparence: () => "lecture de l'apparence",
     ecrireApparence: () => "enregistrement de l'apparence",
@@ -4367,9 +4369,15 @@ async function operationExcel<T>(libelle: string, lancer: () => Promise<T>): Pro
     await laisserPeindre();
     const t0 = performance.now();
     let echec = false;
+    let detail = "";
     try {
         const r: any = await lancer();
         if (r && r.ok === false) echec = true;
+        // Ce qu'Excel a vraiment reçu, quand l'écriture le dit.
+        if (r && typeof r.cellules === "number") {
+            detail = r.cellules === 0 ? " · rien à écrire"
+                : ` · ${r.cellules} cellule${r.cellules > 1 ? "s" : ""} écrite${r.cellules > 1 ? "s" : ""}`;
+        }
         return r;
     } catch (e) {
         echec = true;
@@ -4378,7 +4386,8 @@ async function operationExcel<T>(libelle: string, lancer: () => Promise<T>): Pro
         const i = operationsEnCours.indexOf(op);
         if (i >= 0) operationsEnCours.splice(i, 1);
         const ms = Math.round(performance.now() - t0);
-        afficherTemoinExcel(`Excel ${echec ? "✗" : "✓"} ${op.libelle} — ${ms} ms · ${heureCourte()}`);
+        afficherTemoinExcel(
+            `Excel ${echec ? "✗" : "✓"} ${op.libelle}${detail} — ${ms} ms · ${heureCourte()}`);
     }
 }
 

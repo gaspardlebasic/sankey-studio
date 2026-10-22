@@ -709,10 +709,10 @@ test("barre d'état : l'opération Excel s'affiche avant d'être lancée, puis s
       await sleep(700);
       return true;
     `);
-    attendu(/^Excel ⟳ écriture du classeur \(\d+ nœuds, \d+ liens\)/.test(excel.temoinAuLancement || ""),
+    attendu(/^Excel ⟳ écriture du classeur \(\d+ nœuds, \d+ liens comparés\)/.test(excel.temoinAuLancement || ""),
       "pendant l'écriture, le témoin l'annonce — vu : « " + excel.temoinAuLancement + " »");
     const fin = await p(`return document.querySelector('#excel-op').textContent;`);
-    attendu(/^Excel ✓ écriture du classeur .* — \d+ ms · /.test(fin),
+    attendu(/^Excel ✓ écriture du classeur .* · 3 cellules écrites — \d+ ms · /.test(fin),
       "une fois finie, le témoin dit sa durée — vu : « " + fin + " »");
   } finally {
     await p(`T.amorce(false); return true;`);
@@ -3546,7 +3546,7 @@ function stubExcelIpc() {
       "(document.querySelector('#excel-op') || {}).textContent || ''");
     excelSimule.ecritures++;
     excelSimule.derniereEcriture = model;
-    const r = { ok: true, live: true, path: "Classeur d'essai.xlsx", sheetName: "Diagramme" };
+    const r = { ok: true, live: true, path: "Classeur d'essai.xlsx", sheetName: "Diagramme", cellules: 3 };
     if (excelSimule.remplissage) r.remplissage = excelSimule.remplissage;
     return r;
   });
