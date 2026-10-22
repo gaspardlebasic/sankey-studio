@@ -697,6 +697,28 @@ test("synchro automatique : une saisie en cours ne part pas à chaque pause", "c
   }
 });
 
+test("barre d'état : l'opération Excel s'affiche avant d'être lancée, puis sa durée", "complexe", async (p, excel) => {
+  // Sur Mac, Excel fige la fenêtre pendant ce qu'on lui envoie : pour savoir
+  // quelle opération est en cause, il faut la voir AVANT le gel.
+  excel.temoinAuLancement = null;
+  try {
+    await p(`
+      T.amorce(true);
+      await selectNode(one('Féverolle').id);
+      await clickPlus();
+      await sleep(700);
+      return true;
+    `);
+    attendu(/^Excel ⟳ écriture du classeur \(\d+ nœuds, \d+ liens\)/.test(excel.temoinAuLancement || ""),
+      "pendant l'écriture, le témoin l'annonce — vu : « " + excel.temoinAuLancement + " »");
+    const fin = await p(`return document.querySelector('#excel-op').textContent;`);
+    attendu(/^Excel ✓ écriture du classeur .* — \d+ ms · /.test(fin),
+      "une fois finie, le témoin dit sa durée — vu : « " + fin + " »");
+  } finally {
+    await p(`T.amorce(false); return true;`);
+  }
+});
+
 test("alerte : un remplissage d'Excel est montré, et pas seulement corrigé", "complexe", async (p, excel) => {
   // Le complément DÉFAIT la recopie d'Excel, mais il ne peut pas rendre les
   // valeurs qu'elle a écrasées. Se taire, c'est laisser l'utilisatrice croire
@@ -3502,7 +3524,9 @@ const excelSimule = {
   remplissage: null,
   /** Contenu des tableaux, quand un test veut que la lecture RÉUSSISSE. */
   lecture: null,
-  lectures: 0
+  lectures: 0,
+  /** Le témoin de la barre d'état, lu par le bouchon AU MOMENT de l'écriture. */
+  temoinAuLancement: null
 };
 
 /**
@@ -3517,7 +3541,9 @@ function stubExcelIpc() {
     if (!excelSimule.lecture) return { ok: false, error: "bouchon" };
     return { ok: true, data: excelSimule.lecture };
   });
-  ipcMain.handle("excel:write", (_e, model) => {
+  ipcMain.handle("excel:write", async (e, model) => {
+    excelSimule.temoinAuLancement = await e.sender.executeJavaScript(
+      "(document.querySelector('#excel-op') || {}).textContent || ''");
     excelSimule.ecritures++;
     excelSimule.derniereEcriture = model;
     const r = { ok: true, live: true, path: "Classeur d'essai.xlsx", sheetName: "Diagramme" };

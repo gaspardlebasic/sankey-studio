@@ -93,6 +93,9 @@ html, body {
     padding: 5px 12px; border-top: var(--hairline) solid var(--grey); background: var(--paper);
     font-size: 12px; font-weight: 600; color: var(--muted);
 }
+/* Témoin des opérations Excel : à droite, en sombre tant qu'une opération est en vol. */
+#excel-op { margin-left: auto; padding-left: 16px; white-space: nowrap; font-weight: 400; }
+#excel-op.en-cours { color: var(--dark); font-weight: 600; }
 
 /* --------------------------------- Panneau ------------------------------ */
 #sidebar {

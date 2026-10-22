@@ -535,6 +535,13 @@ export function createApp(root: HTMLElement): void {
     canvas = root.querySelector("#canvas") as unknown as SVGSVGElement;
     sidebar = root.querySelector("#sidebar") as HTMLElement;
     statusEl = root.querySelector("#status") as HTMLElement;
+    // Témoin des opérations Excel, à droite de la barre d'état (cf. desktop()).
+    const barre = root.querySelector("#statusbar");
+    if (barre) {
+        excelOpEl = document.createElement("span");
+        excelOpEl.id = "excel-op";
+        barre.appendChild(excelOpEl);
+    }
 
     buildToolbar();
     // Le modèle vient du classeur (amorcerDepuisClasseur), et de lui seul. Ni
@@ -4259,7 +4266,120 @@ async function saveExport(
 /* ------------------------------ Excel ------------------------------ */
 
 function desktop(): any {
-    return (window as any).desktop;
+    const brut = (window as any).desktop;
+    if (!brut) return brut;
+    if (brut !== pontBrut) {
+        pontBrut = brut;
+        pontInstrumente = instrumenterPont(brut);
+    }
+    return pontInstrumente;
+}
+
+/* ------------- témoin des opérations Excel dans la barre d'état -------------
+
+   Sur Mac, Excel fige la fenêtre du complément pendant qu'il traite ce qu'on
+   lui envoie. Pour savoir QUELLE opération est en cause au moment d'un gel, le
+   témoin l'annonce AVANT de la lancer — et laisse le navigateur peindre
+   l'annonce, sans quoi le gel la cacherait — puis affiche sa durée. */
+
+let excelOpEl: HTMLElement | null = null;
+let pontBrut: any = null;
+let pontInstrumente: any = null;
+/** Opérations Excel en vol, dans l'ordre de lancement. */
+const operationsEnCours: { id: number; libelle: string }[] = [];
+let operationSuivante = 1;
+
+/** Ce que dit le témoin pour chaque méthode du pont qui parle à Excel. */
+const LIBELLES_EXCEL: Record<string, (args: any[]) => string> = {
+    readExcel: () => "lecture du classeur",
+    writeExcel: a => {
+        const m = a[0] || {};
+        const n = (m.nodes || []).length;
+        const l = (m.links || []).length;
+        return `écriture du classeur (${n} nœuds, ${l} liens)`;
+    },
+    lireApparence: () => "lecture de l'apparence",
+    ecrireApparence: () => "enregistrement de l'apparence",
+    ajouterColonnesManquantes: () => "ajout des colonnes manquantes"
+};
+
+function heureCourte(): string {
+    return new Date().toLocaleTimeString("fr-FR");
+}
+
+function afficherTemoinExcel(fin?: string): void {
+    if (!excelOpEl) return;
+    const enCours = operationsEnCours.length;
+    excelOpEl.classList.toggle("en-cours", enCours > 0);
+    if (enCours) {
+        const premiere = operationsEnCours[0].libelle;
+        excelOpEl.textContent = "Excel ⟳ " + premiere + "…"
+            + (enCours > 1 ? ` (+${enCours - 1})` : "");
+    } else if (fin) {
+        excelOpEl.textContent = fin;
+    }
+}
+
+/**
+ * Laisse le navigateur peindre ce qu'on vient d'afficher. Le `setTimeout`
+ * après l'image garantit que la peinture a eu lieu ; le second délai couvre
+ * une page cachée, où `requestAnimationFrame` ne vient jamais.
+ */
+function laisserPeindre(): Promise<void> {
+    return new Promise(r => {
+        let fait = false;
+        const finir = () => { if (!fait) { fait = true; r(); } };
+        requestAnimationFrame(() => setTimeout(finir, 0));
+        setTimeout(finir, 100);
+    });
+}
+
+/**
+ * Le pont, dont les méthodes Excel s'annoncent dans la barre d'état. Une
+ * enveloppe ordinaire plutôt qu'un `Proxy` : le pont d'Electron est un objet
+ * gelé, et un `Proxy` n'a pas le droit d'y substituer une méthode.
+ */
+function instrumenterPont(brut: any): any {
+    const enveloppe: any = {};
+    const noms = new Set<string>();
+    for (const k in brut) noms.add(k);
+    Object.keys(brut).forEach(k => noms.add(k));
+    noms.forEach(nom => {
+        const libelle = LIBELLES_EXCEL[nom];
+        Object.defineProperty(enveloppe, nom, {
+            enumerable: true,
+            get() {
+                const v = brut[nom];
+                if (typeof v !== "function") return v;
+                if (!libelle) return v.bind(brut);
+                return (...args: any[]) => operationExcel(libelle(args), () => v.apply(brut, args));
+            }
+        });
+    });
+    return enveloppe;
+}
+
+/** Annonce l'opération, la laisse se peindre, la lance, puis dit sa durée. */
+async function operationExcel<T>(libelle: string, lancer: () => Promise<T>): Promise<T> {
+    const op = { id: operationSuivante++, libelle };
+    operationsEnCours.push(op);
+    afficherTemoinExcel();
+    await laisserPeindre();
+    const t0 = performance.now();
+    let echec = false;
+    try {
+        const r: any = await lancer();
+        if (r && r.ok === false) echec = true;
+        return r;
+    } catch (e) {
+        echec = true;
+        throw e;
+    } finally {
+        const i = operationsEnCours.indexOf(op);
+        if (i >= 0) operationsEnCours.splice(i, 1);
+        const ms = Math.round(performance.now() - t0);
+        afficherTemoinExcel(`Excel ${echec ? "✗" : "✓"} ${op.libelle} — ${ms} ms · ${heureCourte()}`);
+    }
 }
 
 /**
