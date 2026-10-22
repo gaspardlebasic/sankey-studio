@@ -542,6 +542,17 @@ export function createApp(root: HTMLElement): void {
         excelOpEl.id = "excel-op";
         barre.appendChild(excelOpEl);
     }
+    // Voile posé sur toute l'application pendant une écriture vers Excel.
+    voileEl = document.createElement("div");
+    voileEl.id = "voile-excel";
+    voileEl.setAttribute("role", "status");
+    voileEl.setAttribute("aria-live", "polite");
+    const roue = document.createElement("div");
+    roue.className = "voile-roue";
+    voileTexteEl = document.createElement("div");
+    voileTexteEl.className = "voile-texte";
+    voileEl.append(roue, voileTexteEl);
+    root.appendChild(voileEl);
 
     buildToolbar();
     // Le modèle vient du classeur (amorcerDepuisClasseur), et de lui seul. Ni
@@ -4283,10 +4294,20 @@ function desktop(): any {
    l'annonce, sans quoi le gel la cacherait — puis affiche sa durée. */
 
 let excelOpEl: HTMLElement | null = null;
+let voileEl: HTMLElement | null = null;
+let voileTexteEl: HTMLElement | null = null;
+
+/**
+ * Les opérations qui ÉCRIVENT dans le classeur : pendant qu'elles tournent,
+ * l'application est indisponible (Excel fige la fenêtre, et une modification
+ * faite entre-temps partirait dans l'écriture suivante). Un voile le montre.
+ * Les lectures, courtes et sans effet, n'en posent pas.
+ */
+const OPERATIONS_BLOQUANTES = new Set(["writeExcel", "ajouterColonnesManquantes"]);
 let pontBrut: any = null;
 let pontInstrumente: any = null;
 /** Opérations Excel en vol, dans l'ordre de lancement. */
-const operationsEnCours: { id: number; libelle: string }[] = [];
+const operationsEnCours: { id: number; libelle: string; bloquante: boolean }[] = [];
 let operationSuivante = 1;
 
 /** Ce que dit le témoin pour chaque méthode du pont qui parle à Excel. */
@@ -4313,6 +4334,13 @@ function afficherTemoinExcel(fin?: string): void {
     if (!excelOpEl) return;
     const enCours = operationsEnCours.length;
     excelOpEl.classList.toggle("en-cours", enCours > 0);
+    const bloquante = operationsEnCours.find(o => o.bloquante);
+    if (voileEl) {
+        voileEl.classList.toggle("visible", !!bloquante);
+        if (bloquante && voileTexteEl) {
+            voileTexteEl.textContent = "Excel : " + bloquante.libelle + "…";
+        }
+    }
     if (enCours) {
         const premiere = operationsEnCours[0].libelle;
         excelOpEl.textContent = "Excel ⟳ " + premiere + "…"
@@ -4354,7 +4382,8 @@ function instrumenterPont(brut: any): any {
                 const v = brut[nom];
                 if (typeof v !== "function") return v;
                 if (!libelle) return v.bind(brut);
-                return (...args: any[]) => operationExcel(libelle(args), () => v.apply(brut, args));
+                return (...args: any[]) => operationExcel(
+                    libelle(args), () => v.apply(brut, args), OPERATIONS_BLOQUANTES.has(nom));
             }
         });
     });
@@ -4362,8 +4391,10 @@ function instrumenterPont(brut: any): any {
 }
 
 /** Annonce l'opération, la laisse se peindre, la lance, puis dit sa durée. */
-async function operationExcel<T>(libelle: string, lancer: () => Promise<T>): Promise<T> {
-    const op = { id: operationSuivante++, libelle };
+async function operationExcel<T>(
+    libelle: string, lancer: () => Promise<T>, bloquante = false
+): Promise<T> {
+    const op = { id: operationSuivante++, libelle, bloquante };
     operationsEnCours.push(op);
     afficherTemoinExcel();
     await laisserPeindre();

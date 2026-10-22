@@ -711,6 +711,12 @@ test("barre d'état : l'opération Excel s'affiche avant d'être lancée, puis s
     `);
     attendu(/^Excel ⟳ écriture du classeur \(\d+ nœuds, \d+ liens comparés\)/.test(excel.temoinAuLancement || ""),
       "pendant l'écriture, le témoin l'annonce — vu : « " + excel.temoinAuLancement + " »");
+    const v = excel.voileAuLancement;
+    attendu(v && v.couvre, "pendant l'écriture, le voile couvre toute l'application");
+    egal(v.clics, "auto", "le voile intercepte les clics : l'application est indisponible");
+    attendu(/^Excel : écriture du classeur/.test(v.texte), "le voile dit ce qui s'écrit — vu : « " + v.texte + " »");
+    const apres = await p(`return document.getElementById('voile-excel').classList.contains('visible');`);
+    egal(apres, false, "l'écriture finie, le voile se retire");
     const fin = await p(`return document.querySelector('#excel-op').textContent;`);
     attendu(/^Excel ✓ écriture du classeur .* · 3 cellules écrites — \d+ ms · /.test(fin),
       "une fois finie, le témoin dit sa durée — vu : « " + fin + " »");
@@ -3526,7 +3532,9 @@ const excelSimule = {
   lecture: null,
   lectures: 0,
   /** Le témoin de la barre d'état, lu par le bouchon AU MOMENT de l'écriture. */
-  temoinAuLancement: null
+  temoinAuLancement: null,
+  /** Le voile « écriture en cours », vu par le bouchon au moment de l'écriture. */
+  voileAuLancement: null
 };
 
 /**
@@ -3544,6 +3552,13 @@ function stubExcelIpc() {
   ipcMain.handle("excel:write", async (e, model) => {
     excelSimule.temoinAuLancement = await e.sender.executeJavaScript(
       "(document.querySelector('#excel-op') || {}).textContent || ''");
+    excelSimule.voileAuLancement = await e.sender.executeJavaScript(`(() => {
+      const v = document.getElementById('voile-excel');
+      if (!v || !v.classList.contains('visible')) return null;
+      const r = v.getBoundingClientRect();
+      return { couvre: r.width >= innerWidth && r.height >= innerHeight,
+               clics: getComputedStyle(v).pointerEvents, texte: v.textContent };
+    })()`);
     excelSimule.ecritures++;
     excelSimule.derniereEcriture = model;
     const r = { ok: true, live: true, path: "Classeur d'essai.xlsx", sheetName: "Diagramme", cellules: 3 };

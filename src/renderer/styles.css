@@ -97,6 +97,37 @@ html, body {
 #excel-op { margin-left: auto; padding-left: 16px; white-space: nowrap; font-weight: 400; }
 #excel-op.en-cours { color: var(--dark); font-weight: 600; }
 
+/* Voile pendant une écriture vers Excel : blanc translucide sur toute
+   l'application, qui intercepte les clics — elle est indisponible le temps que
+   le classeur digère l'envoi. La roue tourne en `transform` : le compositeur
+   l'anime même quand la page est occupée. */
+#voile-excel {
+    position: fixed; inset: 0; z-index: 1000;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    background: rgba(255, 255, 255, 0.72);
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity 0.12s var(--ease), visibility 0s linear 0.12s;
+    cursor: progress;
+}
+#voile-excel.visible {
+    opacity: 1; visibility: visible; pointer-events: auto;
+    transition: opacity 0.12s var(--ease), visibility 0s;
+}
+#voile-excel .voile-roue {
+    width: 28px; height: 28px; box-sizing: border-box;
+    border: 3px solid var(--grey); border-top-color: var(--dark); border-radius: 50%;
+    animation: voile-tourne 0.8s linear infinite;
+}
+#voile-excel .voile-texte {
+    font-size: 13px; font-weight: 600; color: var(--dark);
+    background: var(--bright); border: var(--hairline) solid var(--dark); padding: 6px 12px;
+    max-width: calc(100% - 32px); text-align: center;
+}
+@keyframes voile-tourne { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+    #voile-excel .voile-roue { animation-duration: 2.4s; }
+}
+
 /* --------------------------------- Panneau ------------------------------ */
 #sidebar {
     flex: 0 0 288px; background: var(--paper);
