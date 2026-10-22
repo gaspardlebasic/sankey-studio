@@ -4410,6 +4410,18 @@ let pontInstrumente: any = null;
 /** Opérations Excel en vol, dans l'ordre de lancement. */
 const operationsEnCours: { id: number; libelle: string; bloquante: boolean }[] = [];
 let operationSuivante = 1;
+/**
+ * Où en est l'écriture en vol, « 480 / 1 920 cellules » — poussé par le pont
+ * après chaque tranche envoyée à Excel (`envoyerLesLots`). Vide sinon.
+ */
+let progressionEcriture = "";
+
+function majProgressionEcriture(p: { faites: number; total: number }): void {
+    if (!p || !p.total) return;
+    const nombre = (n: number) => n.toLocaleString("fr-FR");
+    progressionEcriture = `${nombre(p.faites)} / ${nombre(p.total)} cellules`;
+    afficherTemoinExcel();
+}
 
 /** Ce que dit le témoin pour chaque méthode du pont qui parle à Excel. */
 const LIBELLES_EXCEL: Record<string, (args: any[]) => string> = {
@@ -4439,12 +4451,14 @@ function afficherTemoinExcel(fin?: string): void {
     if (voileEl) {
         voileEl.classList.toggle("visible", !!bloquante);
         if (bloquante && voileTexteEl) {
-            voileTexteEl.textContent = "Excel : " + bloquante.libelle + "…";
+            voileTexteEl.textContent = "Excel : " + bloquante.libelle + "…"
+                + (progressionEcriture ? " " + progressionEcriture : "");
         }
     }
     if (enCours) {
         const premiere = operationsEnCours[0].libelle;
         excelOpEl.textContent = "Excel ⟳ " + premiere + "…"
+            + (progressionEcriture ? " " + progressionEcriture : "")
             + (enCours > 1 ? ` (+${enCours - 1})` : "");
     } else if (fin) {
         excelOpEl.textContent = fin;
@@ -4517,6 +4531,7 @@ async function operationExcel<T>(
     } finally {
         const i = operationsEnCours.indexOf(op);
         if (i >= 0) operationsEnCours.splice(i, 1);
+        progressionEcriture = "";
         const ms = Math.round(performance.now() - t0);
         afficherTemoinExcel(
             `Excel ${echec ? "✗" : "✓"} ${op.libelle}${detail} — ${ms} ms · ${heureCourte()}`);
@@ -4560,6 +4575,7 @@ function wireExcelWatchers(): void {
     const d = desktop();
     if (!d || !caps().excel) return;
     if (typeof d.onExcelChanged === "function") d.onExcelChanged(() => onExcelFileChanged());
+    if (typeof d.onProgression === "function") d.onProgression(majProgressionEcriture);
 }
 
 function basename(p: string): string {

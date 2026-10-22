@@ -13,7 +13,7 @@
 
 import {
   lireDiagramme, ecrireDiagramme, ecouterTableaux, ajouterColonnesManquantes,
-  type DonneesExcel, type EvenementTableau, type ResultatAjoutColonnes
+  type DonneesExcel, type EvenementTableau, type ResultatAjoutColonnes, type Progression
 } from "./excel-office.js";
 import type { Modele } from "../shared/modele-excel.js";
 import { FiltreEcho, AntiRebond } from "./synchro.js";
@@ -29,6 +29,8 @@ const JEU_EVENEMENTS: [string, string] = ["ExcelApi", "1.7"];
 
 const filtre = new FiltreEcho();
 let rappelChangement: (() => void) | null = null;
+/** Qui veut savoir où en est une écriture : l'éditeur du volet, ou le courtier. */
+let rappelProgression: ((p: Progression) => void) | null = null;
 
 /**
  * Nom du classeur, pour l'afficher dans le panneau. `Workbook.name` exige
@@ -131,7 +133,12 @@ function construirePont(nomClasseur: string, evenements: boolean) {
       try {
         // L'écriture est encadrée par le filtre : les onChanged qu'elle
         // déclenche ne doivent pas nous revenir comme une modification externe.
-        const r = await filtre.pendantEcriture(() => ecrireDiagramme(model, feuille, options));
+        // La progression ne traverse pas le tunnel avec les options (une
+        // fonction ne se sérialise pas) : elle part d'ici, vers qui l'écoute.
+        const avecProgression = Object.assign({}, options, {
+          progression: (p: Progression) => { if (rappelProgression) rappelProgression(p); }
+        });
+        const r = await filtre.pendantEcriture(() => ecrireDiagramme(model, feuille, avecProgression));
         return Object.assign({ live: true, path: nomClasseur }, r);
       } catch (e) {
         return { ok: false, live: true, error: (e as Error).message };
@@ -140,6 +147,9 @@ function construirePont(nomClasseur: string, evenements: boolean) {
 
     /** Modifications faites DANS Excel. */
     onExcelChanged(cb: () => void) { rappelChangement = cb; },
+
+    /** Où en est l'écriture en cours, tranche par tranche (cf. envoyerLesLots). */
+    onProgression(cb: (p: Progression) => void) { rappelProgression = cb; },
 
     lireApparence,
     ecrireApparence,

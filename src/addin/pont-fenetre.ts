@@ -22,6 +22,8 @@ import type { Modele } from "../shared/modele-excel.js";
 
 /** Le rappel du renderer pour « le classeur a changé ». */
 let rappelChangement: (() => void) | null = null;
+/** Le rappel du renderer pour « l'écriture avance ». */
+let rappelProgression: ((p: { faites: number; total: number }) => void) | null = null;
 
 /**
  * Passe un appel au volet et, s'il échoue, rend `secours` — la forme d'échec
@@ -55,6 +57,9 @@ function construirePontFenetre(mandataire: Mandataire, accueil: Accueil) {
     /** Le volet nous pousse l'évènement ; ici on ne fait que le retenir. */
     onExcelChanged(cb: () => void) { rappelChangement = cb; },
 
+    /** Le volet pousse l'avancée d'une écriture, tranche par tranche. */
+    onProgression(cb: (p: { faites: number; total: number }) => void) { rappelProgression = cb; },
+
     async lireApparence(): Promise<string | null> {
       try { return await mandataire.appeler("lireApparence") as string | null; }
       catch { return null; }                    // pas d'apparence ≠ échec fatal
@@ -76,8 +81,11 @@ function construirePontFenetre(mandataire: Mandataire, accueil: Accueil) {
 export async function installerPontFenetre(mandataire: Mandataire): Promise<Accueil> {
   const accueil = await mandataire.bonjour();
   (window as any).desktop = construirePontFenetre(mandataire, accueil);
-  mandataire.surPousse(nom => {
+  mandataire.surPousse((nom, donnee) => {
     if (nom === "excel" && rappelChangement) rappelChangement();
+    if (nom === "progression" && rappelProgression && donnee) {
+      rappelProgression(donnee as { faites: number; total: number });
+    }
   });
   return accueil;
 }

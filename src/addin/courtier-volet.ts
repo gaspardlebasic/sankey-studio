@@ -73,6 +73,10 @@ export class CourtierVolet {
     reglages.pont.onExcelChanged(() => {
       if (this.courtier) this.courtier.pousser("excel");
     });
+    // Une grosse écriture se raconte à la fenêtre, tranche par tranche.
+    reglages.pont.onProgression(p => {
+      if (this.courtier) this.courtier.pousser("progression", p);
+    });
   }
 
   get ouverte(): boolean { return this.fenetre !== null; }

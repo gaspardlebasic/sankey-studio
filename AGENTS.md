@@ -1107,6 +1107,19 @@ volet ↔ fenêtre » plus bas.
   de 1,2 s après notre écriture. Sans lui, notre propre écriture nous revient et la synchro boucle.
 - **Piège de la boucle montante** : une écriture réussie appelle `persist()`, qui reprogramme
   l'envoi. `planifierEnvoiExcel()` ne part donc que si `dirtySinceSync` — ne pas retirer ce test.
+- **Une écriture part par lots, et se raconte.** `poser()` n'affecte plus rien : il met
+  l'affectation en file, dans le **lot** de sa colonne (`lotSuivant()`). `envoyerLesLots()`
+  synchronise ensuite par tranches de `CELLULES_PAR_ENVOI` (250) — **jamais au milieu d'un lot**,
+  car `poserLesFormules` ne vaut que si formules et nombres partent ensemble — et appelle
+  `options.progression({ faites, total })` après chaque tranche. Le pont du volet relaie ce
+  rappel (`onProgression`), le courtier le pousse à la fenêtre (`pousse` avec un `d`
+  facultatif, même version du protocole), et le témoin comme le voile affichent
+  « 480 / 1 920 cellules ». Une plage d'écriture se crée **dans** la fermeture (`poser(() =>
+  …)`) : une borne capturée doit être une constante, pas le `debut` de la boucle.
+- **Colonne entière ou cellules : décidé colonne par colonne, sur la forme des différences**,
+  pas sur le moment (ouverture ou modification). Au-delà de `BLOCS_MAX` (6) blocs de cellules
+  différentes, `ecrireLesDifferences` pose la colonne d'une seule affectation. Seuil non mesuré
+  dans Excel : à reprendre avec la sonde.
 - `pushEnCours` est le garde-fou de **réentrance** (deux écritures concurrentes), pas une
   optimisation du coût : le retirer ferait se marcher dessus deux écritures d'une même salve.
 - **Le volet affiche la DATE DE CONSTRUCTION** du bundle qu'il exécute (`src/addin/date-build.ts`,

@@ -234,6 +234,17 @@ await test("un changement du classeur est poussé vers la fenêtre", async () =>
   egal(recus, ["excel"], "la poussée arrive");
 });
 
+await test("l'avancée d'une écriture est poussée avec ce qu'elle porte", async () => {
+  const c = relier(fauxPont());
+  await c.mandataire.bonjour();
+  const recus = [];
+  c.mandataire.surPousse((nom, d) => recus.push([nom, d]));
+  c.courtier.pousser("progression", { faites: 250, total: 1920 });
+  c.courtier.pousser("excel");
+  egal(recus, [["progression", { faites: 250, total: 1920 }], ["excel", undefined]],
+       "la donnée traverse, et une poussée sans donnée reste sans donnée");
+});
+
 await test("un volet d'une autre version rompt le tunnel avec un message clair", async () => {
   const c = relier(fauxPont());
   await c.mandataire.bonjour();

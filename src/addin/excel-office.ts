@@ -62,6 +62,8 @@ export interface DonneesExcel {
 export interface OptionsEcriture {
   /** Demander à Excel d'enregistrer après l'écriture. Réservé à un « App → Excel » explicite. */
   save?: boolean;
+  /** Appelé après chaque tranche envoyée à Excel (cf. `envoyerLesLots`). */
+  progression?: (p: Progression) => void;
 }
 
 export interface ColonnesManquantes {
@@ -722,6 +724,7 @@ function reporterEtrangeres(
   if (!colonnes.length) return;
   const corps = t.table.getDataBodyRange();
   for (const c of colonnes) {
+    lotSuivant();
     const donnees: Contenu[][] = [];
     for (let r = 0; r < hauteur; r++) {
       const src = sources[r];
@@ -735,7 +738,7 @@ function reporterEtrangeres(
     if (dejaEnPlace(actuel, c, donnees)) continue;
     if (donnees.some(estUneFormule)) poserLesFormules(corps, c, donnees, hauteur);
     else if (actuel && !porteUneFormule(actuel, c)) ecrireLesDifferences(corps, c, donnees, actuel);
-    else poser(colonneDuCorps(corps, c, hauteur), "values", donnees);
+    else poser(() => colonneDuCorps(corps, c, hauteur), "values", donnees);
   }
 }
 
@@ -779,7 +782,9 @@ export interface ResultatEcriture {
  *   sync 1-2  repérage des tableaux (trouverTableaux)
  *   sync 3    relecture des formules existantes + hauteur actuelle des tableaux
  *   sync 4    ajustement du nombre de lignes (ajouts / suppressions)
- *   sync 5    écriture des colonnes — toutes les affectations d'un coup
+ *   sync 5    écriture des colonnes — d'un coup, ou par tranches de
+ *             CELLULES_PAR_ENVOI quand elle est grosse (`options.progression`
+ *             dit alors où elle en est)
  *   sync 6    enregistrement, UNIQUEMENT si options.save
  *
  * L'enregistrement n'est demandé que sur un « App → Excel » explicite : sinon
@@ -790,6 +795,7 @@ export async function ecrireDiagramme(
 ): Promise<ResultatEcriture> {
   const t0 = Date.now();
   cellulesEcrites = 0;
+  lots = [];
   return Excel.run(async context => {
     const t = await trouverTableaux(context, nomFeuille);
     if (!t.noeuds || !t.liens) {
@@ -867,7 +873,7 @@ export async function ecrireDiagramme(
                        actuelNoeuds);
     reporterEtrangeres(t.liens, etrLiens, srcLiens, Math.max(MIN_LIGNES, linkRows.length),
                        actuelLiens, t.liens.index.get(LINK_COL_BIO));
-    await context.sync();                                          // sync 5
+    await envoyerLesLots(context, options && options.progression); // sync 5 (par tranches)
 
     // Ce que nous avons écrit et ce que le classeur porte ensuite sont deux
     // choses différentes : Excel a pu faire de « Valeur du flux » une colonne
@@ -986,8 +992,8 @@ async function verifierColonneValeur(
     const c = notre(r);
     valeurs.push([c ? valeurDe(c) : ""]);
   }
-  poser(colonneDuCorps(liens.table.getDataBodyRange(), iVal, hauteur), "values", valeurs);
-  await context.sync();                                          // sync 5 ter
+  poser(() => colonneDuCorps(liens.table.getDataBodyRange(), iVal, hauteur), "values", valeurs);
+  await envoyerLesLots(context);                                 // sync 5 ter
 
   let occupes = 0;
   for (let r = 0; r < linkRows.length; r++) if (lue(r) === recopiee) occupes++;
@@ -1127,11 +1133,76 @@ function appliquerPlan(t: TableauTrouve, plan: PlanLignes): void {
  */
 let cellulesEcrites = 0;
 
-/** Toute affectation de l'écriture passe ici : elle se compte. */
-function poser(plage: Excel.Range, quoi: "values" | "formulas", donnees: Contenu[][]): void {
-  cellulesEcrites += donnees.length;
-  if (quoi === "values") plage.values = donnees;
-  else plage.formulas = donnees;
+/** Une affectation en attente d'envoi, et les cellules qu'elle porte. */
+interface Affectation { cellules: number; faire: () => void }
+
+/**
+ * Les affectations de l'écriture en cours, par LOTS. Un lot est ce qui doit
+ * partir dans le même envoi : une colonne, ses formules et les nombres qui les
+ * recouvrent (`poserLesFormules` ne vaut que si tout part avant le `sync`).
+ * Entre deux lots, `envoyerLesLots` peut synchroniser — c'est ce qui permet de
+ * dire où en est une grosse écriture.
+ */
+let lots: Affectation[][] = [];
+
+/** Ouvre le lot de la colonne suivante. */
+function lotSuivant(): void {
+  lots.push([]);
+}
+
+/** Toute affectation de l'écriture passe ici : elle se compte, et attend son envoi. */
+function poser(plage: () => Excel.Range, quoi: "values" | "formulas", donnees: Contenu[][]): void {
+  if (!lots.length) lotSuivant();
+  lots[lots.length - 1].push({
+    cellules: donnees.length,
+    faire: () => {
+      const p = plage();
+      if (quoi === "values") p.values = donnees;
+      else p.formulas = donnees;
+    }
+  });
+}
+
+/** Où en est l'écriture : cellules parties vers Excel, sur le total à envoyer. */
+export interface Progression { faites: number; total: number }
+
+/**
+ * Cellules par envoi. En deçà, tout part d'un seul `sync`, comme avant ; au-delà,
+ * un `sync` de plus par tranche — quelques millisecondes chacun, contre la
+ * possibilité de dire « 480 / 1 920 » pendant qu'Excel digère.
+ */
+const CELLULES_PAR_ENVOI = 250;
+
+/**
+ * Envoie les lots en attente, en synchronisant dès qu'une tranche est pleine —
+ * jamais au milieu d'un lot — puis une dernière fois à la fin.
+ */
+async function envoyerLesLots(
+  context: Excel.RequestContext, progression?: (p: Progression) => void
+): Promise<void> {
+  const enAttente = lots;
+  lots = [];
+  let total = 0;
+  for (const lot of enAttente) for (const a of lot) total += a.cellules;
+  cellulesEcrites += total;
+  const dire = (faites: number): void => {
+    if (progression && total) {
+      try { progression({ faites, total }); } catch { /* l'affichage ne casse pas l'écriture */ }
+    }
+  };
+  dire(0);
+  let faites = 0, tranche = 0;
+  for (const lot of enAttente) {
+    for (const a of lot) { a.faire(); tranche += a.cellules; }
+    if (tranche >= CELLULES_PAR_ENVOI) {
+      await context.sync();
+      faites += tranche;
+      tranche = 0;
+      dire(faites);
+    }
+  }
+  await context.sync();
+  if (tranche) dire(faites + tranche);
 }
 
 /** La colonne `c`, telle que lue, porte-t-elle au moins une formule ? */
@@ -1140,13 +1211,26 @@ function porteUneFormule(actuel: Contenu[][], c: number): boolean {
 }
 
 /**
+ * Au-delà de ce nombre de blocs dans une colonne, elle part ENTIÈRE.
+ *
+ * Chaque bloc est une affectation : une plage qu'Excel traite, un `onChanged`
+ * qu'il émet. Quelques blocs coûtent moins que la colonne ; des dizaines de
+ * blocs d'une ou deux cellules — un retri, une première écriture sur un
+ * classeur rangé à la main — coûtent plus qu'une seule affectation de la
+ * colonne. Le seuil n'est pas mesuré dans Excel : à reprendre avec la sonde.
+ */
+const BLOCS_MAX = 6;
+
+/**
  * N'écrit d'une colonne que les cellules qui diffèrent de `actuel`, par blocs
- * contigus — tous dans l'envoi en cours : le nombre d'allers-retours ne bouge
- * pas, seule la quantité de travail confiée à Excel diminue.
+ * contigus — ou la colonne entière quand ces blocs sont trop nombreux
+ * (`BLOCS_MAX`). Le nombre d'allers-retours ne bouge pas : seule la quantité
+ * de travail confiée à Excel diminue.
  */
 function ecrireLesDifferences(
   corps: Excel.Range, c: number, donnees: Contenu[][], actuel: Contenu[][]
 ): void {
+  const blocs: [number, number][] = [];
   let debut = -1;
   for (let r = 0; r <= donnees.length; r++) {
     const differe = r < donnees.length && actuel[r][c] !== donnees[r][0];
@@ -1155,9 +1239,16 @@ function ecrireLesDifferences(
       continue;
     }
     if (debut >= 0) {
-      poser(blocDuCorps(corps, c, debut, r - debut), "values", donnees.slice(debut, r));
+      blocs.push([debut, r - debut]);
       debut = -1;
     }
+  }
+  if (blocs.length > BLOCS_MAX) {
+    poser(() => colonneDuCorps(corps, c, donnees.length), "values", donnees);
+    return;
+  }
+  for (const [d0, n] of blocs) {
+    poser(() => blocDuCorps(corps, c, d0, n), "values", donnees.slice(d0, d0 + n));
   }
 }
 
@@ -1216,6 +1307,7 @@ function ecrireColonnes(
   nos.forEach((nom, iNotre) => {
     const iClasseur = t.index.get(nom);
     if (iClasseur === undefined) return;          // colonne absente du classeur
+    lotSuivant();
     const formule = nom === colonneFormule;
     const donnees: (string | number)[][] = [];   // ce qu'on veut : formules comprises
     const valeurs: (string | number)[][] = [];   // les mêmes lignes, en nombres
@@ -1239,7 +1331,7 @@ function ecrireColonnes(
       // efface au passage les formules présentes, ce qui défait une colonne
       // calculée. C'est pour cela que la colonne part ENTIÈRE dès qu'elle en
       // porte une : une écriture partielle, Excel la recouvrirait.
-      poser(colonneDuCorps(corps, iClasseur, hauteur), "values", donnees);
+      poser(() => colonneDuCorps(corps, iClasseur, hauteur), "values", donnees);
     }
   });
   return ecrites;
@@ -1271,9 +1363,9 @@ function poserLesFormules(
   corps: Excel.Range, c: number, donnees: Contenu[][], hauteur: number,
   valeurs?: Contenu[][]
 ): void {
-  if (valeurs) poser(colonneDuCorps(corps, c, hauteur), "values", valeurs);
+  if (valeurs) poser(() => colonneDuCorps(corps, c, hauteur), "values", valeurs);
   for (let r = 0; r < donnees.length; r++) {
-    if (estUneFormule(donnees[r])) poser(blocDuCorps(corps, c, r, 1), "formulas", [donnees[r]]);
+    if (estUneFormule(donnees[r])) poser(() => blocDuCorps(corps, c, r, 1), "formulas", [donnees[r]]);
   }
   reposerLesNombres(corps, c, donnees);
 }
@@ -1309,7 +1401,8 @@ function reposerLesNombres(
       continue;
     }
     if (debut >= 0) {
-      poser(blocDuCorps(corps, c, debut, r - debut), "values", donnees.slice(debut, r));
+      const d0 = debut, n = r - debut;
+      poser(() => blocDuCorps(corps, c, d0, n), "values", donnees.slice(d0, d0 + n));
       debut = -1;
     }
   }

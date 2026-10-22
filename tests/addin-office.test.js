@@ -566,6 +566,82 @@ await test("modification : réordonner deux nœuds ne réécrit que leurs lignes
   attendu(n > 0 && n <= 2 * 11 + 6 * 7, "au plus les lignes des deux nœuds et de leurs liens — écrit : " + n);
 });
 
+/** Un diagramme plus gros que le maillé : 6 départs × 8 arrivées, 48 liens. */
+function modeleLarge() {
+  const n = (id, column, order) => ({
+    id, name: "Nœud " + id, column, title: "", order, lane: 1, kind: "produit",
+    filiere: "Plastique", color: null
+  });
+  const nodes = [], links = [];
+  for (let i = 0; i < 6; i++) nodes.push(n("a" + i, 1, i));
+  for (let j = 0; j < 8; j++) nodes.push(n("b" + j, 2, j));
+  for (let i = 0; i < 6; i++) {
+    for (let j = 0; j < 8; j++) links.push({ source: "a" + i, target: "b" + j, value: 10 * i + j + 1, unit: "t" });
+  }
+  return { nodes, links };
+}
+
+await test("modification : des différences éparpillées font partir la colonne entière", async () => {
+  // Une cellule sur deux : 24 blocs d'une cellule, soit 24 affectations pour
+  // Excel. Une seule affectation de la colonne lui coûte moins.
+  const m0 = modeleLarge();
+  const c = classeurDepuis(m0);
+  const m = JSON.parse(JSON.stringify(m0));
+  const { linkRows } = buildModelRows(m, null);
+  const iOrg = LINK_COLS.indexOf("Origine"), iDest = LINK_COLS.indexOf("Destination");
+  const cle = r => r[iOrg].v + "|" + r[iDest].v;
+  const unSurDeux = new Set(linkRows.filter((_, i) => i % 2 === 0).map(cle));
+  m.links.forEach(l => {
+    if (unSurDeux.has("Nœud " + l.source + "|Nœud " + l.target)) l.unit = "kt";
+  });
+  const cellules = compterCellules(c);
+  const r = await office.ecrireDiagramme(m);
+  attendu(r.ok, "écriture réussie : " + (r.error || ""));
+  egal(cellules(), { "Liens/Unité": 48 }, "la colonne « Unité », d'une seule affectation");
+  const { linkRows: attendus } = buildModelRows(m, null);
+  verifierTableau(c, "Liens", LINK_COLS, attendus, LINK_COLS_ECRITES_TEST, "liens");
+});
+
+await test("modification : quelques différences ne font partir que leurs cellules", async () => {
+  const m0 = modeleLarge();
+  const c = classeurDepuis(m0);
+  const m = JSON.parse(JSON.stringify(m0));
+  m.links[0].unit = "kt";
+  m.links[20].unit = "kt";
+  const cellules = compterCellules(c);
+  await office.ecrireDiagramme(m);
+  egal(cellules(), { "Liens/Unité": 2 }, "deux blocs : deux cellules");
+});
+
+await test("écriture : une grosse écriture dit où elle en est, tranche par tranche", async () => {
+  // Un classeur vide : tout part. Plusieurs centaines de cellules, donc
+  // plusieurs envois — et un rappel après chacun.
+  const c = monterClasseur([
+    { nom: "Noeuds", entetes: NODE_COLS.slice(), c0: 0, lignes: [] },
+    { nom: "Liens", entetes: LINK_COLS.slice(), c0: LIENS_C0, lignes: [] }
+  ]);
+  const etapes = [];
+  const r = await office.ecrireDiagramme(modeleLarge(), undefined, { progression: p => etapes.push(p) });
+  attendu(r.ok, "écriture réussie : " + (r.error || ""));
+  attendu(etapes.length >= 3, "au moins le départ, une tranche et la fin — reçu : " + JSON.stringify(etapes));
+  egal(etapes[0], { faites: 0, total: r.cellules }, "le total est connu avant le premier envoi");
+  egal(etapes[etapes.length - 1], { faites: r.cellules, total: r.cellules }, "et atteint à la fin");
+  for (let i = 1; i < etapes.length; i++) {
+    attendu(etapes[i].faites > etapes[i - 1].faites, "la progression avance à chaque tranche");
+  }
+  const { linkRows } = buildModelRows(modeleLarge(), null);
+  verifierTableau(c, "Liens", LINK_COLS, linkRows, LINK_COLS_ECRITES_TEST, "liens");
+});
+
+await test("écriture : rien à écrire, rien à annoncer", async () => {
+  const m = modeleLarge();
+  classeurDepuis(m);
+  const etapes = [];
+  const r = await office.ecrireDiagramme(m, undefined, { progression: p => etapes.push(p) });
+  egal(r.cellules, 0, "aucune cellule");
+  egal(etapes, [], "aucun rappel");
+});
+
 await test("écriture : la formule « Valeur du flux » est préservée", async () => {
   const c = classeurType();
   const r = await office.ecrireDiagramme(MODELE);

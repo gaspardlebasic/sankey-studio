@@ -57,7 +57,9 @@ type Corps =
     | { t: "accueil"; accueil: Accueil }
     | { t: "appel"; id: number; m: string; a: unknown[] }
     | { t: "reponse"; id: number; r?: unknown; e?: string }
-    | { t: "pousse"; n: string }
+    /** `d` : ce que porte l'évènement (la progression d'une écriture). Facultatif :
+     *  une fenêtre plus ancienne l'ignore, d'où la même version du protocole. */
+    | { t: "pousse"; n: string; d?: unknown }
     /** `sienne` : la version du protocole de l'expéditeur du refus. */
     | { t: "desaccord"; sienne: number };
 
@@ -96,7 +98,7 @@ export class Mandataire {
     private accueilli: ((a: Accueil) => void) | null = null;
     private jetonBonjour: unknown = null;
     private bonjourFini = false;
-    private surPousseCb: ((nom: string) => void) | null = null;
+    private surPousseCb: ((nom: string, donnee?: unknown) => void) | null = null;
     private surDesaccordCb: ((versionDuVolet: number) => void) | null = null;
     private rompu: string | null = null;
 
@@ -157,7 +159,7 @@ export class Mandataire {
     }
 
     /** Le classeur a changé sous nos pieds (`Table.onChanged` côté volet). */
-    surPousse(cb: (nom: string) => void): void { this.surPousseCb = cb; }
+    surPousse(cb: (nom: string, donnee?: unknown) => void): void { this.surPousseCb = cb; }
 
     /** Les deux pages ne sont pas de la même version : la fenêtre doit le dire. */
     surDesaccord(cb: (versionDuVolet: number) => void): void { this.surDesaccordCb = cb; }
@@ -169,7 +171,7 @@ export class Mandataire {
         if (m.t === "desaccord") { this.rompre(m.sienne); return; }
         if (m.v !== VERSION_PROTOCOLE) { this.rompre(m.v); return; }
         if (m.t === "accueil") { if (this.accueilli) this.accueilli(m.accueil); return; }
-        if (m.t === "pousse") { if (this.surPousseCb) this.surPousseCb(m.n); return; }
+        if (m.t === "pousse") { if (this.surPousseCb) this.surPousseCb(m.n, m.d); return; }
         if (m.t === "reponse") {
             const attente = this.attentes.get(m.id);
             if (!attente) return;                     // déjà expirée : rien à faire
@@ -222,8 +224,10 @@ export class Courtier {
         if (m.t === "appel") this.executer(m.id, m.m, m.a);
     }
 
-    /** Prévient la fenêtre d'un changement venu d'Excel. */
-    pousser(nom: string): void { this.envoyer(ecrire({ t: "pousse", n: nom })); }
+    /** Prévient la fenêtre d'un changement venu d'Excel, ou d'une écriture qui avance. */
+    pousser(nom: string, donnee?: unknown): void {
+        this.envoyer(ecrire(donnee === undefined ? { t: "pousse", n: nom } : { t: "pousse", n: nom, d: donnee }));
+    }
 
     private async executer(id: number, methode: string, args: unknown[]): Promise<void> {
         const fn = this.cible[methode];
