@@ -4159,6 +4159,8 @@ async function exportImage(format: "png" | "svg", taille: TailleExport): Promise
     const tmp = document.createElementNS(SVGNS, "svg") as SVGSVGElement;
     tmp.setAttribute("xmlns", SVGNS);
     dessinerApercu(tmp, w, h, "none"); // export sans fond : PNG et SVG transparents
+    // La géométrie des rubans ne sert qu'à l'animation à l'écran.
+    tmp.querySelectorAll("[data-ruban]").forEach(el => el.removeAttribute("data-ruban"));
     const svgString =
         '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n' +
         new XMLSerializer().serializeToString(tmp);

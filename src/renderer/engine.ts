@@ -1262,6 +1262,12 @@ function drawSankey(
         .enter()
         .append("path")
         .attr("d", (d: ELink) => ribbonPath(d, L.curveType, curvature, fleche))
+        // La géométrie du ruban, pour que l'animation du dépliage le déforme
+        // d'un état à l'autre (src/renderer/depliage.ts). Retirée à l'export.
+        .attr("data-ruban", (d: ELink) => {
+            const hw = Math.max(0, d.width ?? 0) / 2;
+            return parametresRuban(d, -hw, hw, L.curveType, curvature, fleche);
+        })
         // Repères stables pour les tests et le débogage (cf. data-id des nœuds).
         .attr("data-source", (d: ELink) => (d.source as ENode).id)
         .attr("data-target", (d: ELink) => (d.target as ENode).id)
@@ -1287,6 +1293,10 @@ function drawSankey(
             .append("path")
             .attr("class", "lien-bio")
             .attr("d", (d: ELink) => bandeauBio(d, L.curveType, curvature, fleche))
+            .attr("data-ruban", (d: ELink) => {
+                const hw = Math.max(0, d.width ?? 0) / 2;
+                return parametresRuban(d, -hw, -hw + 2 * hw * partBio(d), L.curveType, curvature, fleche);
+            })
             .attr("data-source", (d: ELink) => (d.source as ENode).id)
             .attr("data-target", (d: ELink) => (d.target as ENode).id)
             // La part réellement peinte, pour les tests et le débogage.
@@ -1731,8 +1741,42 @@ function bandePath(
     link: ELink, de: number, a: number, curveType: string, curvature: number,
     fleche: FlecheLiens | null = null
 ): string {
-    const pts = axeRuban(link);
     const hw = Math.max(0, link.width ?? 0) / 2;
+    return cheminBande({ p: axeRuban(link), hw, de, a, c: curveType, k: curvature, f: fleche });
+}
+
+/**
+ * Tout ce qui détermine le tracé d'une bande : son axe, sa demi-épaisseur, la
+ * tranche peinte [de, a] et le style des courbes. Sérialisé sur chaque ruban
+ * (`data-ruban`), il permet de recalculer le ruban à n'importe quel état
+ * intermédiaire — c'est ce qu'interpole l'animation du dépliage.
+ */
+export interface GeometrieRuban {
+    p: [number, number][];
+    hw: number;
+    de: number;
+    a: number;
+    c: string;
+    k: number;
+    f: FlecheLiens | null;
+}
+
+function parametresRuban(
+    link: ELink, de: number, a: number, curveType: string, curvature: number,
+    fleche: FlecheLiens | null
+): string {
+    const g: GeometrieRuban = {
+        p: axeRuban(link), hw: Math.max(0, link.width ?? 0) / 2, de, a,
+        c: curveType, k: curvature, f: fleche
+    };
+    return JSON.stringify(g);
+}
+
+/** Le tracé d'une bande, depuis sa géométrie (cf. `GeometrieRuban`). */
+export function cheminBande(g: GeometrieRuban): string {
+    const pts = g.p.map(q => [q[0], q[1]] as [number, number]);
+    const { hw, de, a, f: fleche } = g;
+    const curveType = g.c, curvature = g.k;
     if (!fleche || hw <= 0) {
         const haut = bordRuban(pts, de, curveType, curvature);
         const bas = bordRuban(pts.slice().reverse(), a, curveType, curvature);

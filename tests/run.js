@@ -1761,6 +1761,46 @@ const CLASSEUR_NIVEAUX = `
     const cliquer = el => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 `;
 
+test("agrégation : ⊕ déforme les rubans du parent en ceux des enfants, sans fondu", "complexe", async p => {
+  // Le dépliage n'est plus un fondu enchaîné entre deux dessins : chaque ruban
+  // d'un enfant part de SA TRANCHE du ruban qui allait au parent, et glisse
+  // vers sa place.
+  const r = await p(CLASSEUR_NIVEAUX + `
+    await versApercu();
+    const geo = el => JSON.parse(el.getAttribute('data-ruban'));
+    const vers = (s, t) => document.querySelector('#canvas path[data-source="' + s + '"][data-target="' + t + '"]');
+    const pere = geo(vers('E', 'L'));
+    // La bande du ruban du parent À SON ARRIVÉE : c'est là que les enfants se
+    // distinguent du parent (au départ, tous partent de la même boîte).
+    const fin = pere.p[pere.p.length - 1][1];
+    const bande = { haut: fin + pere.de, bas: fin + pere.a };
+    cliquer(document.querySelector('#canvas [data-deplier="L"] circle'));
+    // Aussitôt après le clic, avant toute image : l'état de départ.
+    // Le bord bas repart de l'arrivée : premier point après « L » (rubans courbes).
+    const hautDe = (s, t) => Number(vers(s, t).getAttribute('d').split(' L')[1].split(',')[1].split(' ')[0]);
+    const depart = ['P', 'F', 'nd:L'].filter(id => vers('E', id)).map(id => hautDe('E', id));
+    const copies = document.querySelectorAll('#canvas .ancien-dessin').length;
+    const dMilieu = vers('E', 'P').getAttribute('d');
+    await sleep(1800);
+    const dFin = vers('E', 'P').getAttribute('d');
+    // Le tracé final tombe sur la géométrie que le moteur a déclarée pour ce ruban.
+    const g = geo(vers('E', 'P'));
+    const yHaut = Number(dFin.match(/^M[^,]+,([^ ]+)/)[1]);
+    const yBas = Number(dFin.split(' L')[1].split(',')[1].split(' ')[0]);
+    const juste = Math.abs(yHaut - (g.p[0][1] + g.de)) < 0.01
+      && Math.abs(yBas - (g.p[g.p.length - 1][1] + g.a)) < 0.01;
+    return { bande, depart, copies, bouge: dMilieu !== dFin, juste };
+  `);
+  attendu(r.depart.length >= 2, "plusieurs enfants reçoivent un ruban");
+  r.depart.forEach(y => attendu(y >= r.bande.haut - 0.5 && y <= r.bande.bas + 0.5,
+    `chaque ruban d'enfant part de la bande du ruban du parent (${r.bande.haut}–${r.bande.bas}) — vu : ${y}`));
+  egal(new Set(r.depart.map(y => y.toFixed(1))).size, r.depart.length,
+    "chacun part de SA tranche, pas tous du même bord");
+  egal(r.copies, 0, "plus de copie de l'ancien dessin en fondu par-dessus");
+  attendu(r.bouge, "le ruban se déforme : son départ n'est pas son arrivée");
+  attendu(r.juste, "l'animation finit exactement sur le dessin définitif");
+});
+
 test("agrégation : le parent relu se résout et ramène ses enfants dans sa colonne", "complexe",
   async p => {
   const r = await p(CLASSEUR_NIVEAUX + `
