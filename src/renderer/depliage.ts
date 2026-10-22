@@ -370,25 +370,31 @@ function departScinde(
 }
 
 /**
- * D'où part le ruban d'un parent qu'on vient de REPLIER : de la bande
- * qu'occupaient ensemble les rubans de ses enfants — ils se resserrent en lui.
+ * D'où part le ruban d'un parent qu'on vient de REPLIER : de l'épaisseur
+ * CUMULÉE des rubans de ses enfants, centrée, à chaque bout, sur leur position
+ * moyenne (pondérée par l'épaisseur) — ils se resserrent en lui.
+ *
+ * Pas la bande qui les englobe : côté enfants, leurs rubans sont épars,
+ * séparés par l'écart entre les nœuds et par les flux venus d'ailleurs. Cette
+ * bande-là faisait naître un ruban énorme, qui se réduisait ensuite.
  */
 function departReuni(nouveau: GeometrieRuban, anciens: GeometrieRuban[]): GeometrieRuban {
-    const bande = (fin: boolean) => {
-        const hauts = anciens.map(g => bout(g, fin)[1] + g.de);
-        const bas = anciens.map(g => bout(g, fin)[1] + g.a);
-        return [Math.min(...hauts), Math.max(...bas)];
-    };
-    const [h0, b0] = bande(false), [h1, b1] = bande(true);
-    const ep = nouveau.a - nouveau.de;
-    const k = ep > 0 ? Math.max(b0 - h0, b1 - h1) / ep : 1;
+    const ep = (g: GeometrieRuban) => g.a - g.de;
+    const total = anciens.reduce((s, g) => s + ep(g), 0);
+    const centre = (fin: boolean) => total > 0
+        ? anciens.reduce((s, g) => s + (bout(g, fin)[1] + (g.de + g.a) / 2) * ep(g), 0) / total
+        : bout(anciens[0], fin)[1];
+    const k = ep(nouveau) > 0 ? total / ep(nouveau) : 1;
     const de = nouveau.de * k, a = nouveau.a * k, hw = nouveau.hw * k;
+    // L'axe passe là où le milieu de la bande [de, a] tombe sur le centre voulu.
+    const axe = (fin: boolean) => centre(fin) - (de + a) / 2;
+    const y0 = axe(false), y1 = axe(true);
     const n = nouveau.p.length;
     const x0 = bout(anciens[0], false)[0], x1 = bout(anciens[0], true)[0];
     const p = nouveau.p.map((q, i) => {
         const t = n > 1 ? i / (n - 1) : 0;
         const x = i === 0 ? x0 : i === n - 1 ? x1 : q[0];
-        return [x, (h0 - de) + ((h1 - de) - (h0 - de)) * t] as [number, number];
+        return [x, y0 + (y1 - y0) * t] as [number, number];
     });
     return { ...nouveau, p, hw, de, a };
 }

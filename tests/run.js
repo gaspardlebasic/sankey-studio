@@ -1839,6 +1839,30 @@ test("agrégation : ⊕ déforme les rubans du parent en ceux des enfants, sans 
   attendu(r.juste, "l'animation finit exactement sur le dessin définitif");
 });
 
+test("agrégation : ⊖ fait naître le ruban du parent à l'épaisseur de ceux des enfants", "complexe", async p => {
+  // Signalé : au repli, un ruban énorme apparaissait puis se réduisait. Côté
+  // enfants, leurs rubans sont épars — séparés par les autres flux et par
+  // l'écart entre nœuds — et la bande qui les englobe n'est pas une épaisseur.
+  const r = await p(CLASSEUR_NIVEAUX + `
+    await versApercu();
+    const geo = el => JSON.parse(el.getAttribute('data-ruban'));
+    const vers = (s, t) => document.querySelector('#canvas path[data-source="' + s + '"][data-target="' + t + '"]');
+    cliquer(document.querySelector('#canvas [data-deplier="L"] circle'));
+    await sleep(1800);
+    const enfants = ['P', 'F', 'nd:L'].map(id => vers('E', id)).filter(Boolean).map(geo);
+    const cumul = enfants.reduce((s, g) => s + (g.a - g.de), 0);
+    cliquer(document.querySelector('#canvas [data-replier="L"] circle'));
+    // Aussitôt après le clic : l'état de départ du ruban du parent.
+    const d = vers('E', 'L').getAttribute('d');
+    const yHautArrivee = Number(d.split(' L')[0].trim().split(' ').slice(-1)[0].split(',')[1]);
+    const yBasArrivee = Number(d.split(' L')[1].split(',')[1].split(' ')[0]);
+    return { cumul, epaisseurDepart: yBasArrivee - yHautArrivee, final: (g => g.a - g.de)(geo(vers('E', 'L'))) };
+  `);
+  attendu(Math.abs(r.epaisseurDepart - r.cumul) < 0.5,
+    "le ruban naît à l'épaisseur cumulée des rubans enfants (" + r.cumul.toFixed(1) + ") — vu : "
+    + r.epaisseurDepart.toFixed(1));
+});
+
 test("agrégation : le parent relu se résout et ramène ses enfants dans sa colonne", "complexe",
   async p => {
   const r = await p(CLASSEUR_NIVEAUX + `
