@@ -179,7 +179,7 @@ class FauxTableau {
         return this._n;
       },
       add: (index, valeurs) => {
-        this.ctx._file.push({ type: "addRows", table: this, valeurs: valeurs });
+        this.ctx._file.push({ type: "addRows", table: this, index: index, valeurs: valeurs });
       },
       _resoudre() { this._n = this._t.def.lignes; }
     };
@@ -348,11 +348,17 @@ class FauxContexte {
     if (op.type === "addRows") {
       const def = op.table.def;
       const n = op.valeurs.length;
+      // `rows.add(index)` insère AVANT la ligne `index` du corps ; sans index,
+      // à la fin. Comme Excel, un index au-delà du corps est refusé.
+      const at = op.index === undefined || op.index === null ? def.lignes : op.index;
+      if (at < 0 || at > def.lignes) {
+        throw new Error(`rows.add(${op.index}) sur un tableau de ${def.lignes} ligne(s)`);
+      }
       // Excel insère les lignes DANS le tableau : décalage limité à ses colonnes.
-      def.grille.insererLignes(def.r0 + 1 + def.lignes, n, def.c0, def.entetes.length);
+      def.grille.insererLignes(def.r0 + 1 + at, n, def.c0, def.entetes.length);
       op.valeurs.forEach((ligne, i) => {
         ligne.forEach((v, c) => {
-          def.grille.ecrire(def.r0 + 1 + def.lignes + i, def.c0 + c, { v: v, f: "" });
+          def.grille.ecrire(def.r0 + 1 + at + i, def.c0 + c, { v: v, f: "" });
         });
       });
       def.lignes += n;

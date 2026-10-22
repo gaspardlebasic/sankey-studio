@@ -491,6 +491,81 @@ await test("écriture : renommer un nœud n'écrit que les cellules de son nom",
   attendu(c.lignesDe("Noeuds").some(l => l[iNom] === "Lait cru bio"), "le nom est écrit");
 });
 
+/* ---- chaque type de modification n'écrit que ce qu'il change ----
+   Un diagramme maillé (3 × 3 liens) monté tel que le complément l'écrit. Une
+   ligne qui apparaît ou disparaît au MILIEU d'un tableau ne doit pas décaler —
+   donc réécrire — toutes celles du dessous : elle s'insère, ou s'efface, à sa
+   place. */
+
+function modeleMaille() {
+  const n = (id, column, order) => ({
+    id, name: "Nœud " + id, column, title: "", order, lane: 1, kind: "produit",
+    filiere: "Plastique", color: null
+  });
+  const nodes = [n("a1", 1, 0), n("a2", 1, 1), n("a3", 1, 2), n("b1", 2, 0), n("b2", 2, 1), n("b3", 2, 2)];
+  const links = [];
+  ["a1", "a2", "a3"].forEach((s, i) => ["b1", "b2", "b3"].forEach((t, j) => {
+    links.push({ source: s, target: t, value: 10 * i + j + 1, unit: "t" });
+  }));
+  return { nodes, links };
+}
+
+function classeurDepuis(modele) {
+  const { nodeRows, linkRows } = buildModelRows(modele, null);
+  const v = rows => rows.map(r => r.map(c => c.v));
+  return monterClasseur([
+    { nom: "Noeuds", entetes: NODE_COLS.slice(), c0: 0, lignes: v(nodeRows) },
+    { nom: "Liens", entetes: LINK_COLS.slice(), c0: LIENS_C0, lignes: v(linkRows).map(r => r.concat([0])) }
+  ]);
+}
+
+/** Écrit `modifier(modele)` sur un classeur à jour ; rend le nombre de cellules. */
+async function cellulesPour(modifier) {
+  const m0 = modeleMaille();
+  const c = classeurDepuis(m0);
+  const m = JSON.parse(JSON.stringify(m0));
+  modifier(m);
+  const r = await office.ecrireDiagramme(m);
+  attendu(r.ok, "écriture réussie : " + (r.error || ""));
+  const { nodeRows, linkRows } = buildModelRows(m, null);
+  verifierTableau(c, "Noeuds", NODE_COLS, nodeRows, NODE_COLS, "nœuds");
+  verifierTableau(c, "Liens", LINK_COLS, linkRows, LINK_COLS_ECRITES_TEST, "liens");
+  return r.cellules;
+}
+const LINK_COLS_ECRITES_TEST = LINK_COLS.filter(h => h !== "Part bio / durable");
+
+await test("modification : supprimer un lien du milieu n'écrit aucune cellule", async () => {
+  egal(await cellulesPour(m => m.links.splice(4, 1)), 0,
+       "la ligne s'efface à sa place : rien en dessous ne bouge");
+});
+
+await test("modification : ajouter un lien n'écrit que sa ligne", async () => {
+  const n = await cellulesPour(m => {
+    m.nodes.push({ id: "b4", name: "Nœud b4", column: 2, title: "", order: 3, lane: 1,
+                   kind: "produit", filiere: "Plastique", color: null });
+    m.links.push({ source: "a1", target: "b4", value: 5, unit: "t" });
+  });
+  // La ligne du nœud (11 cellules, dont 4 vides — intitulé, couleur, parent,
+  // ID parent — qu'une ligne neuve porte déjà) et celle du lien (7 + la part bio à 0).
+  egal(n, 7 + 8, "deux lignes neuves, et rien d'autre");
+});
+
+await test("modification : supprimer un nœud efface ses lignes, sans rien réécrire", async () => {
+  egal(await cellulesPour(m => {
+    m.nodes = m.nodes.filter(x => x.id !== "a2");
+    m.links = m.links.filter(l => l.source !== "a2");
+    m.nodes.find(x => x.id === "a3").order = 1;     // l'ordre se resserre
+  }), 1, "seul l'ordre du nœud qui remonte change");
+});
+
+await test("modification : réordonner deux nœuds ne réécrit que leurs lignes", async () => {
+  const n = await cellulesPour(m => {
+    m.nodes.find(x => x.id === "a1").order = 1;
+    m.nodes.find(x => x.id === "a2").order = 0;
+  });
+  attendu(n > 0 && n <= 2 * 11 + 6 * 7, "au plus les lignes des deux nœuds et de leurs liens — écrit : " + n);
+});
+
 await test("écriture : la formule « Valeur du flux » est préservée", async () => {
   const c = classeurType();
   const r = await office.ecrireDiagramme(MODELE);

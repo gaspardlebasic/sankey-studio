@@ -734,6 +734,7 @@ function reporterEtrangeres(
     }
     if (dejaEnPlace(actuel, c, donnees)) continue;
     if (donnees.some(estUneFormule)) poserLesFormules(corps, c, donnees, hauteur);
+    else if (actuel && !porteUneFormule(actuel, c)) ecrireLesDifferences(corps, c, donnees, actuel);
     else poser(colonneDuCorps(corps, c, hauteur), "values", donnees);
   }
 }
@@ -842,15 +843,21 @@ export async function ecrireDiagramme(
                        rLiens.values, rLiens.formulas, linkRows)
       : [];
 
-    // Ce que le classeur porte déjà, cellule par cellule — de quoi n'écrire
-    // que les colonnes qui changent. Nul si la hauteur change : tout repart.
-    const actuelNoeuds = corpsActuel(rNoeuds, nLignes.count, nodeRows.length);
-    const actuelLiens = corpsActuel(rLiens, lLignes.count, linkRows.length);
+    // Les lignes qui disparaissent s'effacent À LEUR PLACE, les nouvelles s'y
+    // insèrent : rien en dessous ne se décale, donc rien ne se réécrit. Le plan
+    // rend aussi ce que porte chaque ligne une fois la hauteur ajustée — de quoi
+    // n'écrire ensuite que les cellules qui changent. Nul : tout repart.
+    const planNoeuds = planifierLignes(t.noeuds, ID_NOEUD, NODE_COLS, rNoeuds, nLignes.count, nodeRows);
+    const planLiens = planifierLignes(t.liens, ID_LIEN, LINK_COLS_ECRITES, rLiens, lLignes.count, linkRows);
 
     // --- sync 4 : ajuster la hauteur avant d'écrire.
-    ajusterLignes(t.noeuds, nLignes.count, nodeRows.length);
-    ajusterLignes(t.liens, lLignes.count, linkRows.length);
+    if (planNoeuds) appliquerPlan(t.noeuds, planNoeuds);
+    else ajusterLignes(t.noeuds, nLignes.count, nodeRows.length);
+    if (planLiens) appliquerPlan(t.liens, planLiens);
+    else ajusterLignes(t.liens, lLignes.count, linkRows.length);
     await context.sync();                                          // sync 4
+    const actuelNoeuds = planNoeuds ? planNoeuds.actuel : null;
+    const actuelLiens = planLiens ? planLiens.actuel : null;
 
     // --- sync 5 : écrire, colonne par colonne, par nom d'en-tête.
     ecrireColonnes(t.noeuds, NODE_COLS, nodeRows, actuelNoeuds);
@@ -987,24 +994,131 @@ async function verifierColonneValeur(
   return { formule: recopiee, liens: occupes, aLEcriture: true };
 }
 
+/** Ce que l'écriture fait de la HAUTEUR d'un tableau, et ce qui en résulte. */
+interface PlanLignes {
+  /** Lignes du classeur à effacer (indices du corps tel que lu), croissants. */
+  effacer: number[];
+  /** Lignes neuves à insérer (indices dans le tableau final), croissants. */
+  inserer: number[];
+  /** Le corps une fois effacements et insertions faits — lignes neuves vides. */
+  actuel: Contenu[][];
+}
+
 /**
- * Le corps du tableau tel que la sync 3 l'a lu, en `Contenu` (la formule si la
- * cellule en porte une, sa valeur sinon) — ou `null` si sa hauteur va changer :
- * les lignes ne se font alors plus face, et tout est réécrit.
+ * Comment amener le tableau aux lignes voulues en touchant le moins de lignes
+ * possible : une ligne dont l'identité (ID du nœud, ID des extrémités du lien)
+ * a disparu s'efface à sa place, une identité nouvelle s'insère à la sienne.
+ * Les autres lignes restent où elles sont ; si l'ordre a changé, la
+ * comparaison cellule par cellule qui suit réécrit celles qui ont bougé.
  *
- * POURQUOI. Chaque colonne écrite fait travailler Excel : recalcul de ce qui en
- * dépend, évènements `onChanged`, et sur Mac la fenêtre d'édition figée le
- * temps qu'il finisse — plusieurs secondes sur un diagramme de 239 liens, pour
- * une couleur changée. Écrire coûte des allers-retours, mais aussi ce
- * qu'Excel fait de ce qu'il reçoit.
+ * POURQUOI. Ajouter un lien au milieu des liens décalait d'un cran tous ceux
+ * du dessous : 1 900 cellules réécrites sur un diagramme de 240 liens, pour
+ * une seule ligne neuve — et autant de travail pour Excel, fenêtre figée.
+ *
+ * Nul quand le plan n'a pas de sens : aucune ligne à garder (le tableau se
+ * viderait entre deux opérations), ou un tableau qu'on vide.
  */
-function corpsActuel(r: Excel.Range, actuel: number, voulu: number): Contenu[][] | null {
-  const hauteur = Math.max(MIN_LIGNES, voulu);
-  if (actuel !== hauteur) return null;
+function planifierLignes(
+  t: TableauTrouve, ident: Identite, nos: string[], r: Excel.Range,
+  actuel: number, voulues: Cellule[][]
+): PlanLignes | null {
+  if (!voulues.length) return null;
   const v = lignesDonnees(r.values);
   const f = lignesDonnees(r.formulas);
-  if (v.length !== hauteur) return null;
-  return v.map((ligne, i) => ligne.map((cel, c) => contenu(cel, (f[i] || [])[c])));
+  if (v.length !== actuel) return null;
+
+  const cleLue = (ligne: unknown[]): string | null => {
+    const bouts: string[] = [];
+    for (const nom of ident.fortes) {
+      const i = t.index.get(nom);
+      const b = i === undefined ? "" : texte(ligne[i]).trim();
+      if (!b) return null;
+      bouts.push(b);
+    }
+    return bouts.join(" ");
+  };
+  const cleVoulue = (ligne: Cellule[]): string | null => {
+    const bouts: string[] = [];
+    for (const nom of ident.fortes) {
+      const i = nos.indexOf(nom);
+      const b = i < 0 ? "" : texte(ligne[i] && ligne[i].v).trim();
+      if (!b) return null;
+      bouts.push(b);
+    }
+    return bouts.join(" ");
+  };
+
+  // Combien de fois chaque identité est voulue : une ligne lue en double ne
+  // garde sa place qu'autant de fois qu'elle sert.
+  const restantes = new Map<string, number>();
+  for (const l of voulues) {
+    const k = cleVoulue(l);
+    if (k !== null) restantes.set(k, (restantes.get(k) || 0) + 1);
+  }
+  const effacer: number[] = [];
+  const gardees: number[] = [];
+  const presentes = new Map<string, number>();
+  v.forEach((ligne, i) => {
+    const k = cleLue(ligne);
+    const n = k === null ? 0 : (restantes.get(k) || 0);
+    if (k === null || !n) { effacer.push(i); return; }
+    restantes.set(k, n - 1);
+    presentes.set(k, (presentes.get(k) || 0) + 1);
+    gardees.push(i);
+  });
+  if (!gardees.length) return null;
+
+  const inserer: number[] = [];
+  voulues.forEach((l, j) => {
+    const k = cleVoulue(l);
+    const n = k === null ? 0 : (presentes.get(k) || 0);
+    if (!n) { inserer.push(j); return; }
+    presentes.set(k!, n - 1);
+  });
+
+  const contenuDe = (i: number): Contenu[] =>
+    v[i].map((cel, c) => contenu(cel, (f[i] || [])[c]));
+  const vide = (): Contenu[] => t.entetes.map(() => "");
+  const neuves = new Set(inserer);
+  const resultat: Contenu[][] = [];
+  let k = 0;
+  for (let j = 0; j < voulues.length; j++) {
+    resultat.push(neuves.has(j) ? vide() : contenuDe(gardees[k++]));
+  }
+  return { effacer, inserer, actuel: resultat };
+}
+
+/**
+ * Exécute le plan dans l'envoi en cours : effacements du bas vers le haut (les
+ * indices du dessus restent justes), puis insertions du haut vers le bas (tout
+ * ce qui précède est déjà à sa place). Les lignes consécutives vont ensemble.
+ * Effacer comme insérer ne décale QUE les colonnes du tableau : le tableau
+ * voisin, sur les mêmes lignes, ne bouge pas.
+ */
+function appliquerPlan(t: TableauTrouve, plan: PlanLignes): void {
+  const largeur = t.entetes.length;
+  const corps = t.table.getDataBodyRange();
+  const blocs = (indices: number[]): [number, number][] => {
+    const out: [number, number][] = [];
+    for (const i of indices) {
+      const dernier = out[out.length - 1];
+      if (dernier && dernier[0] + dernier[1] === i) dernier[1]++;
+      else out.push([i, 1]);
+    }
+    return out;
+  };
+  for (const [debut, n] of blocs(plan.effacer).reverse()) {
+    corps.getCell(debut, 0).getResizedRange(n - 1, largeur - 1)
+      .delete(Excel.DeleteShiftDirection.up);
+  }
+  let hauteur = plan.actuel.length - plan.inserer.length;
+  for (const [debut, n] of blocs(plan.inserer)) {
+    const vides: string[][] = [];
+    for (let i = 0; i < n; i++) vides.push(new Array(largeur).fill(""));
+    // Au-delà du corps, Excel veut l'ajout en fin de tableau, sans index.
+    t.table.rows.add(debut >= hauteur ? undefined : debut, vides);
+    hauteur += n;
+  }
 }
 
 /**
