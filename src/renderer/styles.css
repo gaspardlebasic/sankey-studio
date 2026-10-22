@@ -295,7 +295,8 @@ button.linklike:hover { color: var(--dark); }
    étiquettes, et le halo posé autour de celle du nœud choisi. */
 #canvas.apercu g[data-label-for] { cursor: pointer; }
 /* Vue d'édition : accolade d'un groupe (niveaux d'agrégation) */
-#canvas .accolade-groupe { fill: none; stroke: var(--dark); stroke-width: 2; pointer-events: none; }
+/* Gris moyen : le groupe se lit sans que son trait concurrence les liens. */
+#canvas .accolade-groupe { fill: none; stroke: #a3a3a3; stroke-width: 2; pointer-events: none; }
 #sidebar .liste-enfants { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 #sidebar .alerte-niveaux { color: #b3261e; }
 /* ⊕ / ⊖ des niveaux d'agrégation (src/renderer/depliage.ts) */
