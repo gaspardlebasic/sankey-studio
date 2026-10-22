@@ -1870,17 +1870,25 @@ test("agrégation : ⊖ fait naître le nœud parent à la hauteur cumulée de s
     await versApercu();
     cliquer(document.querySelector('#canvas [data-deplier="L"] circle'));
     await sleep(1800);
-    const haut = id => document.querySelector('#canvas rect[data-id="' + id + '"]').getBoundingClientRect().height;
+    const boite = id => document.querySelector('#canvas rect[data-id="' + id + '"]').getBoundingClientRect();
+    const haut = id => boite(id).height;
+    // Un enfant décalé d'une demi-largeur : la boîte qui englobe les enfants
+    // devient alors plus large qu'aucun d'eux — c'est ce qui se voyait.
+    document.querySelector('#canvas rect[data-id="F"]').setAttribute('x',
+      String(Number(document.querySelector('#canvas rect[data-id="F"]').getAttribute('x')) + 12));
     const cumul = ['P', 'F', 'nd:L'].reduce((s, id) => s + haut(id), 0);
     cliquer(document.querySelector('#canvas [data-replier="L"] circle'));
     // Aussitôt après le clic : la boîte peinte, animation comprise.
-    const depart = haut('L');
+    const depart = boite('L');
     await sleep(1800);
-    return { cumul, depart, final: haut('L') };
+    return { cumul, depart: depart.height, largeurDepart: depart.width, final: haut('L'),
+             largeurFinale: boite('L').width };
   `);
   attendu(Math.abs(r.depart - r.cumul) < 1,
     "le parent naît à la hauteur cumulée de ses enfants (" + r.cumul.toFixed(1) + ") — vu : "
     + r.depart.toFixed(1));
+  attendu(Math.abs(r.largeurDepart - r.largeurFinale) < 1,
+    "et à sa propre largeur (" + r.largeurFinale.toFixed(1) + ") — vu : " + r.largeurDepart.toFixed(1));
 });
 
 test("agrégation : le parent relu se résout et ramène ses enfants dans sa colonne", "complexe",

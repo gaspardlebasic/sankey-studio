@@ -305,17 +305,19 @@ function union(boites: DOMRect[]): DOMRect | null {
 
 /**
  * La boîte d'où part un parent qu'on REPLIE : la hauteur cumulée de ses
- * enfants, centrée sur leur milieu moyen (pondéré par leur hauteur). Pas la
- * boîte qui les englobe : elle compte les écarts entre eux, et le parent
- * naissait en grand rectangle avant de se réduire.
+ * enfants et SA PROPRE largeur, centrées sur leur milieu moyen (pondéré par
+ * leur hauteur). Pas la boîte qui les englobe : elle compte les écarts entre
+ * eux, et le moindre décalage horizontal l'élargit — le parent naissait en
+ * grand rectangle avant de se réduire.
  */
-function reunies(boites: DOMRect[]): DOMRect | null {
-    const u = union(boites);
-    if (!u) return null;
+function reunies(boites: DOMRect[], largeur: number): DOMRect | null {
+    if (!boites.length) return null;
     const h = boites.reduce((s, b) => s + b.height, 0);
-    if (h <= 0) return u;
-    const centre = boites.reduce((s, b) => s + (b.y + b.height / 2) * b.height, 0) / h;
-    return new DOMRect(u.x, centre - h / 2, u.width, h);
+    const poids = (b: DOMRect) => (h > 0 ? b.height : 1);
+    const total = boites.reduce((s, b) => s + poids(b), 0);
+    const cx = boites.reduce((s, b) => s + (b.x + b.width / 2) * poids(b), 0) / total;
+    const cy = boites.reduce((s, b) => s + (b.y + b.height / 2) * poids(b), 0) / total;
+    return new DOMRect(cx - largeur / 2, cy - h / 2, largeur, h);
 }
 
 /** Une géométrie ramenée dans le repère d'un autre groupe. */
@@ -453,7 +455,7 @@ export function animerTransition(svg: SVGSVGElement, avant: Instantane, cadres: 
         const ancienne = avant.boites.get(id);
         if (ancienne) { depart.set(id, ancienne); return; }
         const membres = membresDe.get(id);
-        const r = membres && reunies(membres.map(m => avant.boites.get(m)).filter(Boolean) as DOMRect[]);
+        const r = membres && reunies(membres.map(m => avant.boites.get(m)).filter(Boolean) as DOMRect[], b.width);
         if (r) depart.set(id, r);
     });
     nouveauxCadres.forEach((membres, parent) => {
