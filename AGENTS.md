@@ -44,6 +44,16 @@ Trois réserves, et trois seulement :
   un `git status` propre au démarrage ne le garantit pas : il apparaît en cours de route.
   Nommer les fichiers qu'on a soi-même touchés. Déjà vu : un `add -A` avait emporté 800 lignes
   d'un chantier voisin dans un commit qui n'avait rien à voir.
+- **L'index peut DÉJÀ porter le travail d'une autre session.** `git status --short` se lit
+  colonne par colonne : une lettre en **première position** (`M `, `D `, `A `) est **déjà
+  indexée**, et un `git add` de ses propres fichiers ne l'empêche pas de partir avec le
+  commit. Constaté le 2026-11-04 : deux suppressions du chantier ONLYOFFICE, déjà indexées,
+  sont parties dans un commit sur le dévoilement. On commit donc **en nommant ses chemins** —
+  `git commit -- fichier1 fichier2` n'emporte pas les autres entrées de l'index. Si
+  l'accident arrive quand même : un commit de **restauration**
+  (`git checkout <commit-avant> -- chemins`) plutôt qu'un `push --force`, puis vérifier
+  l'arbre publié pour de vrai — `git archive HEAD | tar -x -C /tmp/verif`, `node_modules`
+  en lien symbolique, `tsc` et `build`.
 - **Pousser publie.** `main` déclenche la mise en ligne du complément (DIFFUSION.md) : ce
   qui est poussé est servi aux postes qui l'ont installé. Raison de plus pour que les
   suites soient vertes — pas pour attendre un feu vert.
@@ -56,6 +66,23 @@ pas « fix: preserve scrollTop ».
 
 On ne peut pas cliquer dans le ruban d'Excel depuis un agent. Tout le reste s'éprouve, et
 plutôt bien — du plus au moins pratique :
+
+**Dans l'environnement de l'agent DeepSeek Harness de ce poste (constaté le 2026-11-04)**,
+Electron ne démarre pas tel quel : `ELECTRON_RUN_AS_NODE=1` est posé — les scripts tournent
+alors sous Node et `app` vaut `undefined` (un `npx electron --version` qui répond un numéro
+de Node le trahit) — et le bac à sable de Chromium est refusé. La commande qui marche :
+
+```bash
+env -u ELECTRON_RUN_AS_NODE npx electron tests/run.js --no-sandbox [filtre]
+env -u ELECTRON_RUN_AS_NODE npx electron scripts/smoke.js --no-sandbox
+```
+
+`--no-sandbox` doit passer **après** le script : `tests/run.js` lit son filtre dans
+`process.argv.slice(2)`, et un `--no-sandbox` placé avant le script lui fait prendre le chemin
+du script pour un filtre — d'où un `0/0 tests passés` trompeur. Les suites Node
+(`npm run test:addin`) ne sont pas concernées ; `npm test` et `npm run smoke` appellent
+`electron` sans ces options, donc dans cet environnement on lance `npm run test:addin` d'un
+côté et les deux lignes ci-dessus de l'autre.
 
 1. **`npm test`** — suite des fonctionnalités d'édition (`tests/run.js`), sur un diagramme
    complexe : deux filières dont une masquée, ordres qui se télescopent entre filières, noms
