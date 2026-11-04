@@ -389,6 +389,23 @@ Avant de proposer un changement : `npx tsc --noEmit -p tsconfig.json`, `npm test
 pousser sur `main` déclenche `.github/workflows/complement.yml` (DIFFUSION.md). Installer sur
 un poste, c'est `npm run addin:install -- --enligne`.
 
+**Quand la publication ne part pas.** Le workflow ne se déclenche que sur les chemins listés
+dans `complement.yml` (`src/addin`, `src/renderer`, `src/shared`, `build.mjs`, `package.json`,
+le workflow) : **une correction dans `src/onlyoffice/` ne le relance pas**, alors qu'elle peut
+réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de `main` :
+`gh workflow run complement.yml --ref main` (déclencheur `workflow_dispatch`), puis
+`gh run watch <id> --exit-status`.
+- **Lire les journaux d'un échec** : `XDG_CACHE_HOME="${TMPDIR:-/tmp}/gh-cache" gh run view <id> --log-failed`.
+  Sans ce décalage, `gh` écrit dans `~/.cache/gh`, que le bac à sable de l'agent refuse
+  (« operation not permitted »).
+- **Vérifier ce qui est réellement servi** : lire le nom du bundle haché dans
+  `https://gaspardlebasic.github.io/sankey-studio/index.html`, puis chercher dans ce bundle
+  une chaîne propre à la fonctionnalité. Le bundle porte aussi l'empreinte de construction
+  (`__DATE_BUILD__`), donc deux constructions n'ont jamais le même nom.
+- Un incident GitHub Actions (https://www.githubstatus.com) met les runs en `queued` sans
+  runner : rien à corriger côté dépôt, attendre la reprise. Constaté le 2026-11-04
+  (`partial_outage` sur Actions), après 14 minutes d'attente.
+
 ### Modèle de données
 - **FlowNode** : `id, name, column, title, order, lane, kind, filiere, color, parent?, x, y`.
   `lane` = **couloir** horizontal (entier >= 1, 1 par défaut) ;
