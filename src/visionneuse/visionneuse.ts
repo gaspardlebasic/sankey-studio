@@ -11,6 +11,7 @@
 import { FlowModel, SankeyOptions } from "../renderer/types";
 import { dessinerAgrege, poserCommandesAgregees, modeleAffiche, aDesNiveaux } from "../renderer/apercu-agrege";
 import { commandeCliquee, instantane, animerTransition } from "../renderer/depliage";
+import { appliquerDevoilement, nombreDeColonnes } from "../renderer/devoilement";
 import { depliesAuNiveau, nombreDeNiveaux } from "../shared/agregation.js";
 import type { Cadre } from "../shared/agregation.js";
 
@@ -34,6 +35,9 @@ function demarrer(): void {
     const model = d.model;
     let deplies = new Set<string>(d.deplies || []);
     let cadres: Cadre[] = [];
+    /** Dévoilement colonne par colonne : réglage rangé dans l'apparence. */
+    const devoilement = d.options.devoilement?.show === true;
+    let colonnesRevelees = 2;
 
     const fmt = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
 
@@ -84,15 +88,37 @@ function demarrer(): void {
         }
     }
 
+    /** Ramène un nombre de colonnes montrées dans [2, total]. */
+    const borner = (n: number, total: number) => Math.max(2, Math.min(Math.max(2, total), n));
+
     function dessiner(animer: boolean): void {
         const avant = animer ? instantane(svg!, cadres) : null;
         const w = Math.max(200, zone!.clientWidth);
         const h = Math.max(200, zone!.clientHeight);
         dessinerAgrege(svg!, model, d.options, deplies, w, h);
+        // Le dessin est celui du diagramme entier : le dévoilement ne fait que
+        // masquer les colonnes qui ne sont pas encore montrées.
+        if (devoilement) {
+            colonnesRevelees = borner(colonnesRevelees, nombreDeColonnes(svg!));
+            appliquerDevoilement(svg!, colonnesRevelees);
+        }
         cadres = poserCommandesAgregees(svg!, model, deplies);
         infobulles();
         if (avant) animerTransition(svg!, avant, cadres);
         majNiveaux();
+    }
+
+    /** Une colonne de plus (1) ou de moins (-1), sans redessiner le Sankey. */
+    function reveler(pas: number): void {
+        if (!devoilement) return;
+        const total = Math.max(2, nombreDeColonnes(svg!));
+        const avant = borner(colonnesRevelees, total);
+        const apres = borner(avant + pas, total);
+        if (apres === avant) return;
+        colonnesRevelees = apres;
+        appliquerDevoilement(svg!, apres, apres > avant ? avant : undefined);
+        // Les ⊕ / ⊖ ne se posent que sur les nœuds montrés : ils suivent.
+        cadres = poserCommandesAgregees(svg!, model, deplies);
     }
 
     const basculer = (cible: EventTarget | null): boolean => {
@@ -107,14 +133,27 @@ function demarrer(): void {
     svg.addEventListener("keydown", e => {
         if ((e.key === "Enter" || e.key === " ") && basculer(e.target)) e.preventDefault();
     });
+    window.addEventListener("keydown", e => {
+        if (!devoilement) return;
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        e.preventDefault();
+        reveler(e.key === "ArrowRight" ? 1 : -1);
+    });
     let minuteur = 0;
     window.addEventListener("resize", () => {
         clearTimeout(minuteur);
         minuteur = window.setTimeout(() => dessiner(false), 120);
     });
-    // Sans niveaux, il n'y a rien à déplier : l'aide ne parle que du survol.
+    // L'aide ne promet que ce que la page sait faire.
     const aide = document.querySelector(".aide");
-    if (aide && !aDesNiveaux(model)) aide.textContent = "Survol : valeurs";
+    if (aide) {
+        const parties: string[] = [];
+        if (devoilement) parties.push("← → colonnes");
+        if (aDesNiveaux(model)) parties.push("⊕ déplier · ⊖ replier");
+        parties.push("survol : valeurs");
+        aide.textContent = parties.join(" · ");
+    }
     dessiner(false);
 }
 

@@ -39,6 +39,9 @@ function rectsParId(svg: SVGSVGElement): Map<string, SVGRectElement> {
     const out = new Map<string, SVGRectElement>();
     svg.querySelectorAll("rect[data-id]").forEach(rc => {
         const id = rc.getAttribute("data-id");
+        // Une colonne que le dévoilement n'a pas encore montrée n'est pas là :
+        // ni ses commandes ⊕ / ⊖, ni sa place dans l'animation du dépliage.
+        if (rc.getAttribute("visibility") === "hidden") return;
         if (id && !out.has(id)) out.set(id, rc as SVGRectElement);
     });
     return out;

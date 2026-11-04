@@ -1214,6 +1214,11 @@ function drawSankey(
     const L = opt.links;
     const opacity = clamp(L.opacity, 0, 100) / 100;
     const curvature = clamp(L.curvature, 0, 100) / 100;
+    /* Colonne peinte d'un ruban : celle de son extrémité la plus à droite. Un
+       lien qui saute des colonnes n'apparaît donc qu'avec sa destination — le
+       dévoilement (src/renderer/devoilement.ts) lit ce repère. */
+    const coucheDeLien = (d: ELink): number =>
+        Math.max((d.source as ENode).layer ?? 0, (d.target as ENode).layer ?? 0);
     /* Flèches : réglage complété ici aussi — une apparence rangée avant leur
        arrivée n'en dit rien, et le ruban doit alors rester celui d'avant. */
     const FL: FlecheLiens = Object.assign(defaultFleches(), L.fleches || {});
@@ -1271,6 +1276,8 @@ function drawSankey(
         // Repères stables pour les tests et le débogage (cf. data-id des nœuds).
         .attr("data-source", (d: ELink) => (d.source as ENode).id)
         .attr("data-target", (d: ELink) => (d.target as ENode).id)
+        // Colonne à laquelle le ruban appartient, pour le dévoilement.
+        .attr("data-layer", (d: ELink) => coucheDeLien(d))
         .attr("fill", (d: ELink, i: number) =>
             L.useGradient ? `url(#${prefixe}-grad${i})` : startColor(d)
         )
@@ -1299,6 +1306,7 @@ function drawSankey(
             })
             .attr("data-source", (d: ELink) => (d.source as ENode).id)
             .attr("data-target", (d: ELink) => (d.target as ENode).id)
+            .attr("data-layer", (d: ELink) => coucheDeLien(d))
             // La part réellement peinte, pour les tests et le débogage.
             .attr("data-bio", (d: ELink) => String(partBio(d)))
             .attr("fill", L.bio.color)
@@ -1376,6 +1384,8 @@ function drawSankey(
         // Repères stables pour les tests et le débogage, comme en vue d'édition.
         .attr("data-id", (d: ENode) => d.id)
         .attr("data-kind", (d: ENode) => d.kind)
+        // Colonne peinte, pour le dévoilement colonne par colonne.
+        .attr("data-layer", (d: ENode) => d.layer)
         .attr("fill", (d: ENode) => remplissageNoeud(d));
 
     /* ---- Contours : un liseré autour du nœud, à distance de son bord ----
@@ -1397,6 +1407,7 @@ function drawSankey(
             .append("rect")
             .attr("class", "node-outline")
             .attr("data-outline-for", d.id)
+            .attr("data-layer", d.layer)
             .attr("x", boite.x)
             .attr("y", boite.y)
             .attr("width", boite.w)
@@ -1439,6 +1450,7 @@ function drawSankey(
             .attr("class", "link-value")
             .attr("data-source", (d: ELink) => (d.source as ENode).id)
             .attr("data-target", (d: ELink) => (d.target as ENode).id)
+            .attr("data-layer", (d: ELink) => coucheDeLien(d))
             .attr("x", (d: ELink) => mx(d))
             .attr("y", (d: ELink) => my(d))
             .attr("dy", "0.35em")
@@ -1546,7 +1558,9 @@ function drawSankey(
             // Le repère est porté par le GROUPE, pas seulement par le texte :
             // c'est le groupe entier — fond, zone de prise, texte — que
             // l'éditeur donne à cliquer dans l'aperçu.
-            const g = gLabels.append("g").attr("data-label-for", d.id);
+            const g = gLabels.append("g")
+                .attr("data-label-for", d.id)
+                .attr("data-layer", d.layer);
             if (NL.showBackground) {
                 g.append("rect")
                     .attr("x", boite.x)
@@ -1616,7 +1630,10 @@ function drawSankey(
             // Repère stable — comme `data-id` sur un nœud : c'est par lui que
             // les tests retrouvent le bandeau d'une colonne sans le deviner à
             // son intitulé.
-            const g = gHeaders.append("g").attr("data-header-for", layer);
+            const g = gHeaders.append("g")
+                .attr("data-header-for", layer)
+                // La colonne que ce bandeau titre, pour le dévoilement.
+                .attr("data-layer", layer);
             g.append("rect")
                 .attr("x", rectX)
                 .attr("y", headerMarginTop)

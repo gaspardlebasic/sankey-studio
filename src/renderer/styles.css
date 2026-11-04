@@ -79,6 +79,16 @@ html, body {
 #toolbar .niveaux-titre { font-size: 13px; font-weight: 600; color: var(--dark); }
 #toolbar .niveaux .segmented .seg { padding: 8px 11px; }
 
+/* Dévoilement colonne par colonne : « Colonnes 2 / 6 » et ses deux flèches,
+   en aperçu seulement. Deux segments étroits : ce sont des flèches, pas des
+   mots. */
+#toolbar .devoilement { display: inline-flex; align-items: center; gap: 8px; margin-left: 10px; }
+#toolbar .devoilement[hidden] { display: none; }
+#toolbar .devoilement-titre { font-size: 13px; font-weight: 600; color: var(--dark); }
+#toolbar .devoilement .segmented .seg { padding: 8px 11px; }
+#toolbar .segmented .seg:disabled { opacity: .35; cursor: default; }
+#toolbar .segmented .seg:disabled:hover { background: none; color: var(--dark); }
+
 #main { flex: 1 1 auto; display: flex; min-height: 0; }
 #content { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 

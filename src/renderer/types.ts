@@ -378,6 +378,16 @@ export interface SankeyOptions {
         tailles: Record<string, TailleExport>;
     };
     /**
+     * Dévoilement colonne par colonne, en aperçu et dans l'export HTML : seules
+     * les deux premières colonnes sont montrées, puis les flèches ← / → font
+     * apparaître (ou disparaître) les suivantes. La disposition est calculée
+     * une fois pour le diagramme ENTIER : une colonne qui arrive ne déplace
+     * rien. Les exports PNG / SVG, eux, montrent tout.
+     */
+    devoilement: {
+        show: boolean;
+    };
+    /**
      * Couloirs horizontaux : bandes empilées dans lesquelles les nœuds se rangent
      * selon leur `lane`. Sert à isoler des familles de flux (entrants hors
      * périmètre, cœur, sortants hors périmètre…). Sans couloir déclaré, tout tient
@@ -499,6 +509,9 @@ export function defaultOptions(): SankeyOptions {
         },
         exportation: {
             tailles: {}
+        },
+        devoilement: {
+            show: false
         },
         lanes: {
             gap: 28,

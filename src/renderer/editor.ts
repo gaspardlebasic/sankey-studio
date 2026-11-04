@@ -18,6 +18,7 @@ import {
 import { parentsValides } from "../shared/modele-excel.js";
 import type { Cadre } from "../shared/agregation.js";
 import { commandeCliquee, instantane, animerTransition, Instantane } from "./depliage";
+import { appliquerDevoilement, nombreDeColonnes } from "./devoilement";
 import {
     CODE_VISIONNEUSE, FICHIERS_POLICE, PoliceEmbarquee, graissesEmployees, pageInteractive
 } from "./export-html";
@@ -492,6 +493,14 @@ let deplies = new Set<string>();
 let derniersCadres: Cadre[] = [];
 /** Le prochain rendu de l'aperçu suit un ⊕ / ⊖ : il s'anime. */
 let animerProchainRendu = false;
+/**
+ * Dévoilement colonne par colonne : nombre de colonnes montrées dans l'aperçu.
+ * Deux au départ — l'option montre d'abord les deux premières colonnes —, puis
+ * les flèches ← / → l'avancent et le reculent. C'est un état de PRÉSENTATION,
+ * pas un réglage : il n'est pas rangé dans l'apparence et repart à deux à
+ * chaque entrée dans l'aperçu.
+ */
+let colonnesRevelees = 2;
 
 interface ExcelNode {
     id: string | null; name: string; column: number; title: string;
@@ -632,6 +641,12 @@ function buildToolbar(): void {
     niveauxEl.hidden = true;
     toolbar.appendChild(niveauxEl);
 
+    // Dévoilement colonne par colonne : « Colonnes 2 / 6 », flèches ← →.
+    devoilementEl = document.createElement("span");
+    devoilementEl.className = "devoilement";
+    devoilementEl.hidden = true;
+    toolbar.appendChild(devoilementEl);
+
     // Ni « Enregistrer sous… » ni « Ouvrir » : il n'y a pas de fichier projet.
     // Le diagramme vit dans les tableaux, l'apparence dans le classeur (Cmd+S).
 
@@ -689,6 +704,9 @@ function updateToolbarState(): void {
 
 function setView(v: View): void {
     view = v;
+    // Le dévoilement est une présentation : elle repart des deux premières
+    // colonnes chaque fois qu'on entre dans l'aperçu.
+    if (v === "preview") colonnesRevelees = 2;
     updateToolbarState();
     render();
 }
@@ -832,6 +850,13 @@ function render(): void {
         wrap.style.overflow = "hidden";
         sizeCanvas(visW, visH);
         dessinerApercu(canvas, visW, visH);
+        // Le dessin est celui du diagramme ENTIER : on ne masque qu'après coup,
+        // si bien qu'une colonne qui arrive ne déplace rien.
+        if (options.devoilement.show) {
+            colonnesRevelees = bornerColonnes(colonnesRevelees, nombreDeColonnes(canvas));
+            appliquerDevoilement(canvas, colonnesRevelees);
+        }
+        majDevoilement();
         poserCommandesApercu();
         if (avant) animerTransition(canvas, avant, derniersCadres);
         marquerSelectionApercu();
@@ -840,6 +865,7 @@ function render(): void {
 
     // Mode édition : positions aimantées sur la grille (colonnes × ordre).
     wrap.style.overflow = "auto";
+    majDevoilement();
     layoutGrid();
     let maxX = visW, maxY = visH;
     viewNodes().forEach(n => {
@@ -948,6 +974,73 @@ function majNiveaux(): void {
         groupe.appendChild(b);
     }
     niveauxEl.appendChild(groupe);
+}
+
+/* ---- Dévoilement colonne par colonne ----
+   L'option est un réglage d'apparence (elle voyage dans le classeur et dans
+   l'export HTML) ; le nombre de colonnes montrées, lui, est un état de la
+   séance : il repart à deux à chaque entrée dans l'aperçu. */
+
+/** Le témoin du dévoilement dans la barre d'outils, avec ses deux flèches. */
+let devoilementEl: HTMLElement | null = null;
+
+/** Ramène un nombre de colonnes montrées dans [2, total]. */
+function bornerColonnes(n: number, total: number): number {
+    return Math.max(2, Math.min(Math.max(2, total), n));
+}
+
+/**
+ * Avance (1) ou recule (-1) d'une colonne, puis applique l'état au dessin en
+ * place. On ne redessine pas : la disposition est celle du diagramme entier,
+ * et la repeindre pour masquer une colonne ne ferait que la recalculer pour
+ * rien — au risque, si le modèle était tronqué, de la faire bouger.
+ */
+function revelerColonnes(pas: number): void {
+    if (view !== "preview" || !options.devoilement.show) return;
+    const total = Math.max(2, nombreDeColonnes(canvas));
+    const avant = bornerColonnes(colonnesRevelees, total);
+    const apres = bornerColonnes(avant + pas, total);
+    if (apres === avant) return;
+    colonnesRevelees = apres;
+    // Seules les colonnes qui ARRIVENT s'animent ; un retour en arrière est net.
+    appliquerDevoilement(canvas, apres, apres > avant ? avant : undefined);
+    // Les ⊕ / ⊖ ne se posent que sur les nœuds montrés : ils suivent.
+    poserCommandesApercu();
+    marquerSelectionApercu();
+    majDevoilement();
+    setStatus(`Colonnes ${apres} sur ${total} — flèches ← →.`);
+}
+
+/** « Colonnes 2 / 6 », avec ses deux flèches — en aperçu seulement. */
+function majDevoilement(): void {
+    if (!devoilementEl) return;
+    devoilementEl.innerHTML = "";
+    const total = view === "preview" ? nombreDeColonnes(canvas) : 0;
+    const actif = view === "preview" && options.devoilement.show && total > 2;
+    devoilementEl.hidden = !actif;
+    if (!actif) return;
+    const montre = bornerColonnes(colonnesRevelees, total);
+    const titre = document.createElement("span");
+    titre.className = "devoilement-titre";
+    titre.textContent = `Colonnes ${montre} / ${total}`;
+    devoilementEl.appendChild(titre);
+    const groupe = document.createElement("div");
+    groupe.className = "segmented";
+    groupe.setAttribute("role", "group");
+    const fleche = (pas: -1 | 1, texte: string, titreBouton: string) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "seg";
+        b.textContent = texte;
+        b.title = titreBouton;
+        b.dataset.cote = pas < 0 ? "gauche" : "droite";
+        b.disabled = pas < 0 ? montre <= 2 : montre >= total;
+        b.addEventListener("click", () => revelerColonnes(pas));
+        groupe.appendChild(b);
+    };
+    fleche(-1, "←", "Masquer la dernière colonne (flèche gauche)");
+    fleche(1, "→", "Afficher la colonne suivante (flèche droite)");
+    devoilementEl.appendChild(groupe);
 }
 
 /**
@@ -1792,6 +1885,17 @@ function onCanvasDblClick(e: MouseEvent): void {
 }
 
 function onGlobalKey(e: KeyboardEvent): void {
+    /* Les flèches du dévoilement passent AVANT la garde des champs : une case à
+       cocher du panneau garde le focus après le clic, et l'aperçu doit rester
+       pilotable sans avoir à cliquer dans le vide. On écarte en revanche les
+       champs où les flèches déplacent un curseur ou changent une valeur. */
+    if (view === "preview" && options.devoilement.show
+        && (e.key === "ArrowLeft" || e.key === "ArrowRight")
+        && !texteEnSaisie() && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        revelerColonnes(e.key === "ArrowRight" ? 1 : -1);
+        return;
+    }
     // Laisse les champs de saisie gérer leurs propres touches (frappe, Cmd+Z texte…)
     if (isEditingText()) return;
 
@@ -1843,6 +1947,23 @@ function isEditingText(): boolean {
         a.tagName === "SELECT" ||
         a.isContentEditable
     );
+}
+
+/**
+ * Le focus est-il dans un champ où les flèches ← / → ont un sens propre
+ * (curseur de texte, valeur d'un nombre, choix d'une liste) ? Une case à
+ * cocher ou un bouton n'en a aucun : les flèches du dévoilement y restent
+ * actives. `isEditingText` reste, lui, la garde large des raccourcis.
+ */
+function texteEnSaisie(): boolean {
+    const a = document.activeElement as HTMLElement | null;
+    if (!a) return false;
+    if (a.isContentEditable || a.tagName === "TEXTAREA" || a.tagName === "SELECT") return true;
+    if (a.tagName !== "INPUT") return false;
+    const t = (a as HTMLInputElement).type;
+    return t === "text" || t === "number" || t === "search" || t === "email"
+        || t === "password" || t === "tel" || t === "url" || t === "date"
+        || t === "time" || t === "datetime-local" || t === "month" || t === "week";
 }
 
 /* ------------------------------ historique ------------------------- */
@@ -2898,6 +3019,7 @@ function buildAppearance(): DocumentFragment {
     frag.appendChild(carteCouloirs(rr));
     frag.appendChild(carteFilieres(rr));
     frag.appendChild(carteCadre());
+    frag.appendChild(carteDevoilement());
 
     return frag;
 }
@@ -3359,6 +3481,33 @@ function carteCadre(): HTMLElement {
     return b.parentElement as HTMLElement;
 }
 
+/**
+ * « Dévoilement » : montrer les colonnes une à une. Désactivé par défaut —
+ * un diagramme qu'on ouvre doit se voir entier. L'aperçu part des deux
+ * premières colonnes ; les flèches ← / → (et les deux boutons de la barre
+ * d'outils) font apparaître les suivantes. La disposition ne bouge pas : elle
+ * est calculée pour le diagramme entier.
+ */
+function carteDevoilement(): HTMLElement {
+    const b = card("Dévoilement", false);
+    b.appendChild(checkField("Dévoiler colonne par colonne", options.devoilement.show, v => {
+        options.devoilement.show = v;
+        colonnesRevelees = 2;
+        render();
+        persist();
+        if (v && view === "preview") {
+            setStatus(`Colonnes 2 sur ${Math.max(2, nombreDeColonnes(canvas))} — flèches ← →.`);
+        }
+    }));
+    b.appendChild(hint(
+        "L'aperçu ne montre d'abord que les deux premières colonnes ; les flèches "
+        + "← et → font apparaître les suivantes. La disposition est celle du diagramme "
+        + "entier : une colonne qui arrive ne déplace rien. La vue d'édition et les "
+        + "exports PNG / SVG montrent toujours tout ; l'export HTML garde les flèches."
+    ));
+    return b.parentElement as HTMLElement;
+}
+
 /** Crée une carte repliable ; renvoie le corps où empiler les contrôles. */
 // Le panneau est reconstruit à chaque changement d'option : sans mémoire, toutes
 // les sections se replieraient sous les doigts de l'utilisatrice.
@@ -3709,6 +3858,7 @@ function applyProject(p: ProjectFile): void {
     normaliserLiens();
     normaliserExport();
     normaliserCadre();
+    normaliserDevoilement();
     // Le compteur du fichier n'est jamais cru sur parole : on prend le plus grand
     // entre lui et le maximum réellement utilisé.
     idCounter = Math.max(p.idCounter || 0, guessCounter());
@@ -3722,6 +3872,7 @@ function applyProject(p: ProjectFile): void {
     hiddenFilieres = new Set(p.hiddenFilieres || []);
     // Un autre projet, une autre hiérarchie : on repart du niveau agrégé.
     deplies = new Set();
+    colonnesRevelees = 2;
     selection = { type: null, id: "" };
 }
 /**
@@ -3810,6 +3961,15 @@ function normaliserCadre(): void {
         marginLeft: nombre(relu.marginLeft, d.marginLeft),
         marginRight: nombre(relu.marginRight, d.marginRight)
     };
+}
+
+/**
+ * Le dévoilement est un booléen : une apparence écrite avant son arrivée n'en
+ * a pas (le défaut s'applique), mais un JSON retouché à la main pourrait en
+ * mettre n'importe quoi — `"false"` compris, qui serait vrai.
+ */
+function normaliserDevoilement(): void {
+    options.devoilement = { show: options.devoilement?.show === true };
 }
 
 /**
@@ -3984,9 +4144,11 @@ function appliquerApparence(json: string): void {
     normaliserLiens();
     normaliserExport();
     normaliserCadre();
+    normaliserDevoilement();
     idCounter = Math.max(a.idCounter || 0, idCounter);
     hiddenFilieres = new Set(a.hiddenFilieres || []);
     deplies = new Set(Array.isArray(a.deplies) ? a.deplies : []);
+    colonnesRevelees = 2;
     // Les liens n'existent pas encore : ils viendront du classeur.
     couleursLiensEnAttente = a.colorOverrides || {};
 }
@@ -4258,8 +4420,11 @@ async function exportImage(format: "png" | "svg", taille: TailleExport): Promise
     const tmp = document.createElementNS(SVGNS, "svg") as SVGSVGElement;
     tmp.setAttribute("xmlns", SVGNS);
     dessinerApercu(tmp, w, h, "none"); // export sans fond : PNG et SVG transparents
-    // La géométrie des rubans ne sert qu'à l'animation à l'écran.
-    tmp.querySelectorAll("[data-ruban]").forEach(el => el.removeAttribute("data-ruban"));
+    // Le repérage des rubans et des colonnes ne sert qu'à l'animation à l'écran.
+    tmp.querySelectorAll("[data-ruban], [data-layer]").forEach(el => {
+        el.removeAttribute("data-ruban");
+        el.removeAttribute("data-layer");
+    });
     const svgString =
         '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n' +
         new XMLSerializer().serializeToString(tmp);

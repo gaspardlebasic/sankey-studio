@@ -307,6 +307,8 @@ Mesures de la phase 0 dans `RESULTATS-PHASE-0.md`, fonctionnement dans « La coq
     `sonde-fenetre.html` est la fenêtre qu'ouvre H — elle n'utilise pas `protocole.ts`, dont les
     délais de garde masqueraient justement ce qu'on mesure.
   - `src/renderer/depliage.ts` — ⊕ / ⊖ et animation des niveaux d'agrégation ;
+    `src/renderer/devoilement.ts` — masquage des colonnes non montrées et fondu de celles qui
+    arrivent (aperçu et export HTML) ;
     `src/renderer/apercu-agrege.ts` — dessin d'un diagramme à niveaux (aperçu et export) ;
     `src/renderer/export-html.ts` — gabarit de la page exportée ;
     `src/visionneuse/visionneuse.ts` — le code de la page exportée ;
@@ -737,6 +739,34 @@ un poste, c'est `npm run addin:install -- --enligne`.
     diagramme d'essai : un ruban mince qui franchit une vraie colonne — ailleurs, d3 tasse
     les couches (Trempage et Restauration scolaire y tombent dans la même) ou le ruban est
     trop épais pour que l'angle tienne. Deux mutations vérifiées (angle ignoré, écart ignoré).
+- **Dévoilement colonne par colonne** (`options.devoilement.show`, carte « Dévoilement »,
+  **désactivé par défaut**) : l'aperçu ne montre d'abord que les **deux premières colonnes**,
+  et les **flèches ← / →** (ou les deux boutons du témoin « Colonnes 2 / 6 » de la barre
+  d'outils) font apparaître les suivantes. Même comportement dans l'**export HTML**.
+  - **La disposition est celle du diagramme ENTIER.** On ne redessine jamais un modèle
+    tronqué : `drawSankey` calcule tout, puis `src/renderer/devoilement.ts` masque
+    (`visibility="hidden"`, la géométrie reste mesurable) les éléments dont `data-layer`
+    dépasse le nombre de colonnes montrées. Une colonne qui arrive ne déplace donc rien —
+    c'est le point de la fonctionnalité, et ce que le test compare (boîtes peintes à deux
+    colonnes vs à toutes).
+  - Le moteur pose `data-layer` sur **tout ce qui appartient à une colonne** : nœuds,
+    contours, rubans, bandeaux bio, valeurs écrites sur les rubans, groupes d'étiquettes,
+    bandeaux de titre. Un lien prend la couche de son extrémité la plus à droite : il
+    n'apparaît qu'avec sa destination.
+  - Les **⊕ / ⊖** ne se posent que sur les nœuds montrés : `rectsParId` (depliage.ts) écarte
+    les rectangles `visibility="hidden"`. L'animation du dépliage ignore de même ces nœuds.
+  - `nombreDeColonnes` se lit sur les **couches peintes**, jamais sur les numéros de colonne :
+    d3 tasse les couches vides. Deux colonnes au minimum, autant au maximum.
+  - L'état (`colonnesRevelees`) est un état de **séance**, pas un réglage : il repart à deux à
+    chaque entrée dans l'aperçu et n'est pas rangé dans l'apparence. Seul le booléen y va
+    (`normaliserDevoilement`, une apparence d'avant n'en a pas).
+  - Une colonne qui arrive s'anime en **fondu** (Web Animations, 320 ms) ; un retour en
+    arrière est net. Rien si `prefers-reduced-motion`.
+  - **Les exports PNG / SVG montrent tout** : ils dessinent un SVG neuf, sans le masquage.
+    L'export HTML, lui, garde les flèches — c'est une page de présentation.
+  - Les flèches clavier passent **avant** la garde des champs (`texteEnSaisie`) : une case à
+    cocher du panneau garde le focus après le clic, et l'aperçu doit rester pilotable ; un
+    champ texte, un nombre ou une liste gardent leurs flèches.
 - **La colonne « Valeur du flux » ne doit JAMAIS se remplir toute seule.** Excel a une
   correction automatique — *« Remplir les formules dans les tableaux pour créer des colonnes
   calculées »* — qui recopie sur **toutes les lignes** une formule saisie dans UNE cellule d'une
@@ -934,18 +964,19 @@ un poste, c'est `npm run addin:install -- --enligne`.
   d'option : `card()` mémorise l'état plié/déplié par titre (`cartesOuvertes`), sinon les sections
   se replient sous les doigts de l'utilisatrice.
 - **Ordre des cartes de réglages** : `buildAppearance()` ne construit plus rien lui-même, il
-  **appelle une fonction par carte**. Cette liste de sept lignes EST l'ordre du panneau, et le
+  **appelle une fonction par carte**. Cette liste EST l'ordre du panneau, et le
   réordonner tient en une ligne déplacée — avant, l'ordre se déduisait de trois cents lignes de
   construction, et il était celui de l'écriture du code (on exportait en premier, on réglait les
   nœuds en sixième). L'ordre retenu va de ce qu'on dessine à la page qui le porte :
   **Nœuds → Produits → Industries → Liens → Colonnes → Couloirs → Empilement par filière →
-  Cadre du graphique**.
+  Cadre du graphique → Dévoilement**. Le dévoilement est un comportement de présentation, pas
+  une matière du dessin : il ferme la marche, après le cadre.
   - **Colonnes avant Couloirs**, comme dans le panneau d'un nœud sélectionné (*Colonne*, puis
     *Couloir*, puis *Ordre vertical*) : la colonne existe toujours, le couloir est facultatif.
   - **Produits avant Industries**, l'ordre de `NODE_KINDS` et donc de la liste « Type ». Une
     carte et une liste qui se contredisent, ça se remarque.
   - **Ne pas imbriquer les cartes.** Toutes naissent repliées : le panneau est déjà une liste de
-    huit titres. Imbriquer « Produits » dans « Nœuds » coûterait un clic de plus sans économiser
+    neuf titres. Imbriquer « Produits » dans « Nœuds » coûterait un clic de plus sans économiser
     une ligne à l'écran.
   - **« Empilement par filière »** et non « Filières empilées » : le panneau porte déjà, plus
     haut, « Filières affichées ». Deux intitulés qui commencent pareil, dans la même colonne, et

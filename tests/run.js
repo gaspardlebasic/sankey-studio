@@ -3078,6 +3078,129 @@ test("aperçu : le bandeau d'un titre de colonne fait la largeur du texte peint"
     + `du titre long (${r.b.fond.toFixed(1)})`);
 });
 
+test("dévoilement : éteint par défaut, les flèches ne changent rien", "complexe", async p => {
+  const r = await p(`
+    const couches = () => {
+      const vues = [...document.querySelectorAll('#canvas [data-layer]')]
+        .filter(el => getComputedStyle(el).visibility !== 'hidden')
+        .map(el => Number(el.getAttribute('data-layer')));
+      return [...new Set(vues)].sort((a, b) => a - b);
+    };
+    await versApercu();
+    const avant = couches();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await sleep(150);
+    const apres = couches();
+    const barre = document.querySelector('#toolbar .devoilement');
+    const temoin = barre ? barre.hidden : null;
+    await versEdition();
+    return { avant, apres, temoin };
+  `);
+  attendu(r.avant.length > 2, "le diagramme d'essai doit avoir plus de deux colonnes");
+  egal(r.apres, r.avant, "sans l'option, une flèche ne masque aucune colonne");
+  egal(r.temoin, true, "et aucun témoin de dévoilement n'encombre la barre d'outils");
+});
+
+test("dévoilement : deux colonnes au départ, les flèches avancent et reculent",
+  "complexe", async p => {
+  const r = await p(`
+    const couches = () => {
+      const vues = [...document.querySelectorAll('#canvas [data-layer]')]
+        .filter(el => getComputedStyle(el).visibility !== 'hidden')
+        .map(el => Number(el.getAttribute('data-layer')));
+      return [...new Set(vues)].sort((a, b) => a - b);
+    };
+    /* La place RÉELLEMENT peinte de chaque nœud, caché ou non : c'est elle qui
+       doit être la même à deux colonnes et à six. */
+    const boites = () => [...document.querySelectorAll('#canvas rect[data-id]')].map(rc => {
+      const b = rc.getBoundingClientRect();
+      return { id: rc.getAttribute('data-id'), x: Math.round(b.left * 10) / 10,
+               y: Math.round(b.top * 10) / 10, w: Math.round(b.width * 10) / 10,
+               h: Math.round(b.height * 10) / 10 };
+    }).sort((a, b) => (a.id < b.id ? -1 : 1));
+    const fleche = async key => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      await sleep(120);
+    };
+    await versApercu();
+    const toutes = couches();
+    await cocher('Dévoilement', 'Dévoiler colonne par colonne');
+    const depart = couches();
+    const partiel = boites();
+    const tracesPartiel = tracesRubans();
+    /* Les liens d'une colonne cachée sont cachés avec elle : leur repère de
+       couche est celui de leur destination. */
+    const liensVisibles = () => [...document.querySelectorAll('#canvas path[data-source][data-layer]')]
+      .filter(el => getComputedStyle(el).visibility !== 'hidden')
+      .map(el => Number(el.getAttribute('data-layer')));
+    const liensDepart = liensVisibles();
+    await fleche('ArrowRight');
+    const unPas = couches();
+    const apresUnPas = boites();
+    for (let i = 0; i < toutes.length; i++) await fleche('ArrowRight');
+    const complet = couches();
+    const fin = boites();
+    const tracesFin = tracesRubans();
+    const titre = (document.querySelector('#toolbar .devoilement-titre') || {}).textContent;
+    for (let i = 0; i < toutes.length; i++) await fleche('ArrowLeft');
+    const retour = couches();
+    await versEdition();
+    return { toutes, depart, unPas, complet, retour, titre, partiel, fin, apresUnPas,
+             tracesPartiel, tracesFin, liensDepart };
+  `);
+  attendu(r.toutes.length > 3, "le diagramme d'essai doit avoir plus de trois colonnes");
+  egal(r.depart, [0, 1], "l'aperçu s'ouvre sur les deux premières colonnes");
+  egal(r.unPas, [0, 1, 2], "la flèche droite montre la colonne suivante");
+  egal(r.complet, r.toutes, "à la fin, toutes les colonnes sont là");
+  egal(r.retour, [0, 1], "la flèche gauche ramène aux deux premières colonnes");
+  egal(r.partiel, r.fin, "une colonne qui arrive ne déplace ni les nœuds ni les rubans");
+  egal(r.apresUnPas, r.fin, "la disposition est déjà celle du diagramme entier");
+  egal(r.tracesPartiel, r.tracesFin, "les tracés des rubans ne bougent pas non plus");
+  attendu(Math.max(...r.liensDepart) <= 1,
+    "les liens dont la destination est cachée le sont aussi : " + JSON.stringify(r.liensDepart));
+  egal(r.titre, "Colonnes " + r.toutes.length + " / " + r.toutes.length,
+    "le témoin annonce toutes les colonnes");
+});
+
+test("dévoilement : l'export HTML s'ouvre sur deux colonnes et suit les flèches",
+  "complexe", async p => {
+  const r = await p(`
+    await versApercu();
+    await cocher('Dévoilement', 'Dévoiler colonne par colonne');
+    const capte = capterExport();
+    try {
+      [...document.querySelectorAll('#toolbar button')].find(b => b.textContent.includes('HTML')).click();
+      await sleep(500);
+    } finally { capte.rendre(); }
+    const html = await capte.fichiers[0].blob.text();
+    const cadre = document.createElement('iframe');
+    cadre.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:600px;';
+    document.body.appendChild(cadre);
+    cadre.srcdoc = html;
+    await new Promise(res => cadre.onload = res);
+    await sleep(350);
+    const d = cadre.contentDocument;
+    const w = d.defaultView;
+    const couches = () => {
+      const vues = [...d.querySelectorAll('[data-layer]')]
+        .filter(el => w.getComputedStyle(el).visibility !== 'hidden')
+        .map(el => Number(el.getAttribute('data-layer')));
+      return [...new Set(vues)].sort((a, b) => a - b);
+    };
+    const depart = couches();
+    w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await sleep(400);
+    const unPas = couches();
+    const aide = (d.querySelector('.aide') || {}).textContent || '';
+    cadre.remove();
+    await versEdition();
+    return { depart, unPas, aide };
+  `);
+  egal(r.depart, [0, 1], "la page s'ouvre sur les deux premières colonnes");
+  egal(r.unPas, [0, 1, 2], "la flèche droite y montre la colonne suivante");
+  attendu(r.aide.includes("← →"), "l'aide de la page annonce les flèches : " + r.aide);
+});
+
 test("couloirs (aperçu) : la gouttière suit les glyphes, pas le nombre de signes",
     "complexe", async p => {
   const r = await p(`
