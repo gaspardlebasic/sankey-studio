@@ -820,10 +820,14 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
       suivants ; l'image de repli exigée par le format est un pixel transparent) posés au
       même endroit, ceux des étapes ≥ 1 avec une entrée « Fondu » au clic (`<p:timing>`
       écrit à la main ; toutes les images d'une étape partent au même clic).
-    - **Rien n'est rastérisé.** La première version passait chaque calque en PNG (SVG →
-      Image → canvas) : dans **Excel pour Mac**, toutes les images sortaient **entièrement
-      transparentes** (diapositive blanche), alors qu'Electron les dessinait bien — le test
-      ne pouvait pas le voir. Le SVG est aussi ~35 fois plus léger (45 Ko contre 1,6 Mo).
+    - **Rien n'est rastérisé.** La première version passait chaque calque en PNG : dans
+      **Excel pour Mac**, toutes les images sortaient **entièrement transparentes**
+      (diapositive blanche), alors qu'Electron les dessinait bien. La rastérisation seule
+      n'est pas en cause — l'export PNG marche dans Excel. Le suspect est la façon de
+      masquer : `visibility="hidden"` sur la racine, `visible` sur les éléments gardés, que
+      WebKit n'a manifestement pas rendu dans une image. Les calques sont donc **élagués**
+      (on retire, on ne masque pas). Le SVG est aussi ~35 fois plus léger (45 Ko contre
+      1,6 Mo).
     - Chaque calque est un **clone élagué** (ses éléments, leurs ancêtres, les `<defs>`),
       avec un `viewBox` — sans lui, PowerPoint rognerait au lieu de mettre à l'échelle.
       Les étiquettes restent du texte : PowerPoint prend la police installée sur le poste.
