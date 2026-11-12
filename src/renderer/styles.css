@@ -86,6 +86,15 @@ html, body {
 #toolbar .devoilement[hidden] { display: none; }
 #toolbar .devoilement-titre { font-size: 13px; font-weight: 600; color: var(--dark); }
 #toolbar .devoilement .segmented .seg { padding: 8px 11px; }
+/* Filtre de sous-flux : « Sous-flux : A › B » et sa croix, en aperçu seulement. */
+#toolbar .sous-flux-temoin { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px;
+    max-width: 40vw; }
+#toolbar .sous-flux-temoin[hidden] { display: none; }
+#toolbar .sous-flux-titre { font-size: 13px; font-weight: 600; color: var(--dark);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toolbar .sous-flux-fermer { border: none; background: none; color: var(--dark); cursor: pointer;
+    padding: 4px 7px; border-radius: var(--radius); font-size: 12px; }
+#toolbar .sous-flux-fermer:hover { background: var(--light); }
 #toolbar .segmented .seg:disabled { opacity: .35; cursor: default; }
 #toolbar .segmented .seg:disabled:hover { background: none; color: var(--dark); }
 
@@ -317,6 +326,11 @@ button.linklike:hover { color: var(--dark); }
 #canvas .bouton-depliage:focus { outline: none; }
 #canvas .apercu-selection { fill: none; stroke: var(--dark); stroke-width: 1.5;
     stroke-dasharray: 4 3; }
+/* Sous-flux d'un nœud survolé (src/renderer/sous-flux.ts) : le diagramme
+   s'estompe, et chaque ruban concerné reçoit une bande à hauteur de sa part. */
+#canvas.survol-sous-flux path[data-ruban] { opacity: .2; }
+#canvas .sous-flux-eteint { opacity: .25; }
+#canvas .sous-flux-bande { pointer-events: none; }
 
 #canvas .plus-handle { cursor: pointer; }
 #canvas .plus-circle { fill: var(--grey); transition: r 0.1s var(--ease), fill 0.1s var(--ease); }

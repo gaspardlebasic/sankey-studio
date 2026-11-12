@@ -415,6 +415,51 @@ const mesurerBio = ruban => {
         ecartHaut: hautB === null ? null : Math.abs(hautB - hautR)
     };
 };
+/**
+ * Survol réel : un mouseover sur ce qui est RÉELLEMENT sous le point, comme le
+ * ferait la souris. Rien n'est visé d'après le modèle.
+ */
+const survolReel = async (x, y) => {
+    const el = document.elementFromPoint(x, y);
+    if (el) el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: x, clientY: y }));
+    await sleep(40);
+};
+/**
+ * Épaisseur PEINTE d'un ruban de l'aperçu, et part de cette épaisseur que la
+ * bande de sous-flux posée au survol recouvre.
+ * - L'épaisseur se lit sur une verticale juste à la sortie du nœud d'origine,
+ *   comme mesurerBio : là, le ruban est encore horizontal.
+ * - La part se lit au MILIEU du ruban : une coupe verticale d'un ruban en pente
+ *   allonge la bande et le ruban du même facteur, le rapport tient — et cette
+ *   verticale-là croise toujours le ruban, même quand son départ est masqué
+ *   par d'autres tracés ou une pointe.
+ */
+const mesurerSousFlux = (src, dst) => {
+    const sel = '[data-source="' + src + '"][data-target="' + dst + '"]';
+    const ruban = document.querySelector('#canvas path[data-ruban]' + sel + ':not(.lien-bio)');
+    if (!ruban) return null;
+    const bande = document.querySelector('#canvas path.sous-flux-bande' + sel);
+    const rc = document.querySelector('#canvas rect[data-id="' + src + '"]');
+    if (!rc) throw new Error('origine non peinte dans l aperçu : ' + src);
+    const pt = ruban.ownerSVGElement.createSVGPoint();
+    const b = ruban.getBBox();
+    const compter = x => {
+        pt.x = x;
+        let nR = 0, nB = 0;
+        for (let y = b.y; y <= b.y + b.height; y += 0.1) {
+            pt.y = y;
+            if (ruban.isPointInFill(pt)) nR++;
+            if (bande && bande.isPointInFill(pt)) nB++;
+        }
+        return { nR, nB };
+    };
+    const sortie = compter(parseFloat(rc.getAttribute('x')) + parseFloat(rc.getAttribute('width')) + 1);
+    const milieu = compter(b.x + b.width / 2);
+    return { epaisseur: sortie.nR / 10, part: milieu.nR ? milieu.nB / milieu.nR : 0 };
+};
+/** Les couples (origine, destination) des rubans peints, triés. */
+const rubansPeints = () => [...document.querySelectorAll('#canvas path[data-ruban]:not(.lien-bio)')]
+    .map(el => el.getAttribute('data-source') + '>' + el.getAttribute('data-target')).sort();
 /** Les rubans les plus épais de l'aperçu, chacun mesuré par mesurerBio. */
 const rubansMesures = n => [...document.querySelectorAll('#canvas path[data-source]')]
     .filter(el => !el.classList.contains('lien-bio'))

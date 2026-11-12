@@ -340,6 +340,8 @@ Mesures de la phase 0 dans `RESULTATS-PHASE-0.md`, fonctionnement dans « La coq
     `src/renderer/export-html.ts` — gabarit de la page exportée ;
     `src/visionneuse/visionneuse.ts` — le code de la page exportée ;
     `src/shared/agregation.js` — la règle du total (projection), pure.
+    `src/shared/sous-flux.js` — le sous-flux d'un nœud, pur ; `src/renderer/sous-flux.ts` — sa
+    peinture au survol de l'aperçu.
   - `src/renderer/ui.ts` — surcouches ancrées sur un bouton : sélecteur de couleurs (grille
     teintes × nuances) et menu de choix (`openMenuPopover`, employé par les exports). Les deux
     passent par la même coquille `ouvrirSurcouche` — voile, Échap, clic dehors, replacement,
@@ -811,6 +813,33 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
   - Les flèches clavier passent **avant** la garde des champs (`texteEnSaisie`) : une case à
     cocher du panneau garde le focus après le clic, et l'aperçu doit rester pilotable ; un
     champ texte, un nombre ou une liste gardent leurs flèches.
+- **Sous-flux d'un nœud : le survoler le montre, le cliquer filtre** (demandé le 2026-11-12),
+  dans l'aperçu. Les liens qui touchent le nœud comptent en entier ; au-delà, flux supposés
+  **mélangés** dans chaque nœud : en amont, si M → N pèse x % de ce qui **sort** de M, on
+  retient x % de chaque arrivée à M ; en aval, si N → P pèse y % de ce qui **arrive** en P, on
+  retient y % de chaque sortie de P — jusqu'au bout du diagramme. Plusieurs chemins
+  s'additionnent ; un lien qui contourne le nœud n'est pas retenu.
+  - Le calcul est **pur** : `src/shared/sous-flux.js` (`sousFlux`, `filtrerSousFlux`,
+    `filtrerChaine`), éprouvé par `tests/sous-flux.test.js` (deux mutations vérifiées). Il
+    porte sur le modèle **dessiné** (`modeleDessine` / `blocsDessines` d'`apercu-agrege.ts` :
+    projeté, filières empilées comprises) — on filtre ce qu'on voit.
+  - **Survol** (`src/renderer/sous-flux.ts`, posé après coup comme le repère de sélection) :
+    chaque ruban concerné reçoit une bande de sa couleur sur sa tranche haute, tracée par
+    `cheminBande` depuis son `data-ruban` (escales, pointe comprises) ; le reste s'estompe
+    (`survol-sous-flux`, `sous-flux-eteint`). Le moteur n'en sait rien.
+  - **Clic** : le dessin est **refait** sur le sous-flux (`filtreSousFlux`, la liste des nœuds
+    cliqués) — la disposition est recalculée. Cliquer un autre nœud **resserre** le filtre sur
+    ce qui reste à l'écran : c'est ce que le survol venait de montrer. Recliquer le dernier
+    défait un cran ; le vide, Échap, le ✕ du témoin (« Sous-flux : A › B ») ou le passage en
+    édition défont tout. État de séance, jamais rangé.
+  - Le clic **sélectionne aussi** le nœud (carte du panneau, repère) : c'était déjà le geste de
+    sélection de l'aperçu.
+  - Les **exports PNG / SVG suivent le filtre** (ils passent par `dessinerApercu`) ; l'export
+    HTML, non — la visionneuse n'a ni survol ni filtre.
+  - Tests : `mesurerSousFlux` (tests/helpers.js) lit la part **peinte** d'une bande au milieu
+    du ruban ; deux mutations vérifiées (bande pleine au lieu de sa part, filtre ignoré au
+    dessin). Les bandes portent `data-source`/`data-target` : un sélecteur de ruban qui ne les
+    écarte pas les compterait pendant un survol.
 - **La colonne « Valeur du flux » ne doit JAMAIS se remplir toute seule.** Excel a une
   correction automatique — *« Remplir les formules dans les tableaux pour créer des colonnes
   calculées »* — qui recopie sur **toutes les lignes** une formule saisie dans UNE cellule d'une

@@ -10,6 +10,7 @@ import { renderSankey, renderSankeyGroups } from "./engine";
 import { projeter } from "../shared/agregation.js";
 import type { Cadre } from "../shared/agregation.js";
 import { poserCommandes } from "./depliage";
+import { filtrerChaine } from "../shared/sous-flux.js";
 
 /** Teinte du nœud « (non détaillé) » : un reste, pas une catégorie. */
 export const COULEUR_RESTE = "#bdbdbd";
@@ -63,16 +64,53 @@ export function groupesParFiliere(m: FlowModel): { nom: string; model: FlowModel
     });
 }
 
+/**
+ * Ce que l'aperçu dessine réellement : un bloc, ou un par filière, pour un état
+ * de dépliage et un filtre de sous-flux (`filtre` : les nœuds cliqués, dans
+ * l'ordre — cf. src/shared/sous-flux.js). Sans filtre, exactement ce qu'on
+ * dessinait avant.
+ *
+ * Le filtre porte sur le modèle AFFICHÉ — projeté, filières empilées comprises :
+ * on filtre ce qu'on voit. Les blocs empilés sont réunis le temps du calcul
+ * (aucun lien ne les relie, c'est donc le même que bloc par bloc), puis
+ * redécoupés ; ceux que le filtre a vidés disparaissent.
+ */
+export function blocsDessines(
+    m: FlowModel, options: SankeyOptions, deplies: Set<string>, filtre: string[] = []
+): { empiles: boolean; blocs: { nom: string; model: FlowModel }[] } {
+    const groupes = groupesParFiliere(m).map(g => ({ nom: g.nom, model: modeleAffiche(g.model, deplies) }));
+    const empiles = options.filieres.split && groupes.length > 1;
+    if (!filtre.length) {
+        return { empiles, blocs: empiles ? groupes : [{ nom: "", model: modeleAffiche(m, deplies) }] };
+    }
+    const tout = empiles ? reunir(groupes.map(g => g.model)) : modeleAffiche(m, deplies);
+    const filtre_ = filtrerChaine(tout, filtre);
+    if (!empiles) return { empiles, blocs: [{ nom: "", model: filtre_ }] };
+    return { empiles, blocs: groupesParFiliere(filtre_).filter(g => g.model.nodes.length) };
+}
+
+/** Le modèle dessiné, d'un seul tenant : celui sur lequel se lit un sous-flux. */
+export function modeleDessine(
+    m: FlowModel, options: SankeyOptions, deplies: Set<string>, filtre: string[] = []
+): FlowModel {
+    return reunir(blocsDessines(m, options, deplies, filtre).blocs.map(b => b.model));
+}
+
+function reunir(modeles: FlowModel[]): FlowModel {
+    if (modeles.length === 1) return modeles[0];
+    return { nodes: modeles.flatMap(x => x.nodes), links: modeles.flatMap(x => x.links) };
+}
+
 /** Dessine le diagramme pour un état de dépliage : un Sankey, ou un par filière. */
 export function dessinerAgrege(
     svg: SVGSVGElement, m: FlowModel, options: SankeyOptions, deplies: Set<string>,
-    w: number, h: number, fond = "#ffffff"
+    w: number, h: number, fond = "#ffffff", filtre: string[] = []
 ): void {
-    const groupes = groupesParFiliere(m).map(g => ({ nom: g.nom, model: modeleAffiche(g.model, deplies) }));
-    if (options.filieres.split && groupes.length > 1) {
-        renderSankeyGroups(svg, groupes, options, w, h, fond);
+    const d = blocsDessines(m, options, deplies, filtre);
+    if (d.empiles) {
+        renderSankeyGroups(svg, d.blocs, options, w, h, fond);
     } else {
-        renderSankey(svg, modeleAffiche(m, deplies), options, w, h, fond);
+        renderSankey(svg, d.blocs[0].model, options, w, h, fond);
     }
 }
 

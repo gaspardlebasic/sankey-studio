@@ -2973,6 +2973,126 @@ test("aperçu : le repère de sélection suit le libellé et disparaît avec lui
   egal(r.restant, 0, "et retire le repère");
 });
 
+/* Sous-flux (src/shared/sous-flux.js) sur le diagramme d'essai, filière
+   Lentilles. Lentilles sèches reçoit tout ce que Tri envoie vers elle (260),
+   et Tri sort 320 (260 + 60 vers Exportation) : en amont, chaque arrivée à Tri
+   compte pour 260 / 320. En aval, Trempage n'est nourri que par elle : ses
+   sorties comptent en entier. */
+test("sous-flux : survoler un nœud peint la part de chaque lien qui passe par lui", "complexe", async p => {
+  const r = await p(`
+    const cible = one('Lentilles sèches');
+    await versApercu();
+    const avant = rubansPeints();
+    const et = etiquettesApercu().find(e => e.id === cible.id);
+    await survolReel(et.gauche - 2, et.milieuY);
+    const id = n => one(n).id;
+    const tri = id('Tri, décorticage, conditionnement');
+    const mesure = (s, d) => { const m = mesurerSousFlux(s, d); return m ? m.part : null; };
+    const parts = {
+      importation: mesure(named('Importation hors bretagne').find(n => n.column === 2).id, tri),
+      feverolle: mesure(id('Féverolle'), tri),
+      versCible: mesure(tri, cible.id),
+      versExport: mesure(tri, named('Exportation hors bretagne').find(n => n.column === 4).id),
+      trempageGms: mesure(id('Trempage, cuisson'), id('GMS Bretagne')),
+      importGms: mesure(named('Importation hors bretagne').find(n => n.column === 5).id, id('GMS Bretagne'))
+    };
+    const estompe = document.querySelector('#canvas').classList.contains('survol-sous-flux');
+    const exportEteint = document.querySelector('#canvas rect[data-id="'
+      + named('Exportation hors bretagne').find(n => n.column === 4).id + '"]').classList.contains('sous-flux-eteint');
+    const cibleEteinte = document.querySelector('#canvas rect[data-id="' + cible.id + '"]').classList.contains('sous-flux-eteint');
+    // Quitter le nœud efface tout : le dessin reste celui d'avant.
+    const vide = canvasRect();
+    await survolReel(vide.left + 3, vide.bottom - 3);
+    const restantes = document.querySelectorAll('#canvas .sous-flux-bande, #canvas .sous-flux-eteint').length;
+    const apres = rubansPeints();
+    await versEdition();
+    return { parts, estompe, exportEteint, cibleEteinte, restantes, memeDessin: JSON.stringify(avant) === JSON.stringify(apres) };
+  `);
+  const pres = (v, att, m) => attendu(v !== null && Math.abs(v - att) < 0.03, `${m} : attendu ~${att}, peint ${v}`);
+  pres(r.parts.importation, 260 / 320, "Importation → Tri : la part de Tri qui part vers Lentilles sèches");
+  pres(r.parts.feverolle, 260 / 320, "Féverolle → Tri : la même part");
+  pres(r.parts.versCible, 1, "le lien qui arrive au nœud compte en entier");
+  pres(r.parts.trempageGms, 1, "Trempage n'est nourri que par le nœud : ses sorties comptent en entier");
+  egal(r.parts.versExport, 0, "Tri → Exportation ne passe pas par le nœud");
+  egal(r.parts.importGms, 0, "Importation → GMS non plus");
+  attendu(r.estompe, "le reste du diagramme s'estompe");
+  attendu(r.exportEteint, "un nœud hors du sous-flux s'estompe");
+  attendu(!r.cibleEteinte, "le nœud survolé reste net");
+  egal(r.restantes, 0, "quitter le nœud efface les bandes et l'estompage");
+  attendu(r.memeDessin, "le survol ne redessine pas le diagramme");
+});
+
+test("sous-flux : cliquer un nœud ne garde que son sous-flux, disposition recalculée", "complexe", async p => {
+  const r = await p(`
+    const cible = one('Lentilles sèches');
+    const tri = one('Tri, décorticage, conditionnement').id;
+    const importation = named('Importation hors bretagne').find(n => n.column === 2).id;
+    await versApercu();
+    const hauteur = () => document.querySelector('#canvas rect[data-id="' + cible.id + '"]').getBoundingClientRect().height;
+    const avant = { rubans: rubansPeints(), hauteur: hauteur() };
+    const et = () => etiquettesApercu().find(e => e.id === cible.id);
+    await clicReel(et().gauche - 2, et().milieuY);
+    const temoin = document.querySelector('#toolbar .sous-flux-temoin');
+    const filtre = {
+      rubans: rubansPeints(),
+      hauteur: hauteur(),
+      // Rapport des épaisseurs PEINTES des deux arrivées à Tri : 90 et 320
+      // ramenés à la même part, leur rapport reste 90 / 320.
+      rapport: mesurerSousFlux(importation, tri).epaisseur / mesurerSousFlux(one('Féverolle').id, tri).epaisseur,
+      temoin: temoin.hidden ? null : temoin.textContent,
+      sel: T.selection()
+    };
+    // Échap rend tout le diagramme.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sleep(150);
+    const rendu = { rubans: rubansPeints(), temoin: temoin.hidden };
+    await versEdition();
+    return { avant, filtre, rendu, cible: cible.id, exportTri: tri + '>' + named('Exportation hors bretagne').find(n => n.column === 4).id };
+  `);
+  egal(r.filtre.rubans.length, 9, "neuf liens passent par Lentilles sèches");
+  attendu(!r.filtre.rubans.includes(r.exportTri), "Tri → Exportation a disparu");
+  attendu(r.filtre.rubans.every(x => r.avant.rubans.includes(x)), "aucun lien inventé");
+  attendu(r.filtre.hauteur > r.avant.hauteur * 1.3,
+    `la disposition est recalculée : le nœud prend la place libérée (${r.avant.hauteur} → ${r.filtre.hauteur})`);
+  attendu(Math.abs(r.filtre.rapport - 90 / 320) < 0.03, "Importation → Tri ramené à sa part : rapport peint " + r.filtre.rapport);
+  attendu(r.filtre.temoin && r.filtre.temoin.includes("Lentilles sèches"), "le témoin nomme le nœud : " + r.filtre.temoin);
+  egal(r.filtre.sel, { type: "node", id: r.cible }, "le nœud cliqué est sélectionné");
+  egal(r.rendu.rubans, r.avant.rubans, "Échap rend tout le diagramme");
+  attendu(r.rendu.temoin, "et masque le témoin");
+});
+
+test("sous-flux : recliquer le nœud, cliquer le vide ou quitter l'aperçu défait le filtre", "complexe", async p => {
+  const r = await p(`
+    const cible = one('Lentilles sèches');
+    await versApercu();
+    const tout = rubansPeints().length;
+    const clicCible = async () => {
+      const et = etiquettesApercu().find(e => e.id === cible.id);
+      await clicReel(et.gauche - 2, et.milieuY);
+    };
+    await clicCible();
+    const filtre = rubansPeints().length;
+    await clicCible();
+    const recliquer = rubansPeints().length;
+    await clicCible();
+    const c = canvasRect();
+    await clicReel(c.left + 3, c.bottom - 3);
+    const vide = rubansPeints().length;
+    const selVide = T.selection().type;
+    await clicCible();
+    await versEdition();
+    await versApercu();
+    const retour = rubansPeints().length;
+    await versEdition();
+    return { tout, filtre, recliquer, vide, selVide, retour };
+  `);
+  attendu(r.filtre < r.tout, "le clic filtre");
+  egal(r.recliquer, r.tout, "recliquer le même nœud défait le filtre");
+  egal(r.vide, r.tout, "un clic dans le vide aussi");
+  egal(r.selVide, null, "et désélectionne");
+  egal(r.retour, r.tout, "repasser par l'édition repart du diagramme entier");
+});
+
 test("aperçu : l'arrière-plan d'un libellé fait la largeur du texte peint", "complexe", async p => {
   const r = await p(`
     /* Deux noms taillés pour la question : un court, et un long qui se coupe

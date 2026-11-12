@@ -23,8 +23,10 @@ import {
     CODE_VISIONNEUSE, FICHIERS_POLICE, PoliceEmbarquee, graissesEmployees, pageInteractive
 } from "./export-html";
 import {
-    dessinerAgrege, poserCommandesAgregees, aDesNiveaux as aDesNiveauxModele
+    dessinerAgrege, poserCommandesAgregees, aDesNiveaux as aDesNiveauxModele, modeleDessine
 } from "./apercu-agrege";
+import { sousFlux } from "../shared/sous-flux.js";
+import { peindreSousFlux, effacerSousFlux } from "./sous-flux";
 
 const NODE_W = 132;
 const NODE_H = 38; // hauteur d'un nœud dont le nom tient sur une ligne
@@ -501,6 +503,16 @@ let animerProchainRendu = false;
  * chaque entrée dans l'aperçu.
  */
 let colonnesRevelees = 2;
+/**
+ * Filtre de SOUS-FLUX de l'aperçu : les nœuds cliqués, dans l'ordre. Vide, on
+ * dessine tout. Chaque clic resserre le filtre sur ce qui reste à l'écran
+ * (src/shared/sous-flux.js) — c'est ce que le survol venait de montrer.
+ * Un état de séance, comme le dévoilement : rien n'est rangé, et il se défait
+ * en quittant l'aperçu.
+ */
+let filtreSousFlux: string[] = [];
+/** Nœud dont le sous-flux est peint au survol, s'il y en a un. */
+let survolSousFlux: string | null = null;
 
 interface ExcelNode {
     id: string | null; name: string; column: number; title: string;
@@ -570,6 +582,13 @@ export function createApp(root: HTMLElement): void {
     excelPath = (desktop() && desktop().nomClasseur) || "Classeur Excel";
 
     canvas.addEventListener("click", onApercuClick);
+    // Survoler un nœud de l'aperçu peint son sous-flux sur le diagramme entier.
+    canvas.addEventListener("mouseover", survolerApercu);
+    canvas.addEventListener("mouseleave", () => {
+        if (survolSousFlux === null) return;
+        survolSousFlux = null;
+        effacerSousFlux(canvas);
+    });
     canvas.addEventListener("dblclick", onCanvasDblClick);
     // Les ⊕ / ⊖ se prennent aussi au clavier (Tab, puis Entrée ou Espace).
     canvas.addEventListener("keydown", e => {
@@ -647,6 +666,12 @@ function buildToolbar(): void {
     devoilementEl.hidden = true;
     toolbar.appendChild(devoilementEl);
 
+    // Filtre de sous-flux : « Sous-flux : A › B ✕ », quand un nœud a été cliqué.
+    sousFluxEl = document.createElement("span");
+    sousFluxEl.className = "sous-flux-temoin";
+    sousFluxEl.hidden = true;
+    toolbar.appendChild(sousFluxEl);
+
     // Ni « Enregistrer sous… » ni « Ouvrir » : il n'y a pas de fichier projet.
     // Le diagramme vit dans les tableaux, l'apparence dans le classeur (Cmd+S).
 
@@ -707,6 +732,8 @@ function setView(v: View): void {
     // Le dévoilement est une présentation : elle repart des deux premières
     // colonnes chaque fois qu'on entre dans l'aperçu.
     if (v === "preview") colonnesRevelees = 2;
+    // Le filtre de sous-flux est un geste d'aperçu : la vue d'édition montre tout.
+    if (v === "edit") filtreSousFlux = [];
     updateToolbarState();
     render();
 }
@@ -842,9 +869,13 @@ function render(): void {
         && canvas.classList.contains("apercu") ? instantane(canvas, derniersCadres) : null;
     animerProchainRendu = false;
     while (canvas.firstChild) canvas.removeChild(canvas.firstChild);
+    // Le survol était peint sur l'ancien dessin : il part avec lui.
+    canvas.classList.remove("survol-sous-flux");
+    survolSousFlux = null;
 
     canvas.classList.toggle("apercu", view === "preview");
     majNiveaux();
+    majSousFlux();
 
     if (view === "preview") {
         wrap.style.overflow = "hidden";
@@ -921,9 +952,82 @@ function poserCommandesApercu(): void {
     derniersCadres = poserCommandesAgregees(canvas, viewModel(), deplies);
 }
 
-/** Aperçu : un seul Sankey, ou un par filière si l'option est active. */
+/**
+ * Aperçu : un seul Sankey, ou un par filière si l'option est active — réduit au
+ * sous-flux des nœuds cliqués, s'il y en a. Les exports PNG / SVG passent par
+ * ici : ils montrent ce qu'on voit, filtre compris.
+ */
 function dessinerApercu(svgEl: SVGSVGElement, w: number, h: number, fond = "#ffffff"): void {
-    dessinerAgrege(svgEl, viewModel(), options, deplies, w, h, fond);
+    dessinerAgrege(svgEl, viewModel(), options, deplies, w, h, fond, filtreSousFlux);
+}
+
+/* ---- Sous-flux : survoler un nœud le montre, le cliquer filtre ----
+   Le calcul (src/shared/sous-flux.js) porte sur le modèle DESSINÉ — projeté,
+   déjà filtré : ce que le survol montre est exactement ce que le clic garde. */
+
+/** Le témoin de la barre d'outils : le chemin des nœuds cliqués, et ✕. */
+let sousFluxEl: HTMLElement | null = null;
+
+function majSousFlux(): void {
+    if (!sousFluxEl) return;
+    sousFluxEl.innerHTML = "";
+    const noms = filtreSousFlux.map(nomDuNoeudDessine);
+    sousFluxEl.hidden = view !== "preview" || !noms.length;
+    if (sousFluxEl.hidden) return;
+    const titre = document.createElement("span");
+    titre.className = "sous-flux-titre";
+    titre.textContent = "Sous-flux : " + noms.join(" › ");
+    titre.title = "Le diagramme ne montre que ce qui passe par ce nœud. "
+        + "Cliquer un autre nœud resserre le filtre ; cliquer le dernier, le vide ou Échap le défait.";
+    const fermer = document.createElement("button");
+    fermer.type = "button";
+    fermer.className = "sous-flux-fermer";
+    fermer.textContent = "✕";
+    fermer.title = "Revoir tout le diagramme (Échap)";
+    fermer.addEventListener("click", () => filtrerSousFlux(null));
+    sousFluxEl.append(titre, fermer);
+}
+
+/** Nom d'un nœud de l'aperçu, « (non détaillé) » d'un groupe compris. */
+function nomDuNoeudDessine(id: string): string {
+    const n = nodeById(id);
+    if (n) return n.name;
+    const parent = id.startsWith(PREFIXE_RESTE) ? nodeById(id.slice(PREFIXE_RESTE.length)) : undefined;
+    return parent ? `${parent.name} (non détaillé)` : id;
+}
+
+/**
+ * Pose (id) ou retire (null) un cran de filtre, puis redessine. Recliquer le
+ * dernier nœud du filtre défait ce cran ; `null` défait tout.
+ */
+function filtrerSousFlux(id: string | null): void {
+    if (id === null) {
+        if (!filtreSousFlux.length) return;
+        filtreSousFlux = [];
+        setStatus("Tout le diagramme est de nouveau affiché.");
+    } else if (filtreSousFlux[filtreSousFlux.length - 1] === id) {
+        filtreSousFlux = filtreSousFlux.slice(0, -1);
+        setStatus(filtreSousFlux.length ? "Filtre desserré d'un cran." : "Tout le diagramme est de nouveau affiché.");
+    } else {
+        filtreSousFlux = [...filtreSousFlux, id];
+        setStatus(`Sous-flux de « ${nomDuNoeudDessine(id)} » — clic dans le vide ou Échap pour tout revoir.`);
+    }
+    render();
+}
+
+/** Survol : peint le sous-flux du nœud visé, ou efface quand on n'en vise plus. */
+function survolerApercu(e: MouseEvent): void {
+    if (view !== "preview" || dragState || linkDrag) return;
+    const cible = e.target instanceof Element
+        ? e.target.closest("g[data-label-for], rect[data-id]") : null;
+    const id = cible && (cible.getAttribute("data-label-for") || cible.getAttribute("data-id"));
+    const visible = id && cible && cible.getAttribute("visibility") !== "hidden" ? id : null;
+    if (visible === survolSousFlux) return;
+    survolSousFlux = visible;
+    if (!visible) { effacerSousFlux(canvas); return; }
+    const dessine = modeleDessine(viewModel(), options, deplies, filtreSousFlux);
+    if (!dessine.nodes.some(n => n.id === visible)) { effacerSousFlux(canvas); return; }
+    peindreSousFlux(canvas, visible, sousFlux(dessine, visible));
 }
 
 /** ⊕ / ⊖ : bascule un parent, puis redessine en animant. */
@@ -1869,9 +1973,19 @@ function onApercuClick(e: MouseEvent): void {
     if (commande) { basculerDepliage(commande.id, commande.deplier); return; }
     const cible = (e.target as Element).closest("g[data-label-for], rect[data-id]");
     const id = cible && (cible.getAttribute("data-label-for") || cible.getAttribute("data-id"));
-    if (!id) { if (selection.type) select(null, ""); return; }
-    if (!nodeById(id)) return;      // escale de traversée, ou nœud disparu du modèle
-    select("node", id);
+    if (!id) {
+        // Le vide défait tout : la sélection ET le filtre de sous-flux.
+        if (selection.type) { selection = { type: null, id: "" }; buildSidebar(); }
+        if (filtreSousFlux.length) filtrerSousFlux(null);
+        else marquerSelectionApercu();
+        return;
+    }
+    // Un nœud du dessin qui n'est pas dans le modèle (« (non détaillé) » d'un
+    // groupe, escale) se filtre mais ne se sélectionne pas : il n'a pas de carte.
+    if (nodeById(id)) { selection = { type: "node", id }; buildSidebar(); }
+    // Le clic filtre sur le sous-flux que le survol montrait : le dessin est
+    // refait, donc le repère de sélection suit (render → marquerSelectionApercu).
+    filtrerSousFlux(id);
 }
 
 function onCanvasDblClick(e: MouseEvent): void {
@@ -1934,6 +2048,8 @@ function onGlobalKey(e: KeyboardEvent): void {
         if (linkDrag) {
             endLinkDrag();
             setStatus("Liaison annulée.");
+        } else if (view === "preview" && filtreSousFlux.length) {
+            filtrerSousFlux(null);
         }
     }
 }
@@ -3873,6 +3989,7 @@ function applyProject(p: ProjectFile): void {
     // Un autre projet, une autre hiérarchie : on repart du niveau agrégé.
     deplies = new Set();
     colonnesRevelees = 2;
+    filtreSousFlux = [];
     selection = { type: null, id: "" };
 }
 /**
