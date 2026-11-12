@@ -810,6 +810,25 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
     arrière est net. Rien si `prefers-reduced-motion`.
   - **Les exports PNG / SVG montrent tout** : ils dessinent un SVG neuf, sans le masquage.
     L'export HTML, lui, garde les flèches — c'est une page de présentation.
+  - **Export PowerPoint** (bouton « PPT », `exportPptx`, `src/renderer/export-pptx.ts`,
+    demandé le 2026-11-12) : un `.pptx` d'une diapositive 16:9 où les colonnes apparaissent
+    au clic — → / Espace dans le diaporama, ← revient. **Toujours** colonne par colonne,
+    case « Dévoilement » cochée ou non : c'est l'objet de cet export. Menu à trois tailles
+    (« Diapositive 16:9 » = 1600 × 900, puis fenêtre et personnalisée, centrées sans
+    déformation).
+    - Pas de formes PowerPoint : des **calques PNG transparents** (rastérisés comme l'export
+      PNG, `svgVersPng`) posés au même endroit, ceux des étapes ≥ 1 avec une entrée
+      « Fondu » au clic (`<p:timing>` écrit à la main ; toutes les images d'une étape partent
+      au même clic).
+    - Calques **par conteneur × étape**, empilés dans l'ordre du SVG, et non une image par
+      colonne : le moteur peint tous les rubans, puis les nœuds, puis les étiquettes. Une
+      image « colonne 3 » posée sur « colonne 2 » couvrirait de ses rubans les étiquettes de
+      la 2. L'ordre d'empilement suit le dessin, l'ordre des clics en est indépendant.
+    - Le paquet est un zip **sans compression** écrit à la main (`zipper`, pas de
+      dépendance) ; le test le relit tel quel. `PPTX_SORTIE=/chemin.pptx npm test -- "export
+      PowerPoint"` écrit le fichier produit pour l'ouvrir dans PowerPoint (vérifié dans
+      PowerPoint pour Mac le 2026-11-12 : ouverture sans réparation, deux colonnes puis une
+      par appui).
   - Les flèches clavier passent **avant** la garde des champs (`texteEnSaisie`) : une case à
     cocher du panneau garde le focus après le clic, et l'aperçu doit rester pilotable ; un
     champ texte, un nombre ou une liste gardent leurs flèches.

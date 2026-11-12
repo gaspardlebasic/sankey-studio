@@ -3321,6 +3321,79 @@ test("dévoilement : l'export HTML s'ouvre sur deux colonnes et suit les flèche
   attendu(r.aide.includes("← →"), "l'aide de la page annonce les flèches : " + r.aide);
 });
 
+test("dévoilement : l'export PowerPoint montre deux colonnes, puis une par clic",
+  "complexe", async p => {
+  // On lit le .pptx RÉELLEMENT produit : zip ouvert à la main (stocké, sans
+  // compression), diapositive et chronologie lues au DOMParser.
+  const r = await p(`
+    await versApercu();
+    const colonnes = (() => {
+      let max = -1;
+      document.querySelectorAll('#canvas [data-layer]').forEach(el =>
+        max = Math.max(max, Number(el.getAttribute('data-layer'))));
+      return max + 1;
+    })();
+    const capte = capterExport();
+    let menu;
+    try {
+      menu = await ouvrirMenuExport('PPT');
+      await choisirDansMenu('Diapositive 16:9');
+      await sleep(1500);
+    } finally { capte.rendre(); }
+    const f = capte.fichiers[0];
+    const buf = new Uint8Array(await f.blob.arrayBuffer());
+    const dv = new DataView(buf.buffer);
+    const fichiers = {};
+    let o = 0;
+    while (o + 4 <= buf.length && dv.getUint32(o, true) === 0x04034b50) {
+      const taille = dv.getUint32(o + 18, true);
+      const ln = dv.getUint16(o + 26, true), le = dv.getUint16(o + 28, true);
+      const nom = new TextDecoder().decode(buf.subarray(o + 30, o + 30 + ln));
+      const debut = o + 30 + ln + le;
+      fichiers[nom] = buf.subarray(debut, debut + taille);
+      o = debut + taille;
+    }
+    const xml = nom => new DOMParser().parseFromString(new TextDecoder().decode(fichiers[nom]), 'application/xml');
+    const P = 'http://schemas.openxmlformats.org/presentationml/2006/main';
+    const slide = xml('ppt/slides/slide1.xml');
+    const rels = xml('ppt/slides/_rels/slide1.xml.rels');
+    const cibles = {};
+    [...rels.getElementsByTagName('Relationship')].forEach(x => cibles[x.getAttribute('Id')] = x.getAttribute('Target'));
+    const pics = [...slide.getElementsByTagNameNS(P, 'pic')].map(pic => ({
+      id: pic.getElementsByTagNameNS(P, 'cNvPr')[0].getAttribute('id'),
+      media: 'ppt/' + cibles[pic.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'blip')[0]
+        .getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'embed')].replace('../', '')
+    }));
+    const pngOk = pics.every(x => fichiers[x.media] && fichiers[x.media][1] === 0x50 && fichiers[x.media][2] === 0x4e);
+    // Un clic = un <p:par> dont la condition de départ est « indefinite ».
+    const clics = [...slide.getElementsByTagNameNS(P, 'cond')]
+      .filter(c => c.getAttribute('delay') === 'indefinite')
+      .map(c => [...new Set([...c.closest('par').getElementsByTagNameNS(P, 'spTgt')].map(t => t.getAttribute('spid')))]);
+    const animees = new Set(clics.flat());
+    return {
+      nom: f.nom, menu: menu.map(m => m.label), colonnes,
+      parties: Object.keys(fichiers).filter(n => !n.startsWith('ppt/media/')).sort(),
+      pics: pics.length, pngOk,
+      clics: clics.map(c => c.length),
+      fixes: pics.filter(x => !animees.has(x.id)).length,
+      erreurXml: !!slide.getElementsByTagName('parsererror').length,
+      base64: ${JSON.stringify(!!process.env.PPTX_SORTIE)} ? btoa(Array.from(buf, b => String.fromCharCode(b)).join('')) : ''
+    };
+  `);
+  if (process.env.PPTX_SORTIE) fs.writeFileSync(process.env.PPTX_SORTIE, Buffer.from(r.base64, "base64"));
+  attendu(/\.pptx$/.test(r.nom), "le fichier est un .pptx : " + r.nom);
+  egal(r.menu, ["Diapositive 16:9", "Taille de la fenêtre", "Dimensions personnalisées"], "le menu propose trois tailles");
+  attendu(!r.erreurXml, "la diapositive est un XML bien formé");
+  attendu(r.parties.includes("ppt/presentation.xml") && r.parties.includes("[Content_Types].xml"),
+    "le paquet a ses parties : " + r.parties.join(", "));
+  attendu(r.colonnes > 2, "le diagramme d'essai a plus de deux colonnes : " + r.colonnes);
+  egal(r.clics.length, r.colonnes - 2, "un clic par colonne au-delà des deux premières");
+  attendu(r.clics.every(n => n >= 1), "chaque clic fait apparaître au moins une image : " + JSON.stringify(r.clics));
+  attendu(r.fixes >= 1, "le fond et les deux premières colonnes sont là d'emblée");
+  egal(r.fixes + r.clics.reduce((a, b) => a + b, 0), r.pics, "chaque image est fixe ou animée une seule fois");
+  attendu(r.pngOk, "chaque image renvoie à un PNG du paquet");
+});
+
 test("couloirs (aperçu) : la gouttière suit les glyphes, pas le nombre de signes",
     "complexe", async p => {
   const r = await p(`

@@ -19,6 +19,7 @@ import { parentsValides } from "../shared/modele-excel.js";
 import type { Cadre } from "../shared/agregation.js";
 import { commandeCliquee, instantane, animerTransition, Instantane } from "./depliage";
 import { appliquerDevoilement, nombreDeColonnes } from "./devoilement";
+import { calquesDevoilement, construirePptx, CalquePng } from "./export-pptx";
 import {
     CODE_VISIONNEUSE, FICHIERS_POLICE, PoliceEmbarquee, graissesEmployees, pageInteractive
 } from "./export-html";
@@ -698,6 +699,9 @@ function buildToolbar(): void {
     const htmlBtn = exportBtn("HTML", () => { exportHtml(); });
     htmlBtn.title = "Exporter une page HTML interactive (⊕ / ⊖, niveaux), lisible sans Excel";
     toolbar.appendChild(htmlBtn);
+    const pptBtn = exportBtn("PPT", b => ouvrirMenuExport(b, "pptx"));
+    pptBtn.title = "Exporter une diapositive PowerPoint où les colonnes apparaissent au clic (flèches du diaporama)";
+    toolbar.appendChild(pptBtn);
 
     updateToolbarState();
 }
@@ -4417,7 +4421,7 @@ function cleFilieresAffichees(): string {
  * même nom, donc l'échec, à chaque fois. Un nom neuf à chaque export rend le
  * chemin par défaut toujours bon. Les « : » sont exclus : macOS les refuse.
  */
-function nomFichierExport(format: "png" | "svg" | "html", quand: Date = new Date()): string {
+function nomFichierExport(format: "png" | "svg" | "html" | "pptx", quand: Date = new Date()): string {
     const visibles = distinctFilieres().filter(f => !hiddenFilieres.has(f));
     const base = visibles.map(assainirNomFichier).filter(n => n !== "").join(" - ");
     return (base ? tronquer(base, 80) : "sankey") + " " + horodatage(quand) + "." + format;
@@ -4485,26 +4489,36 @@ function oublierTaillePersonnalisee(): void {
  * Les deux tailles sont annoncées en chiffres : sans elles, « dimensions
  * personnalisées » ne dirait pas si quelque chose a été réglé, ni quoi.
  */
-function ouvrirMenuExport(anchor: HTMLElement, format: "png" | "svg"): void {
+function ouvrirMenuExport(anchor: HTMLElement, format: "png" | "svg" | "pptx"): void {
     const fenetre = tailleFenetre();
     const perso = taillePersonnalisee();
+    const exporter = (t: TailleExport) => format === "pptx" ? exportPptx(t) : exportImage(format, t);
+    const items = [
+        {
+            label: "Taille de la fenêtre",
+            detail: libelleTaille(fenetre),
+            onPick: () => { exporter(fenetre); }
+        },
+        {
+            label: "Dimensions personnalisées",
+            detail: aUneTaillePersonnalisee()
+                ? libelleTaille(perso)
+                : libelleTaille(perso) + " — à régler dans « Cadre du graphique »",
+            onPick: () => { exporter(perso); }
+        }
+    ];
+    // Une diapositive est en 16:9 : un dessin à ce format la remplit sans bandes.
+    if (format === "pptx") {
+        items.unshift({
+            label: "Diapositive 16:9",
+            detail: libelleTaille(TAILLE_DIAPOSITIVE),
+            onPick: () => { exporter(TAILLE_DIAPOSITIVE); }
+        });
+    }
     openMenuPopover({
         anchor,
-        label: "Exporter en " + format.toUpperCase(),
-        items: [
-            {
-                label: "Taille de la fenêtre",
-                detail: libelleTaille(fenetre),
-                onPick: () => { exportImage(format, fenetre); }
-            },
-            {
-                label: "Dimensions personnalisées",
-                detail: aUneTaillePersonnalisee()
-                    ? libelleTaille(perso)
-                    : libelleTaille(perso) + " — à régler dans « Cadre du graphique »",
-                onPick: () => { exportImage(format, perso); }
-            }
-        ],
+        label: format === "pptx" ? "Exporter en diapositive PowerPoint" : "Exporter en " + format.toUpperCase(),
+        items,
         note: AVERTISSEMENT_ECRASEMENT
     });
 }
@@ -4551,7 +4565,12 @@ async function exportImage(format: "png" | "svg", taille: TailleExport): Promise
         return;
     }
 
-    // PNG : SVG -> Image -> canvas (suréchantillonné pour la netteté)
+    const base64 = await svgVersPng(svgString, w, h);
+    await saveExport(nomFichierExport("png"), "image/png", base64, true);
+}
+
+/** SVG -> Image -> canvas, suréchantillonné pour la netteté ; rend le PNG en base64. */
+async function svgVersPng(svgString: string, w: number, h: number): Promise<string> {
     const scale = EXPORT_ECHELLE_PNG;
     const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgString);
     const img = new Image();
@@ -4566,8 +4585,50 @@ async function exportImage(format: "png" | "svg", taille: TailleExport): Promise
     const ctx = c.getContext("2d")!;
     ctx.scale(scale, scale);
     ctx.drawImage(img, 0, 0);
-    const base64 = c.toDataURL("image/png").split(",")[1];
-    await saveExport(nomFichierExport("png"), "image/png", base64, true);
+    return c.toDataURL("image/png").split(",")[1];
+}
+
+/** Le dessin d'une diapositive 16:9 : il la remplit, sans bandes. */
+const TAILLE_DIAPOSITIVE: TailleExport = { width: 1600, height: 900 };
+
+/**
+ * Diapositive PowerPoint (src/renderer/export-pptx.ts) : le diagramme découpé
+ * en calques PNG, les deux premières colonnes d'emblée, les suivantes en fondu
+ * à chaque clic — → / Espace dans le diaporama, ← pour revenir. Toujours
+ * colonne par colonne, que le dévoilement de l'aperçu soit coché ou non :
+ * c'est l'objet de cet export ; pour une image fixe, il y a PNG et SVG.
+ */
+async function exportPptx(taille: TailleExport): Promise<void> {
+    const w = borneExport(taille.width);
+    const h = borneExport(taille.height);
+    if (!viewModel().nodes.length) {
+        setStatus("Rien à exporter : aucune filière affichée.");
+        return;
+    }
+    setStatus("Préparation de la diapositive…");
+    const tmp = document.createElementNS(SVGNS, "svg") as SVGSVGElement;
+    tmp.setAttribute("xmlns", SVGNS);
+    dessinerApercu(tmp, w, h, "none");
+    tmp.querySelectorAll("[data-ruban]").forEach(el => el.removeAttribute("data-ruban"));
+    const { calques } = calquesDevoilement(tmp);
+    const pngs: CalquePng[] = [];
+    for (const c of calques) {
+        const base64 = await svgVersPng(c.svg, w, h);
+        const bin = atob(base64);
+        const png = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) png[i] = bin.charCodeAt(i);
+        pngs.push({ etape: c.etape, nom: c.nom, png });
+    }
+    const visibles = distinctFilieres().filter(f => !hiddenFilieres.has(f) && f);
+    const pptx = construirePptx({
+        titre: visibles.join(" · ") || "Diagramme de Sankey",
+        largeur: w, hauteur: h, calques: pngs
+    });
+    await saveExport(
+        nomFichierExport("pptx"),
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        pptx, false, "Diapositive"
+    );
 }
 
 /**
@@ -4636,10 +4697,12 @@ async function policesEmbarquees(): Promise<PoliceEmbarquee[]> {
  * refusait de remplacer. Il dit maintenant ce qu'on sait, et seulement ça.
  */
 async function saveExport(
-    name: string, mime: string, data: string, binary: boolean, quoi = "Image"
+    name: string, mime: string, data: string | Uint8Array, binary: boolean, quoi = "Image"
 ): Promise<void> {
     let blob: Blob;
-    if (binary) {
+    if (typeof data !== "string") {
+        blob = new Blob([data as Uint8Array<ArrayBuffer>], { type: mime });
+    } else if (binary) {
         const bin = atob(data);
         const arr = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
