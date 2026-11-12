@@ -3361,10 +3361,19 @@ test("dévoilement : l'export PowerPoint montre deux colonnes, puis une par clic
     [...rels.getElementsByTagName('Relationship')].forEach(x => cibles[x.getAttribute('Id')] = x.getAttribute('Target'));
     const pics = [...slide.getElementsByTagNameNS(P, 'pic')].map(pic => ({
       id: pic.getElementsByTagNameNS(P, 'cNvPr')[0].getAttribute('id'),
-      media: 'ppt/' + cibles[pic.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'blip')[0]
+      nom: pic.getElementsByTagNameNS(P, 'cNvPr')[0].getAttribute('name'),
+      media: 'ppt/' + cibles[pic.getElementsByTagNameNS('http://schemas.microsoft.com/office/drawing/2016/SVG/main', 'svgBlip')[0]
         .getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'embed')].replace('../', '')
     }));
-    const pngOk = pics.every(x => fichiers[x.media] && fichiers[x.media][1] === 0x50 && fichiers[x.media][2] === 0x4e);
+    // Chaque calque est un SVG autonome qui DESSINE quelque chose : l'export
+    // d'avant rendait, dans Excel pour Mac, des images entièrement vides.
+    const vides = pics.filter(x => {
+      if (!fichiers[x.media]) return true;
+      const doc = new DOMParser().parseFromString(new TextDecoder().decode(fichiers[x.media]), 'image/svg+xml');
+      if (doc.getElementsByTagName('parsererror').length || !doc.documentElement.getAttribute('viewBox')) return true;
+      return x.nom !== 'Fond' && !doc.querySelector('path, rect, text, polygon');
+    }).map(x => x.nom);
+    const poidsSvg = pics.reduce((t, x) => t + (fichiers[x.media] ? fichiers[x.media].length : 0), 0);
     // Un clic = un <p:par> dont la condition de départ est « indefinite ».
     const clics = [...slide.getElementsByTagNameNS(P, 'cond')]
       .filter(c => c.getAttribute('delay') === 'indefinite')
@@ -3373,7 +3382,7 @@ test("dévoilement : l'export PowerPoint montre deux colonnes, puis une par clic
     return {
       nom: f.nom, menu: menu.map(m => m.label), colonnes,
       parties: Object.keys(fichiers).filter(n => !n.startsWith('ppt/media/')).sort(),
-      pics: pics.length, pngOk,
+      pics: pics.length, vides, poidsSvg,
       clics: clics.map(c => c.length),
       fixes: pics.filter(x => !animees.has(x.id)).length,
       erreurXml: !!slide.getElementsByTagName('parsererror').length,
@@ -3391,7 +3400,7 @@ test("dévoilement : l'export PowerPoint montre deux colonnes, puis une par clic
   attendu(r.clics.every(n => n >= 1), "chaque clic fait apparaître au moins une image : " + JSON.stringify(r.clics));
   attendu(r.fixes >= 1, "le fond et les deux premières colonnes sont là d'emblée");
   egal(r.fixes + r.clics.reduce((a, b) => a + b, 0), r.pics, "chaque image est fixe ou animée une seule fois");
-  attendu(r.pngOk, "chaque image renvoie à un PNG du paquet");
+  egal(r.vides, [], "chaque image est un SVG du paquet, et dessine quelque chose");
 });
 
 test("couloirs (aperçu) : la gouttière suit les glyphes, pas le nombre de signes",

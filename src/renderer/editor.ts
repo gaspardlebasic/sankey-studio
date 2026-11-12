@@ -19,7 +19,7 @@ import { parentsValides } from "../shared/modele-excel.js";
 import type { Cadre } from "../shared/agregation.js";
 import { commandeCliquee, instantane, animerTransition, Instantane } from "./depliage";
 import { appliquerDevoilement, nombreDeColonnes } from "./devoilement";
-import { calquesDevoilement, construirePptx, CalquePng } from "./export-pptx";
+import { calquesDevoilement, construirePptx } from "./export-pptx";
 import {
     CODE_VISIONNEUSE, FICHIERS_POLICE, PoliceEmbarquee, graissesEmployees, pageInteractive
 } from "./export-html";
@@ -4593,7 +4593,8 @@ const TAILLE_DIAPOSITIVE: TailleExport = { width: 1600, height: 900 };
 
 /**
  * Diapositive PowerPoint (src/renderer/export-pptx.ts) : le diagramme découpé
- * en calques PNG, les deux premières colonnes d'emblée, les suivantes en fondu
+ * en calques SVG — rien n'est rastérisé ici : la webview d'Excel pour Mac
+ * rendait des PNG entièrement transparents —, les deux premières colonnes d'emblée, les suivantes en fondu
  * à chaque clic — → / Espace dans le diaporama, ← pour revenir. Toujours
  * colonne par colonne, que le dévoilement de l'aperçu soit coché ou non :
  * c'est l'objet de cet export ; pour une image fixe, il y a PNG et SVG.
@@ -4609,20 +4610,11 @@ async function exportPptx(taille: TailleExport): Promise<void> {
     const tmp = document.createElementNS(SVGNS, "svg") as SVGSVGElement;
     tmp.setAttribute("xmlns", SVGNS);
     dessinerApercu(tmp, w, h, "none");
-    tmp.querySelectorAll("[data-ruban]").forEach(el => el.removeAttribute("data-ruban"));
-    const { calques } = calquesDevoilement(tmp);
-    const pngs: CalquePng[] = [];
-    for (const c of calques) {
-        const base64 = await svgVersPng(c.svg, w, h);
-        const bin = atob(base64);
-        const png = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) png[i] = bin.charCodeAt(i);
-        pngs.push({ etape: c.etape, nom: c.nom, png });
-    }
+    const { calques } = calquesDevoilement(tmp, w, h);
     const visibles = distinctFilieres().filter(f => !hiddenFilieres.has(f) && f);
     const pptx = construirePptx({
         titre: visibles.join(" · ") || "Diagramme de Sankey",
-        largeur: w, hauteur: h, calques: pngs
+        largeur: w, hauteur: h, calques
     });
     await saveExport(
         nomFichierExport("pptx"),

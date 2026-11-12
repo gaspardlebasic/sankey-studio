@@ -2,7 +2,7 @@
 // colonne, au clic ou aux flèches du diaporama.
 //
 // Le diagramme n'est PAS redessiné en formes PowerPoint : il est découpé en
-// calques d'images PNG transparentes, posés au même endroit, et chaque colonne
+// calques SVG (vectoriels, légers), posés au même endroit, et chaque colonne
 // au-delà des deux premières reçoit une animation d'entrée « Fondu » déclenchée
 // au clic. → / Espace avancent, ← recule : c'est PowerPoint qui s'en charge.
 //
@@ -18,33 +18,39 @@
 // dépendance, et le paquet minimal tient en quelques parties.
 
 /** Une image de la diapositive : ce qu'elle montre, et à quel clic. */
-export interface CalqueSvg {
+export interface Calque {
     /** 0 = visible d'emblée ; k ≥ 1 = apparaît au k-ième clic. */
     etape: number;
     /** Nom de la forme dans PowerPoint (volet Sélection). */
     nom: string;
-    /** Le SVG complet, réduit à ce calque (le reste en `visibility="hidden"`). */
+    /** Un SVG autonome, réduit aux éléments du calque. */
     svg: string;
 }
 
 /** Colonnes montrées d'emblée — comme à l'écran et dans l'export HTML. */
 const COLONNES_DE_DEPART = 2;
 
-/**
- * Découpe un dessin (portant ses repères `data-layer`) en calques.
- *
- * Le SVG est modifié le temps de la sérialisation, puis rendu tel quel.
- * Rendus dans l'ordre d'EMPILEMENT (du fond vers le dessus).
- */
-export function calquesDevoilement(svg: SVGSVGElement): { calques: CalqueSvg[]; clics: number } {
-    const serialiser = () => new XMLSerializer().serializeToString(svg);
+/** Repère temporaire des éléments de colonne, pour les retrouver dans un clone. */
+const REPERE = "data-calque";
 
+/**
+ * Découpe un dessin (portant ses repères `data-layer`) en calques SVG, dans
+ * l'ordre d'EMPILEMENT (du fond vers le dessus).
+ *
+ * Chaque calque est un clone ÉLAGUÉ : on n'y garde que ses éléments, leurs
+ * ancêtres et les `<defs>` (dégradés). Masquer au lieu d'élaguer
+ * (`visibility`) dépendrait de ce que le moteur SVG de PowerPoint en fait, et
+ * chaque calque porterait le poids du diagramme entier.
+ */
+export function calquesDevoilement(svg: SVGSVGElement, largeur: number, hauteur: number):
+    { calques: Calque[]; clics: number } {
     // Les éléments de colonne « de tête » : un repère dans un élément déjà
     // repéré suit son parent.
     const tetes = Array.from(svg.querySelectorAll("[data-layer]"))
         .filter(el => !el.parentElement || !el.parentElement.closest("[data-layer]"))
         .map(el => ({ el, couche: Number(el.getAttribute("data-layer")) }))
         .filter(t => isFinite(t.couche));
+    tetes.forEach((t, i) => t.el.setAttribute(REPERE, String(i)));
 
     let colonnes = 0;
     tetes.forEach(t => { colonnes = Math.max(colonnes, t.couche + 1); });
@@ -59,40 +65,75 @@ export function calquesDevoilement(svg: SVGSVGElement): { calques: CalqueSvg[]; 
         if (!conteneurs.includes(c)) conteneurs.push(c);
     });
 
-    const calques: CalqueSvg[] = [];
+    /** Le SVG réduit : `garder(el)` dit si un élément de tête reste. */
+    const calque = (garderTete: (i: number) => boolean, fond: boolean): string => {
+        const clone = svg.cloneNode(true) as SVGSVGElement;
+        const garde = (el: Element): boolean => {
+            const i = el.getAttribute(REPERE);
+            return i !== null && garderTete(Number(i));
+        };
+        const elaguer = (parent: Element) => {
+            Array.from(parent.children).forEach(enfant => {
+                const nom = enfant.localName;
+                if (nom === "defs" || nom === "style") return;
+                if (enfant.hasAttribute(REPERE)) {
+                    if (!garde(enfant)) enfant.remove();
+                    return;
+                }
+                if (enfant.querySelector("[" + REPERE + "]")) {
+                    elaguer(enfant);
+                } else if (!fond) {
+                    enfant.remove();
+                }
+            });
+        };
+        elaguer(clone);
+        clone.querySelectorAll("[" + REPERE + "], [data-layer], [data-ruban]").forEach(el => {
+            el.removeAttribute(REPERE);
+            el.removeAttribute("data-layer");
+            el.removeAttribute("data-ruban");
+        });
+        // Sans viewBox, PowerPoint rognerait au lieu de mettre à l'échelle.
+        clone.setAttribute("viewBox", "0 0 " + largeur + " " + hauteur);
+        clone.setAttribute("width", String(largeur));
+        clone.setAttribute("height", String(hauteur));
+        return '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n'
+            + new XMLSerializer().serializeToString(clone);
+    };
 
     // Le fond : tout ce qui n'appartient à aucune colonne (titres, couloirs…).
-    tetes.forEach(t => t.el.setAttribute("visibility", "hidden"));
-    calques.push({ etape: 0, nom: "Fond", svg: serialiser() });
-    tetes.forEach(t => t.el.removeAttribute("visibility"));
-
-    svg.setAttribute("visibility", "hidden");
-    conteneurs.forEach((c, i) => {
+    const calques: Calque[] = [{ etape: 0, nom: "Fond", svg: calque(() => false, true) }];
+    conteneurs.forEach((c, n) => {
         for (let etape = 0; etape <= clics; etape++) {
-            const montres = tetes.filter(t => t.el.parentElement === c && etapeDe(t.couche) === etape);
-            if (!montres.length) continue;
-            montres.forEach(t => t.el.setAttribute("visibility", "visible"));
+            const indices = new Set<number>();
+            tetes.forEach((t, i) => {
+                if (t.el.parentElement === c && etapeDe(t.couche) === etape) indices.add(i);
+            });
+            if (!indices.size) continue;
             calques.push({
                 etape,
                 nom: (etape === 0 ? "Colonnes 1-" + depart : "Colonne " + (depart + etape))
-                    + " · calque " + (i + 1),
-                svg: serialiser()
+                    + " · calque " + (n + 1),
+                svg: calque(i => indices.has(i), false)
             });
-            montres.forEach(t => t.el.removeAttribute("visibility"));
         }
     });
-    svg.removeAttribute("visibility");
-
+    tetes.forEach(t => t.el.removeAttribute(REPERE));
     return { calques, clics };
 }
 
 /* ------------------------------ Le paquet ------------------------------ */
 
-export interface CalquePng {
-    etape: number;
-    nom: string;
-    png: Uint8Array;
-}
+/**
+ * L'image de repli qu'exige le format (`<a:blip>` doit viser une image
+ * matricielle) : un pixel transparent. PowerPoint 2016 et suivants affichent
+ * le SVG ; seul un lecteur qui l'ignore montrerait ce pixel.
+ */
+const PNG_TRANSPARENT = Uint8Array.from(atob(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+), c => c.charCodeAt(0));
+const EXT_SVG = "{96DAC541-7B7A-43D3-8B79-37D633B846F1}";
+const NS_ASVG = "http://schemas.microsoft.com/office/drawing/2016/SVG/main";
 
 /** Diapositive 16:9, en EMU (914 400 par pouce). */
 const DIAPO_L = 12192000;
@@ -133,7 +174,7 @@ export function construirePptx(o: {
     titre: string;
     largeur: number;
     hauteur: number;
-    calques: CalquePng[];
+    calques: Calque[];
 }): Uint8Array {
     const k = Math.min(DIAPO_L / o.largeur, DIAPO_H / o.hauteur);
     const cx = Math.round(o.largeur * k);
@@ -141,12 +182,15 @@ export function construirePptx(o: {
     const x = Math.round((DIAPO_L - cx) / 2);
     const y = Math.round((DIAPO_H - cy) / 2);
 
-    // Formes : id 2, 3, … ; relations d'image rId2, rId3, … (rId1 = la mise en page).
-    const formes = o.calques.map((c, i) => ({ ...c, id: i + 2, rid: "rId" + (i + 2), media: `image${i + 1}.png` }));
+    // Formes : id 2, 3, … ; rId1 = la mise en page, rId2 = le pixel de repli,
+    // rId3, rId4, … = les SVG.
+    const formes = o.calques.map((c, i) => ({ ...c, id: i + 2, rid: "rId" + (i + 3), media: `calque${i + 1}.svg` }));
     const images = formes.map(f =>
         `<p:pic><p:nvPicPr><p:cNvPr id="${f.id}" name="${xmlEchappe(f.nom)}"/>`
         + '<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>'
-        + `<p:blipFill><a:blip r:embed="${f.rid}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>`
+        + '<p:blipFill><a:blip r:embed="rId2"><a:extLst>'
+        + `<a:ext uri="${EXT_SVG}"><asvg:svgBlip xmlns:asvg="${NS_ASVG}" r:embed="${f.rid}"/></a:ext>`
+        + "</a:extLst></a:blip><a:stretch><a:fillRect/></a:stretch></p:blipFill>"
         + `<p:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>`
         + '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>'
     ).join("");
@@ -213,9 +257,11 @@ export function construirePptx(o: {
         ["ppt/slides/slide1.xml", slide],
         ["ppt/slides/_rels/slide1.xml.rels", rels([
             ["rId1", REL + "slideLayout", "../slideLayouts/slideLayout1.xml"],
+            ["rId2", REL + "image", "../media/repli.png"],
             ...formes.map(f => [f.rid, REL + "image", "../media/" + f.media] as [string, string, string])
         ])],
-        ...formes.map(f => ["ppt/media/" + f.media, f.png] as [string, Uint8Array])
+        ["ppt/media/repli.png", PNG_TRANSPARENT],
+        ...formes.map(f => ["ppt/media/" + f.media, f.svg] as [string, string])
     ];
     return zipper(fichiers);
 }
@@ -265,6 +311,7 @@ function typesDeContenu(): string {
         + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
         + '<Default Extension="xml" ContentType="application/xml"/>'
         + '<Default Extension="png" ContentType="image/png"/>'
+        + '<Default Extension="svg" ContentType="image/svg+xml"/>'
         + o("/ppt/presentation.xml", pres + "presentation.main+xml")
         + o("/ppt/slideMasters/slideMaster1.xml", pres + "slideMaster+xml")
         + o("/ppt/slideLayouts/slideLayout1.xml", pres + "slideLayout+xml")

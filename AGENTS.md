@@ -816,10 +816,17 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
     case « Dévoilement » cochée ou non : c'est l'objet de cet export. Menu à trois tailles
     (« Diapositive 16:9 » = 1600 × 900, puis fenêtre et personnalisée, centrées sans
     déformation).
-    - Pas de formes PowerPoint : des **calques PNG transparents** (rastérisés comme l'export
-      PNG, `svgVersPng`) posés au même endroit, ceux des étapes ≥ 1 avec une entrée
-      « Fondu » au clic (`<p:timing>` écrit à la main ; toutes les images d'une étape partent
-      au même clic).
+    - Pas de formes PowerPoint : des **calques SVG** (`asvg:svgBlip`, PowerPoint 2016 et
+      suivants ; l'image de repli exigée par le format est un pixel transparent) posés au
+      même endroit, ceux des étapes ≥ 1 avec une entrée « Fondu » au clic (`<p:timing>`
+      écrit à la main ; toutes les images d'une étape partent au même clic).
+    - **Rien n'est rastérisé.** La première version passait chaque calque en PNG (SVG →
+      Image → canvas) : dans **Excel pour Mac**, toutes les images sortaient **entièrement
+      transparentes** (diapositive blanche), alors qu'Electron les dessinait bien — le test
+      ne pouvait pas le voir. Le SVG est aussi ~35 fois plus léger (45 Ko contre 1,6 Mo).
+    - Chaque calque est un **clone élagué** (ses éléments, leurs ancêtres, les `<defs>`),
+      avec un `viewBox` — sans lui, PowerPoint rognerait au lieu de mettre à l'échelle.
+      Les étiquettes restent du texte : PowerPoint prend la police installée sur le poste.
     - Calques **par conteneur × étape**, empilés dans l'ordre du SVG, et non une image par
       colonne : le moteur peint tous les rubans, puis les nœuds, puis les étiquettes. Une
       image « colonne 3 » posée sur « colonne 2 » couvrirait de ses rubans les étiquettes de
@@ -827,8 +834,8 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
     - Le paquet est un zip **sans compression** écrit à la main (`zipper`, pas de
       dépendance) ; le test le relit tel quel. `PPTX_SORTIE=/chemin.pptx npm test -- "export
       PowerPoint"` écrit le fichier produit pour l'ouvrir dans PowerPoint (vérifié dans
-      PowerPoint pour Mac le 2026-11-12 : ouverture sans réparation, deux colonnes puis une
-      par appui).
+      PowerPoint pour Mac le 2026-11-12, version SVG : ouverture sans réparation, texte
+      net, deux colonnes puis une par appui).
   - Les flèches clavier passent **avant** la garde des champs (`texteEnSaisie`) : une case à
     cocher du panneau garde le focus après le clic, et l'aperçu doit rester pilotable ; un
     champ texte, un nombre ou une liste gardent leurs flèches.
