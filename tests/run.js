@@ -3058,6 +3058,7 @@ test("sous-flux : cliquer un nœud ne garde que son sous-flux, disposition recal
     const avant = { rubans: rubansPeints(), hauteur: hauteur() };
     const et = () => etiquettesApercu().find(e => e.id === cible.id);
     await clicReel(et().gauche - 2, et().milieuY);
+    await sleep(650);      // le passage est animé : on mesure une fois arrivé
     const temoin = document.querySelector('#toolbar .sous-flux-temoin');
     const filtre = {
       rubans: rubansPeints(),
@@ -3085,6 +3086,61 @@ test("sous-flux : cliquer un nœud ne garde que son sous-flux, disposition recal
   egal(r.filtre.sel, { type: "node", id: r.cible }, "le nœud cliqué est sélectionné");
   egal(r.rendu.rubans, r.avant.rubans, "Échap rend tout le diagramme");
   attendu(r.rendu.temoin, "et masque le témoin");
+});
+
+test("sous-flux : le clic anime le passage — le global s'efface, le sous-flux grandit depuis ses bandes", "complexe", async p => {
+  const r = await p(`
+    const cible = one('Lentilles sèches');
+    const tri = one('Tri, décorticage, conditionnement').id;
+    const importation = named('Importation hors bretagne').find(n => n.column === 2).id;
+    await versApercu();
+    const et = () => etiquettesApercu().find(e => e.id === cible.id);
+    // Le survol d'abord, comme à la souris : c'est de ses bandes que le clic part.
+    await survolReel(et().gauche - 2, et().milieuY);
+    const ruban = () => document.querySelector('#canvas path[data-ruban][data-source="' + importation
+      + '"][data-target="' + tri + '"]:not(.lien-bio)');
+    const bande = document.querySelector('#canvas path.sous-flux-bande[data-source="' + importation
+      + '"][data-target="' + tri + '"]').getAttribute('d');
+    // Clic SYNCHRONE : on lit le tout premier état du nouveau ruban, avant
+    // qu'une seule image de l'animation soit passée.
+    const x = et().gauche - 2, y = et().milieuY;
+    const sous = document.elementFromPoint(x, y);
+    ['mousedown', 'mouseup', 'click'].forEach(t =>
+      sous.dispatchEvent(new MouseEvent(t, { bubbles: true, clientX: x, clientY: y })));
+    const depart = ruban().getAttribute('d');
+    await sleep(80);
+    const fantome = document.querySelector('#canvas .sous-flux-fantome');
+    const pendant = {
+      fantome: !!fantome,
+      // Sous le nouveau dessin : juste après le fond.
+      sousLeDessin: !!fantome && fantome.previousElementSibling
+        && fantome.previousElementSibling.tagName === 'rect' && !fantome.previousElementSibling.hasAttribute('data-id'),
+      opacite: fantome ? parseFloat(getComputedStyle(fantome).opacity) : null,
+      reperes: fantome ? fantome.querySelectorAll('[data-ruban], [data-id], [data-label-for], [data-source]').length : null,
+      enCours: ruban().getAttribute('d'),
+      noeudAnime: document.querySelector('#canvas rect[data-id="' + cible.id + '"]').getAnimations().length
+    };
+    await sleep(700);
+    const arrive = {
+      fantome: document.querySelectorAll('#canvas .sous-flux-fantome').length,
+      d: ruban().getAttribute('d')
+    };
+    await sleep(200);
+    const stable = ruban().getAttribute('d');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sleep(650);
+    await versEdition();
+    return { pendant, arrive, stable, depart, bande };
+  `);
+  egal(r.depart, r.bande, "le ruban retenu part exactement de la bande que le survol peignait");
+  attendu(r.pendant.fantome, "le diagramme global laisse un fantôme qui s'efface");
+  attendu(r.pendant.sousLeDessin, "posé sous le nouveau dessin, juste après le fond");
+  attendu(r.pendant.opacite !== null && r.pendant.opacite < 1, "et déjà en train de s'effacer : " + r.pendant.opacite);
+  egal(r.pendant.reperes, 0, "le fantôme ne porte aucun repère : rien ne doit le prendre pour le dessin");
+  attendu(r.pendant.enCours !== r.arrive.d, "le ruban retenu se déforme vers sa nouvelle place");
+  attendu(r.pendant.noeudAnime > 0, "le nœud glisse vers sa nouvelle boîte");
+  egal(r.arrive.fantome, 0, "une fois le passage fini, le fantôme est retiré");
+  egal(r.stable, r.arrive.d, "et le dessin ne bouge plus");
 });
 
 test("sous-flux : recliquer le nœud, cliquer le vide ou quitter l'aperçu défait le filtre", "complexe", async p => {

@@ -27,7 +27,9 @@ import {
     dessinerAgrege, poserCommandesAgregees, aDesNiveaux as aDesNiveauxModele, modeleDessine
 } from "./apercu-agrege";
 import { sousFlux } from "../shared/sous-flux.js";
-import { peindreSousFlux, effacerSousFlux } from "./sous-flux";
+import {
+    peindreSousFlux, effacerSousFlux, partsPeintes, fantomeDuDessin, poserFantome
+} from "./sous-flux";
 
 const NODE_W = 132;
 const NODE_H = 38; // hauteur d'un nœud dont le nom tient sur une ligne
@@ -514,6 +516,12 @@ let colonnesRevelees = 2;
 let filtreSousFlux: string[] = [];
 /** Nœud dont le sous-flux est peint au survol, s'il y en a un. */
 let survolSousFlux: string | null = null;
+/**
+ * Transition d'un clic de filtre, relevée sur l'ancien dessin juste avant de le
+ * remplacer : l'instantané (rubans partant de leur bande) et le fantôme du
+ * diagramme global qui s'efface dessous. Consommée par le rendu suivant.
+ */
+let transitionFiltre: { avant: Instantane; fantome: SVGGElement | null } | null = null;
 
 interface ExcelNode {
     id: string | null; name: string; column: number; title: string;
@@ -869,7 +877,11 @@ function render(): void {
     const visW = Math.max(1, wrap.clientWidth);
     const visH = Math.max(1, wrap.clientHeight);
     // Un ⊕ / ⊖ vient d'être cliqué : on relève l'ancien dessin pour l'animer.
-    const avant: Instantane | null = animerProchainRendu && view === "preview"
+    // Un filtre de sous-flux vient d'être posé ou défait : relevé fait d'avance.
+    const filtre = view === "preview" ? transitionFiltre : null;
+    transitionFiltre = null;
+    const avant: Instantane | null = filtre ? filtre.avant
+        : animerProchainRendu && view === "preview"
         && canvas.classList.contains("apercu") ? instantane(canvas, derniersCadres) : null;
     animerProchainRendu = false;
     while (canvas.firstChild) canvas.removeChild(canvas.firstChild);
@@ -894,6 +906,7 @@ function render(): void {
         majDevoilement();
         poserCommandesApercu();
         if (avant) animerTransition(canvas, avant, derniersCadres);
+        if (filtre && filtre.fantome) poserFantome(canvas, filtre.fantome);
         marquerSelectionApercu();
         return;
     }
@@ -1015,6 +1028,16 @@ function filtrerSousFlux(id: string | null): void {
     } else {
         filtreSousFlux = [...filtreSousFlux, id];
         setStatus(`Sous-flux de « ${nomDuNoeudDessine(id)} » — clic dans le vide ou Échap pour tout revoir.`);
+    }
+    /* L'animation, relevée sur le dessin en place. Resserrer : le global
+       s'efface (fantôme) pendant que le sous-flux grandit depuis ses bandes.
+       Desserrer : ce qui revient apparaît en fondu, ce qui reste glisse. */
+    if (view === "preview" && canvas.classList.contains("apercu")) {
+        const resserre = id !== null && filtreSousFlux[filtreSousFlux.length - 1] === id;
+        transitionFiltre = {
+            avant: instantane(canvas, derniersCadres, resserre ? partsPeintes(canvas) : undefined),
+            fantome: resserre ? fantomeDuDessin(canvas) : null
+        };
     }
     render();
 }

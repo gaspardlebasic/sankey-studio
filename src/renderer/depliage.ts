@@ -255,10 +255,26 @@ function rubansPeints(svg: SVGSVGElement): Map<string, { el: SVGPathElement; r: 
     return out;
 }
 
-/** Relève l'état du dessin avant de le remplacer. */
-export function instantane(svg: SVGSVGElement, cadres: CadreDepliage[]): Instantane {
+/**
+ * Relève l'état du dessin avant de le remplacer.
+ *
+ * `partDe` (filtre de sous-flux, src/renderer/sous-flux.ts) : pour un lien,
+ * la part de son épaisseur d'où son ruban doit repartir — sa tranche haute,
+ * celle que le survol peignait. Le ruban du sous-flux naît donc de sa bande,
+ * pas du ruban entier.
+ */
+export function instantane(
+    svg: SVGSVGElement, cadres: CadreDepliage[],
+    partDe?: (source: string, cible: string) => number | undefined
+): Instantane {
     const rubans = new Map<string, RubanReleve>();
-    rubansPeints(svg).forEach((v, k) => rubans.set(k, v.r));
+    rubansPeints(svg).forEach((v, k) => {
+        const [, s, t] = k.split("\u0000");
+        const p = partDe ? partDe(s, t) : undefined;
+        // Bandeau bio compris : sa tranche [de, a] se réduit de la même part.
+        rubans.set(k, p === undefined ? v.r
+            : { ...v.r, g: { ...v.r.g, a: v.r.g.de + (v.r.g.a - v.r.g.de) * p } });
+    });
     return {
         boites: boitesEcran(svg),
         cadres: new Map(cadres.map(c => [c.id, c.membres])),
@@ -476,6 +492,13 @@ export function animerTransition(svg: SVGSVGElement, avant: Instantane, cadres: 
     });
 
     const facon: KeyframeAnimationOptions = { duration: DUREE, easing: EASE };
+    // Un nœud sans antécédent (il revient quand on défait un filtre de
+    // sous-flux) apparaît en fondu, comme un ruban sans antécédent.
+    apres.forEach((_b, id) => {
+        if (depart.has(id) || avant.boites.has(id)) return;
+        const rc = rects.get(id);
+        if (rc) rc.animate([{ opacity: 0 }, { opacity: 1 }], facon);
+    });
     depart.forEach((de, id) => {
         const rc = rects.get(id);
         const vers = apres.get(id);

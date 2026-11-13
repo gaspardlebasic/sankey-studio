@@ -872,6 +872,25 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
     édition défont tout. État de séance, jamais rangé.
   - Le clic **sélectionne aussi** le nœud (carte du panneau, repère) : c'était déjà le geste de
     sélection de l'aperçu.
+  - **Le clic est animé** (demandé le 2026-11-13) : le diagramme global s'efface pendant que le
+    sous-flux prend sa nouvelle échelle. Pas de mécanique neuve — c'est `animerTransition` du
+    dépliage : les nœuds qui restent glissent vers leur nouvelle boîte, les rubans se
+    déforment. Deux ajouts seulement :
+    - `instantane(svg, cadres, partDe)` : chaque ruban retenu repart de **sa bande du survol**
+      (`partsPeintes`, lue sur les bandes peintes), pas du ruban entier. Le test le vérifie au
+      caractère près : clic synchrone, le premier `d` du ruban est celui de la bande.
+    - Un **fantôme** de l'ancien dessin (`fantomeDuDessin` puis `poserFantome`) : copie figée
+      (transparence du survol comprise) de ce qui ne survit pas, posée **sous** le nouveau
+      dessin, effacée en 0,3 s puis retirée. Elle ne porte **aucun** `data-*` ni classe : ni
+      les tests, ni le dévoilement, ni l'animation ne doivent la prendre pour le dessin.
+    - Le relevé se fait dans `filtrerSousFlux`, **avant** `render()` (qui vide le canevas), et
+      passe par `transitionFiltre`. Défaire un filtre anime aussi, sans fantôme : ce qui reste
+      glisse, ce qui revient apparaît en fondu (`animerTransition` fait désormais naître en
+      fondu un nœud sans antécédent).
+    - Les tests attendent ~650 ms après un clic de filtre avant de mesurer, comme pour ⊕ / ⊖.
+      Deux mutations vérifiées (rubans partant du ruban entier, fantôme absent). Dans le volet
+      du navigateur intégré **masqué**, les animations tournent au ralenti : ne pas y juger
+      des durées.
   - Les **exports PNG / SVG suivent le filtre** (ils passent par `dessinerApercu`) ; l'export
     HTML, non — la visionneuse n'a ni survol ni filtre.
   - Tests : `mesurerSousFlux` (tests/helpers.js) lit la part **peinte** d'une bande au milieu

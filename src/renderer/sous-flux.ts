@@ -130,3 +130,99 @@ function remettre(svg: SVGSVGElement): void {
     [CLASSE_ETEINT, CLASSE_EXCLU, CLASSE_RETENU].forEach(c =>
         svg.querySelectorAll("." + c).forEach(el => el.classList.remove(c)));
 }
+
+/* ---- Transition d'un clic : le diagramme global s'efface, le sous-flux
+   prend sa place à sa nouvelle échelle ----
+   La déformation elle-même est celle du dépliage (animerTransition) : les
+   nœuds qui restent glissent vers leur nouvelle boîte, les rubans retenus
+   partent de leur bande. Ici, deux choses seulement : dire de quelle part
+   chaque ruban repart, et garder un FANTÔME de l'ancien dessin qui s'efface
+   sous le nouveau. */
+
+/**
+ * La part peinte au survol, par lien — d'où chaque ruban du sous-flux repart.
+ * Rien si le survol n'était pas peint (clic au clavier, survol déjà effacé).
+ */
+export function partsPeintes(svg: SVGSVGElement): ((source: string, cible: string) => number | undefined) | undefined {
+    const parts = new Map<string, number>();
+    svg.querySelectorAll("." + CLASSE_CALQUE + ":not(." + CLASSE_PARTANT + ") ." + CLASSE_BANDE).forEach(b => {
+        const p = parseFloat(b.getAttribute("data-part") || "");
+        if (p > 0) parts.set(cleLien(b.getAttribute("data-source") || "", b.getAttribute("data-target") || ""), p);
+    });
+    if (!parts.size) return undefined;
+    return (s, t) => parts.get(cleLien(s, t));
+}
+
+/** Classe du fantôme de l'ancien dessin, le temps de son effacement. */
+export const CLASSE_FANTOME = "sous-flux-fantome";
+
+/**
+ * Copie FIGÉE de ce qui, dans le dessin en place, ne survit pas au filtre :
+ * les rubans (tels qu'estompés), les nœuds, contours, étiquettes et valeurs
+ * éteints, les titres. Les nœuds retenus n'y sont pas — ils glissent dans le
+ * nouveau dessin. À relever AVANT que le dessin soit remplacé.
+ *
+ * La copie ne porte plus aucun repère (`data-*`, classes) : ni les tests, ni
+ * le dévoilement, ni l'animation ne doivent la prendre pour le dessin.
+ */
+export function fantomeDuDessin(svg: SVGSVGElement): SVGGElement {
+    const fantome = document.createElementNS(SVGNS, "g") as SVGGElement;
+    fantome.setAttribute("class", CLASSE_FANTOME);
+    fantome.setAttribute("pointer-events", "none");
+    const garde = (el: Element): boolean => {
+        if (el.classList.contains(CLASSE_CALQUE)) return false;
+        if (el.matches("rect[data-id], rect[data-outline-for], g[data-label-for], .link-value")) {
+            return el.classList.contains(CLASSE_ETEINT);
+        }
+        // Repère de sélection, ⊕ / ⊖ : ils seront reposés sur le nouveau dessin.
+        return !el.matches(".apercu-selection, .commandes-depliage, title");
+    };
+    Array.from(svg.children).forEach((enfant, i) => {
+        if (i === 0 && enfant.tagName.toLowerCase() === "rect") return;      // le fond
+        if (!garde(enfant)) return;
+        fantome.appendChild(copieFigee(enfant, garde));
+    });
+    return fantome;
+}
+
+/** Copie profonde d'un élément, transparence peinte comprise, sans repères. */
+function copieFigee(el: Element, garde: (el: Element) => boolean): Element {
+    const copie = el.cloneNode(false) as Element;
+    Array.from(copie.attributes).forEach(a => {
+        if (a.name.startsWith("data-") || a.name === "class") copie.removeAttribute(a.name);
+    });
+    // La transparence venait des classes du survol, qui ne suivent pas la copie.
+    const o = parseFloat(getComputedStyle(el).opacity);
+    if (o < 1) (copie as SVGElement).style.opacity = String(o);
+    Array.from(el.childNodes).forEach(n => {
+        if (n.nodeType === 1) {
+            if (garde(n as Element)) copie.appendChild(copieFigee(n as Element, garde));
+        } else {
+            copie.appendChild(n.cloneNode(false));
+        }
+    });
+    return copie;
+}
+
+/**
+ * Pose le fantôme SOUS le nouveau dessin (juste après son fond) et l'efface en
+ * `DUREE_FONDU_MS`, puis le retire. Rien si l'utilisatrice a demandé moins de
+ * mouvement : le dessin change alors d'un coup, comme avant.
+ */
+export function poserFantome(svg: SVGSVGElement, fantome: SVGGElement): void {
+    if (moinsDeMouvement() || typeof Element.prototype.animate !== "function") return;
+    const fond = svg.firstElementChild;
+    svg.insertBefore(fantome, fond && fond.tagName.toLowerCase() === "rect" ? fond.nextSibling : fond);
+    const retirer = () => { if (fantome.isConnected) fantome.remove(); };
+    const a = fantome.animate([{ opacity: 1 }, { opacity: 0 }],
+        { duration: DUREE_FONDU_MS, easing: "ease-out", fill: "forwards" });
+    a.onfinish = retirer;
+    // Filet : une page cachée ne fait plus d'images, l'animation ne finirait pas.
+    setTimeout(retirer, DUREE_FONDU_MS * 3);
+}
+
+function moinsDeMouvement(): boolean {
+    try { return !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches; }
+    catch { return false; }
+}
+
