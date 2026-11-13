@@ -327,10 +327,28 @@ button.linklike:hover { color: var(--dark); }
 #canvas .apercu-selection { fill: none; stroke: var(--dark); stroke-width: 1.5;
     stroke-dasharray: 4 3; }
 /* Sous-flux d'un nœud survolé (src/renderer/sous-flux.ts) : le diagramme
-   s'estompe, et chaque ruban concerné reçoit une bande à hauteur de sa part. */
+   s'estompe, et chaque ruban concerné reçoit une bande à hauteur de sa part.
+   Trois intensités : la bande (pleine), le reste d'un ruban dont une part est
+   retenue (pâle, il se lit encore), un ruban dont rien ne passe par le nœud
+   (presque effacé). Tout glisse en 0,3 s, à l'aller comme au retour. */
+#canvas.apercu path[data-ruban],
+#canvas.apercu rect[data-id],
+#canvas.apercu rect[data-outline-for],
+#canvas.apercu g[data-label-for],
+#canvas.apercu .link-value { transition: opacity .3s var(--ease); }
 #canvas.survol-sous-flux path[data-ruban] { opacity: .2; }
+#canvas.survol-sous-flux path[data-ruban].sous-flux-exclu { opacity: .05; }
 #canvas .sous-flux-eteint { opacity: .25; }
-#canvas .sous-flux-bande { pointer-events: none; }
+#canvas .sous-flux-bande { pointer-events: none; animation: sous-flux-apparition .3s var(--ease) both; }
+#canvas .sous-flux-calque { transition: opacity .3s var(--ease); }
+#canvas .sous-flux-calque.sous-flux-partant { opacity: 0; }
+@keyframes sous-flux-apparition { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+    #canvas.apercu path[data-ruban], #canvas.apercu rect[data-id],
+    #canvas.apercu rect[data-outline-for], #canvas.apercu g[data-label-for],
+    #canvas.apercu .link-value, #canvas .sous-flux-calque { transition: none; }
+    #canvas .sous-flux-bande { animation: none; }
+}
 
 #canvas .plus-handle { cursor: pointer; }
 #canvas .plus-circle { fill: var(--grey); transition: r 0.1s var(--ease), fill 0.1s var(--ease); }

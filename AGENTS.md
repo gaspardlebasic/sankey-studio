@@ -857,6 +857,14 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
     chaque ruban concerné reçoit une bande de sa couleur sur sa tranche haute, tracée par
     `cheminBande` depuis son `data-ruban` (escales, pointe comprises) ; le reste s'estompe
     (`survol-sous-flux`, `sous-flux-eteint`). Le moteur n'en sait rien.
+    - **Trois intensités** (demandé le 2026-11-13) : la bande, pleine ; le reste d'un ruban
+      dont une part est retenue, pâle (0,2) — il se lit encore ; un ruban dont **rien** ne
+      passe par le nœud (`sous-flux-exclu`, bandeaux bio compris), presque effacé (0,05).
+    - **Tout glisse en 0,3 s**, à l'aller comme au retour (transition CSS de `opacity`). En
+      quittant le nœud, les bandes s'effacent en fondu (calque `sous-flux-partant`, retiré
+      après 300 ms, ses `data-source` ôtés pour ne plus tromper un sélecteur) ; d'un nœud à
+      l'autre, elles partent sur-le-champ. Rien si `prefers-reduced-motion`. Deux mutations
+      vérifiées (règle des exclus retirée, transition retirée).
   - **Clic** : le dessin est **refait** sur le sous-flux (`filtreSousFlux`, la liste des nœuds
     cliqués) — la disposition est recalculée. Cliquer un autre nœud **resserre** le filtre sur
     ce qui reste à l'écran : c'est ce que le survol venait de montrer. Recliquer le dernier

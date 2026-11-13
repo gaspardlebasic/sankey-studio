@@ -20,7 +20,19 @@ export const CLASSE_SURVOL = "survol-sous-flux";
 export const CLASSE_BANDE = "sous-flux-bande";
 /** Classe des éléments qui ne participent pas au sous-flux. */
 const CLASSE_ETEINT = "sous-flux-eteint";
+/**
+ * Classe des rubans (et bandeaux bio) dont RIEN ne passe par le nœud : ils
+ * s'estompent davantage que les rubans dont une part seulement est retenue —
+ * le reste de ceux-là se lit encore, en pâle, sous la bande.
+ */
+export const CLASSE_EXCLU = "sous-flux-exclu";
 const CLASSE_CALQUE = "sous-flux-calque";
+/** Ruban dont une part au moins passe par le nœud (sert aux tests et au débogage). */
+const CLASSE_RETENU = "sous-flux-retenu";
+/** Calque qui s'efface en fondu avant d'être retiré (cf. styles.css). */
+const CLASSE_PARTANT = "sous-flux-partant";
+/** Durée des fondus, la même que la transition CSS de la transparence. */
+const DUREE_FONDU_MS = 300;
 
 /** Les rubans peints (pas les bandeaux bio, pas nos propres bandes). */
 function rubans(svg: SVGSVGElement): SVGPathElement[] {
@@ -35,7 +47,10 @@ function rubans(svg: SVGSVGElement): SVGPathElement[] {
  * dessin s'estompe. `retenus` vient de `sousFlux()` sur le modèle DESSINÉ.
  */
 export function peindreSousFlux(svg: SVGSVGElement, focus: string, retenus: Map<string, Retenu>): void {
-    effacerSousFlux(svg);
+    // D'un nœud à l'autre, les bandes précédentes partent sur-le-champ : seule
+    // la transparence du dessin glisse d'un état à l'autre.
+    svg.querySelectorAll("." + CLASSE_CALQUE).forEach(el => el.remove());
+    remettre(svg);
     svg.classList.add(CLASSE_SURVOL);
 
     const actifs = new Set<string>([focus]);
@@ -46,6 +61,7 @@ export function peindreSousFlux(svg: SVGSVGElement, focus: string, retenus: Map<
         const r = retenus.get(cleLien(ruban.getAttribute("data-source") || "",
             ruban.getAttribute("data-target") || ""));
         if (!r || !(r.part > 0)) return;
+        ruban.classList.add(CLASSE_RETENU);
         let g: GeometrieRuban;
         try { g = JSON.parse(ruban.getAttribute("data-ruban") || ""); } catch { return; }
         // Juste au-dessus du groupe des rubans : par-dessus tous, sous les nœuds.
@@ -69,6 +85,12 @@ export function peindreSousFlux(svg: SVGSVGElement, focus: string, retenus: Map<
         calque.appendChild(bande);
     });
 
+    // Rubans et bandeaux bio dont rien ne passe par le nœud : les plus pâles.
+    svg.querySelectorAll("path[data-ruban][data-source][data-target]").forEach(el => {
+        const r = retenus.get(cleLien(el.getAttribute("data-source") || "", el.getAttribute("data-target") || ""));
+        if (!r || !(r.part > 0)) el.classList.add(CLASSE_EXCLU);
+    });
+
     // Ce qui ne participe pas s'estompe : nœuds, contours, étiquettes, et les
     // valeurs écrites sur les rubans dont on ne montre qu'une part (le chiffre
     // dirait le flux entier, pas celui qui passe par le nœud).
@@ -83,9 +105,28 @@ export function peindreSousFlux(svg: SVGSVGElement, focus: string, retenus: Map<
     });
 }
 
-/** Rend au dessin son état d'avant le survol. */
+/**
+ * Rend au dessin son état d'avant le survol. La transparence revient par la
+ * transition CSS ; les bandes, elles, s'effacent en fondu (calque « partant »)
+ * puis sont retirées — les ôter d'un coup ferait sauter le ruban d'un cran
+ * avant même que sa transparence ait commencé à remonter.
+ */
 export function effacerSousFlux(svg: SVGSVGElement): void {
+    remettre(svg);
+    svg.querySelectorAll("." + CLASSE_CALQUE + ":not(." + CLASSE_PARTANT + ")").forEach(el => {
+        el.classList.add(CLASSE_PARTANT);
+        // Plus de repères : une bande qui s'efface n'est plus le sous-flux de personne.
+        el.querySelectorAll("[data-source]").forEach(b => {
+            b.removeAttribute("data-source");
+            b.removeAttribute("data-target");
+        });
+        setTimeout(() => el.remove(), DUREE_FONDU_MS);
+    });
+}
+
+/** Retire les marques du survol (classes), sans toucher aux calques. */
+function remettre(svg: SVGSVGElement): void {
     svg.classList.remove(CLASSE_SURVOL);
-    svg.querySelectorAll("." + CLASSE_CALQUE).forEach(el => el.remove());
-    svg.querySelectorAll("." + CLASSE_ETEINT).forEach(el => el.classList.remove(CLASSE_ETEINT));
+    [CLASSE_ETEINT, CLASSE_EXCLU, CLASSE_RETENU].forEach(c =>
+        svg.querySelectorAll("." + c).forEach(el => el.classList.remove(c)));
 }

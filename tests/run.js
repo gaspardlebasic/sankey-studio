@@ -2997,16 +2997,35 @@ test("sous-flux : survoler un nœud peint la part de chaque lien qui passe par l
       importGms: mesure(named('Importation hors bretagne').find(n => n.column === 5).id, id('GMS Bretagne'))
     };
     const estompe = document.querySelector('#canvas').classList.contains('survol-sous-flux');
+    /* Transparence PEINTE, une fois la transition finie : un flux exclu doit
+       être plus pâle que le reste d'un flux dont une part est retenue. */
+    const rubanEl = (s, d) => document.querySelector('#canvas path[data-ruban][data-source="' + s
+      + '"][data-target="' + d + '"]:not(.lien-bio)');
+    const exportEl = rubanEl(tri, named('Exportation hors bretagne').find(n => n.column === 4).id);
+    const importEl = rubanEl(named('Importation hors bretagne').find(n => n.column === 2).id, tri);
+    const transition = getComputedStyle(exportEl).transitionDuration;
+    const pendant = parseFloat(getComputedStyle(exportEl).opacity);
+    await sleep(400);
+    const opacites = {
+      pendant,
+      exclu: parseFloat(getComputedStyle(exportEl).opacity),
+      partiel: parseFloat(getComputedStyle(importEl).opacity)
+    };
     const exportEteint = document.querySelector('#canvas rect[data-id="'
       + named('Exportation hors bretagne').find(n => n.column === 4).id + '"]').classList.contains('sous-flux-eteint');
     const cibleEteinte = document.querySelector('#canvas rect[data-id="' + cible.id + '"]').classList.contains('sous-flux-eteint');
     // Quitter le nœud efface tout : le dessin reste celui d'avant.
     const vide = canvasRect();
     await survolReel(vide.left + 3, vide.bottom - 3);
-    const restantes = document.querySelectorAll('#canvas .sous-flux-bande, #canvas .sous-flux-eteint').length;
+    // Les bandes s'effacent en fondu : encore là juste après, parties ensuite.
+    const enFondu = document.querySelectorAll('#canvas .sous-flux-bande').length;
+    await sleep(400);
+    const restantes = document.querySelectorAll('#canvas .sous-flux-bande, #canvas .sous-flux-eteint, #canvas .sous-flux-exclu').length;
+    const rendue = parseFloat(getComputedStyle(exportEl).opacity);
     const apres = rubansPeints();
     await versEdition();
-    return { parts, estompe, exportEteint, cibleEteinte, restantes, memeDessin: JSON.stringify(avant) === JSON.stringify(apres) };
+    return { parts, estompe, exportEteint, cibleEteinte, restantes, enFondu, rendue, transition, opacites,
+             memeDessin: JSON.stringify(avant) === JSON.stringify(apres) };
   `);
   const pres = (v, att, m) => attendu(v !== null && Math.abs(v - att) < 0.03, `${m} : attendu ~${att}, peint ${v}`);
   pres(r.parts.importation, 260 / 320, "Importation → Tri : la part de Tri qui part vers Lentilles sèches");
@@ -3018,7 +3037,14 @@ test("sous-flux : survoler un nœud peint la part de chaque lien qui passe par l
   attendu(r.estompe, "le reste du diagramme s'estompe");
   attendu(r.exportEteint, "un nœud hors du sous-flux s'estompe");
   attendu(!r.cibleEteinte, "le nœud survolé reste net");
-  egal(r.restantes, 0, "quitter le nœud efface les bandes et l'estompage");
+  egal(r.transition, "0.3s", "la transparence glisse en 0,3 s");
+  attendu(r.opacites.pendant > r.opacites.exclu + 0.1,
+    "la transparence est animée, pas posée d'un coup : " + JSON.stringify(r.opacites));
+  attendu(r.opacites.exclu < r.opacites.partiel / 2,
+    "un flux exclu est bien plus pâle que le reste d'un flux retenu : " + JSON.stringify(r.opacites));
+  attendu(r.enFondu > 0, "quitter le nœud fait s'effacer les bandes en fondu, pas d'un coup");
+  egal(r.restantes, 0, "puis efface les bandes et l'estompage");
+  egal(r.rendue, 1, "et rend au ruban sa transparence d'origine");
   attendu(r.memeDessin, "le survol ne redessine pas le diagramme");
 });
 
