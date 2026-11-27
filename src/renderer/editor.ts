@@ -2409,8 +2409,11 @@ function trierColonneParValeur(column: number): void {
     });
     const valeurs = new Map<string, number>();
     const voulu = new Map<FlowNode, number>();
-    // Les valeurs que l'aperçu écrira : les inconnues déduites comprises.
-    const liens = resoudreEquilibrage(model).model.links;
+    // Les valeurs que l'aperçu écrira : les inconnues déduites comprises,
+    // seulement si le réglage d'équilibrage est actif.
+    const liens = options.links.deduireInconnues !== false
+        ? resoudreEquilibrage(model).model.links
+        : model.links;
     cellules.forEach(liste => {
         liste.forEach(n => valeurs.set(n.id, valeurNoeud(n.id, liens)));
         // À valeur égale, l'ordre d'avant départage (tri stable).
@@ -2705,13 +2708,15 @@ function buildSidebar(): void {
     sidebar.innerHTML = "";
 
     // L'équilibrage sert deux fois : le bilan des inconnues, et la valeur
-    // déduite du lien sélectionné. On le calcule une fois pour ce panneau.
+    // déduite du lien sélectionné. On le calcule une fois pour ce panneau ; le
+    // réglage « Déduire les valeurs inconnues » décide si l'on s'en sert.
+    const deduireInconnues = options.links.deduireInconnues !== false;
     const equilibrage = resoudreEquilibrage(model);
 
     const ap = buildAlertePanel();
     if (ap) sidebar.appendChild(ap);
 
-    const eq = buildEquilibragePanel(equilibrage);
+    const eq = buildEquilibragePanel(equilibrage, deduireInconnues);
     if (eq) sidebar.appendChild(eq);
 
     const ep = buildExcelPanel();
@@ -2779,7 +2784,7 @@ function buildSidebar(): void {
                 if (eqN.inconnuesEntrantes) sens.push(compte(eqN.inconnuesEntrantes, "entrante"));
                 if (eqN.inconnuesSortantes) sens.push(compte(eqN.inconnuesSortantes, "sortante"));
                 let texte = eqN.etat === "boucle" ? "1 (boucle)" : sens.join(" · ");
-                if (eqN.resolues > 0) {
+                if (deduireInconnues && eqN.resolues > 0) {
                     texte += ` — ${eqN.resolues} déduite${eqN.resolues > 1 ? "s" : ""}`;
                 }
                 s.appendChild(readonly("Inconnues de flux", texte));
@@ -2801,7 +2806,14 @@ function buildSidebar(): void {
             if (excelPath) {
                 const resolu = equilibrage.model.links.find(x => x.id === l.id);
                 const unite = l.unit ? " " + l.unit : "";
-                if (l.inconnue) {
+                if (l.inconnue && !deduireInconnues) {
+                    s.appendChild(readonly(
+                        "Valeur du flux", "Inconnue — équilibrage désactivé"));
+                    s.appendChild(hint(
+                        "Case vide dans le classeur. Pour la déduire de l'équilibre du "
+                        + "nœud : « Liens ▸ Valeurs des liens ▸ Déduire les valeurs inconnues »."
+                    ));
+                } else if (l.inconnue) {
                     if (resolu && resolu.calculee) {
                         s.appendChild(readonly(
                             "Valeur du flux", formatValue(resolu.value) + unite + " — déduite"));
@@ -3039,11 +3051,39 @@ function buildAlerteRecopieVive(a: Remplissage): HTMLElement {
  * gardent une inconnue indéterminée sont nommés ici — sans cela, le chiffre
  * manquant dans l'aperçu n'aurait aucune explication.
  */
-function buildEquilibragePanel(eq: ReturnType<typeof resoudreEquilibrage>): HTMLElement | null {
+function buildEquilibragePanel(
+    eq: ReturnType<typeof resoudreEquilibrage>, actif: boolean
+): HTMLElement | null {
     const touche = eq.noeuds.filter(e => e.inconnues > 0);
     if (!touche.length) return null;
 
     const s = section("Équilibrage des flux");
+    const nom = (id: string) => nodeById(id)?.name || id;
+    const MAX = 8;
+    const combienDe = (e: (typeof touche)[number]) => {
+        const compte = (n: number, sens: string) =>
+            `${n} inconnue${n > 1 ? "s" : ""} ${sens}`;
+        const morceaux: string[] = [];
+        if (e.inconnuesEntrantes) morceaux.push(compte(e.inconnuesEntrantes, "entrante"));
+        if (e.inconnuesSortantes) morceaux.push(compte(e.inconnuesSortantes, "sortante"));
+        return e.etat === "boucle" ? "1 inconnue (boucle)" : morceaux.join(" et ");
+    };
+
+    if (!actif) {
+        s.appendChild(hint(
+            "L'équilibrage est désactivé : les valeurs inconnues restent à zéro. "
+            + "Pour l'activer : « Liens ▸ Valeurs des liens ▸ Déduire les valeurs "
+            + "inconnues »."
+        ));
+        touche.slice(0, MAX).forEach(e => {
+            const p = document.createElement("p");
+            p.className = "hint";
+            p.textContent = `${nom(e.id)} — ${combienDe(e)}.`;
+            s.appendChild(p);
+        });
+        return s;
+    }
+
     s.appendChild(hint(
         "Une valeur laissée vide dans « Valeur du flux » est une inconnue. "
         + "Quand un nœud n'en a qu'une, l'aperçu la déduit de l'égalité "
@@ -3057,15 +3097,8 @@ function buildEquilibragePanel(eq: ReturnType<typeof resoudreEquilibrage>): HTML
         ));
     }
 
-    const nom = (id: string) => nodeById(id)?.name || id;
-    const MAX = 8;
     touche.slice(0, MAX).forEach(e => {
-        const compte = (n: number, sens: string) =>
-            `${n} inconnue${n > 1 ? "s" : ""} ${sens}`;
-        const morceaux: string[] = [];
-        if (e.inconnuesEntrantes) morceaux.push(compte(e.inconnuesEntrantes, "entrante"));
-        if (e.inconnuesSortantes) morceaux.push(compte(e.inconnuesSortantes, "sortante"));
-        const combien = e.etat === "boucle" ? "1 inconnue (boucle)" : morceaux.join(" et ");
+        const combien = combienDe(e);
         const reste = e.inconnues - e.resolues;
         // Ce que la propagation a déjà débloqué, avant la raison du blocage.
         const deja = e.resolues > 0 && e.etat !== "resolue"
@@ -3563,6 +3596,22 @@ function carteLiens(rr: () => void): HTMLElement {
     b.appendChild(divider());
     b.appendChild(subhead("Valeurs des liens"));
     const vl = options.linkValueLabels;
+    /* Le réglage qui commande TOUT l'équilibrage. Il vit ici, avec les valeurs
+       de liens, et pas dans une carte qui n'apparaît que lorsqu'il y a des
+       inconnues : sans lui, la fonctionnalité n'avait aucun point d'entrée
+       visible. */
+    b.appendChild(checkField("Déduire les valeurs inconnues", options.links.deduireInconnues,
+        x => {
+            options.links.deduireInconnues = x;
+            rr();
+            buildSidebar();
+        }));
+    b.appendChild(hint(
+        "Une case « Valeur du flux » laissée VIDE dans Excel est une inconnue. "
+        + "Cochée, l'aperçu la déduit de l'équilibre entrées = sorties de son nœud, "
+        + "de proche en proche, et l'écrit en italique ; le classeur garde sa case vide. "
+        + "Décochée, l'inconnue vaut zéro et n'est pas calculée."
+    ));
     b.appendChild(checkField("Afficher", vl.show, x => { vl.show = x; rr(); }));
     b.appendChild(textField("Unité (si aucune dans les données)", vl.unitText,
         x => { vl.unitText = x; rr(); }));
@@ -4170,6 +4219,9 @@ function normaliserLiens(): void {
     if (L.traversee !== "passage" && L.traversee !== "direct") {
         L.traversee = d.traversee;
     }
+    // Réglage venu après les premiers projets : sans lui, l'équilibrage était
+    // automatique — on garde ce comportement, mais il devient contrôlable.
+    if (typeof L.deduireInconnues !== "boolean") L.deduireInconnues = true;
     // `Object.assign` ne fusionne que le premier niveau : un projet écrit avant
     // le bandeau bio arrive sans `links.bio` du tout.
     L.bio = Object.assign({}, d.bio, L.bio || {});

@@ -59,6 +59,8 @@ Sur un Excel sans `DialogApi 1.2`, l'éditeur reste dans le volet.
   suivant, et la déduction se propage ainsi de proche en proche. Le panneau
   « Équilibrage des flux » compte les inconnues nœud par nœud et dit pourquoi une valeur n'a pas
   pu être déduite. La valeur calculée **n'est jamais réécrite dans Excel** : la case reste vide.
+  Le calcul se règle dans **« Liens ▸ Valeurs des liens ▸ Déduire les valeurs inconnues »**
+  (coché par défaut) ; décoché, l'inconnue vaut zéro.
 - **Panneau d'apparence** en cartes repliables : liens (couleur, dégradé, opacité, courbure,
   bordure), nœuds, étiquettes, titres de colonnes, valeurs des liens, marges du graphique.
   **Couleur par lien** possible, sinon le lien prend celle de son nœud d'origine.

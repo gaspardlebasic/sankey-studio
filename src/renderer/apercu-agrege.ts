@@ -21,6 +21,11 @@ export function aDesNiveaux(m: FlowModel): boolean {
     return m.nodes.some(n => n.parent);
 }
 
+/** Le réglage « Liens ▸ Déduire les valeurs inconnues » est-il actif ? */
+export function equilibrageActif(options?: SankeyOptions): boolean {
+    return !options || options.links.deduireInconnues !== false;
+}
+
 /**
  * Ce que l'aperçu dessine. Sans hiérarchie, le modèle TEL QUEL — c'est ce qui
  * garantit qu'un diagramme sans parent s'affiche au pixel près comme avant.
@@ -28,13 +33,15 @@ export function aDesNiveaux(m: FlowModel): boolean {
  * place à ses enfants, et la part de ses flux qu'ils ne détaillent pas va à son
  * « (non détaillé) », grisé.
  *
- * Dans les deux cas, l'équilibrage passe d'abord : une valeur de flux inconnue
- * qu'un nœud permet de déduire est calculée AVANT la projection, sinon les
- * totaux des parents repliés seraient faux. Le calcul ne touche pas le modèle
- * de l'éditeur.
+ * Dans les deux cas, l'équilibrage passe d'abord (si le réglage l'autorise) :
+ * une valeur de flux inconnue qu'un nœud permet de déduire est calculée AVANT
+ * la projection, sinon les totaux des parents repliés seraient faux. Le calcul
+ * ne touche pas le modèle de l'éditeur.
  */
-export function modeleAffiche(m: FlowModel, deplies: Set<string>): FlowModel {
-    const resolu = resoudreEquilibrage(m).model;
+export function modeleAffiche(
+    m: FlowModel, deplies: Set<string>, options?: SankeyOptions
+): FlowModel {
+    const resolu = equilibrageActif(options) ? resoudreEquilibrage(m).model : m;
     if (!aDesNiveaux(resolu)) return resolu;
     const p = projeter(resolu, deplies);
     const parId = new Map(resolu.links.map(l => [l.id, l]));
@@ -92,14 +99,14 @@ export function blocsDessines(
     /* L'équilibrage se calcule sur le diagramme ENTIER, avant de le découper
        par filière : un flux qui traverse deux filières reste un flux du nœud,
        même s'il disparaît de l'aperçu séparé. */
-    const resolu = resoudreEquilibrage(m).model;
+    const resolu = equilibrageActif(options) ? resoudreEquilibrage(m).model : m;
     const groupes = groupesParFiliere(resolu)
-        .map(g => ({ nom: g.nom, model: modeleAffiche(g.model, deplies) }));
+        .map(g => ({ nom: g.nom, model: modeleAffiche(g.model, deplies, options) }));
     const empiles = options.filieres.split && groupes.length > 1;
     if (!filtre.length) {
-        return { empiles, blocs: empiles ? groupes : [{ nom: "", model: modeleAffiche(resolu, deplies) }] };
+        return { empiles, blocs: empiles ? groupes : [{ nom: "", model: modeleAffiche(resolu, deplies, options) }] };
     }
-    const tout = empiles ? reunir(groupes.map(g => g.model)) : modeleAffiche(resolu, deplies);
+    const tout = empiles ? reunir(groupes.map(g => g.model)) : modeleAffiche(resolu, deplies, options);
     const filtre_ = filtrerChaine(tout, filtre);
     if (!empiles) return { empiles, blocs: [{ nom: "", model: filtre_ }] };
     return { empiles, blocs: groupesParFiliere(filtre_).filter(g => g.model.nodes.length) };

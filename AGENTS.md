@@ -430,6 +430,12 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
     son tour. Une chaîne A → B → C se remplit de proche en proche (`propager`). Un nœud qui
     n'avait que deux inconnues peut donc les voir toutes deux déduites ; `resolues` les compte,
     et `valeur` n'est donnée que s'il n'y en avait qu'une.
+  - **Le réglage** est `options.links.deduireInconnues` — « Liens ▸ Valeurs des liens ▸ Déduire
+    les valeurs inconnues » —, **coché par défaut**. Décoché, aucune déduction : l'inconnue vaut
+    zéro, le panneau « Équilibrage des flux » le dit et le lien sélectionné affiche « équilibrage
+    désactivé ». Il suit l'apparence (`document.settings`) ; un projet d'avant le reçoit à `true`
+    (`normaliserLiens`). Le réglage ne se contente pas de cacher l'italique : `modeleAffiche` et
+    `blocsDessines` ne résolvent plus rien, et le tri par valeur lit les valeurs brutes.
   - **Rien n'est inventé** quand la déduction n'a pas de sens : deux inconnues qui restent au
     même nœud (indéterminé), unités qui ne s'accordent pas (une unité vide se lit dans les
     autres), reste nul ou négatif (incohérence), aucun flux connu en face (isolé), boucle sur le

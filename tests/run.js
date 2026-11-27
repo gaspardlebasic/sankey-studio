@@ -2987,6 +2987,9 @@ test("équilibrage : une inconnue unique est déduite et écrite en italique", "
       });
       await sleep(120);
       const panneau = document.querySelector('#sidebar').textContent;
+      const caseEq = () => [...document.querySelectorAll('#sidebar .field.check')]
+        .find(f => f.textContent.trim() === 'Déduire les valeurs inconnues');
+      const caseInitiale = caseEq() && caseEq().querySelector('input').checked;
       await cocher('Liens', 'Afficher');
       await versApercu();
       const label = (s, t) => [...document.querySelectorAll('#canvas .link-value')]
@@ -2994,7 +2997,7 @@ test("équilibrage : une inconnue unique est déduite et écrite en italique", "
       const deduit = label('b', 'd');
       const connu = label('a', 'b');
       const modele = T.model().links.find(l => l.id === 'l3');
-      return {
+      const avant = {
         panneau,
         texte: deduit && deduit.firstChild.nodeValue,
         texteConnu: connu && connu.firstChild.nodeValue,
@@ -3006,21 +3009,35 @@ test("équilibrage : une inconnue unique est déduite et écrite en italique", "
         modeleInconnue: modele && modele.inconnue,
         modeleCalculee: modele && modele.calculee
       };
+      // Décoché, le calcul ne s'applique plus : l'inconnue reste à zéro.
+      await cocher('Liens', 'Déduire les valeurs inconnues');
+      await sleep(100);
+      const apres = {
+        panneau: document.querySelector('#sidebar').textContent,
+        deduitPeint: !!label('b', 'd'),
+        caseCochee: caseEq() && caseEq().querySelector('input').checked
+      };
+      return { caseInitiale, avant, apres };
     } finally {
       await versEdition();
     }
   `);
-  attendu(r.panneau.includes("Équilibrage des flux"), "le panneau doit annoncer l'équilibrage");
-  attendu(r.panneau.includes("déduite : 70 t"), "le panneau doit donner la valeur déduite");
-  egal(r.texte, "70 t", "la valeur déduite doit être écrite sur le ruban");
-  egal(r.texteConnu, "100 t", "les valeurs connues restent inchangées");
-  egal(r.style, "italic", "la valeur déduite est en italique");
-  egal(r.styleConnu, "normal", "une valeur connue ne l'est pas");
-  egal(r.marque, "true", "le libellé porte la marque « déduite »");
-  egal(r.marqueConnue, null, "pas de marque sur une valeur connue");
-  egal(r.modeleValeur, 0, "le modèle garde la case vide (0)");
-  egal(r.modeleInconnue, true, "et son statut d'inconnue");
-  egal(r.modeleCalculee, undefined, "la valeur déduite n'est pas rangée dans le modèle");
+  egal(r.caseInitiale, true, "le réglage « Déduire les valeurs inconnues » existe et est coché");
+  attendu(r.avant.panneau.includes("Équilibrage des flux"), "le panneau doit annoncer l'équilibrage");
+  attendu(r.avant.panneau.includes("déduite : 70 t"), "le panneau doit donner la valeur déduite");
+  egal(r.avant.texte, "70 t", "la valeur déduite doit être écrite sur le ruban");
+  egal(r.avant.texteConnu, "100 t", "les valeurs connues restent inchangées");
+  egal(r.avant.style, "italic", "la valeur déduite est en italique");
+  egal(r.avant.styleConnu, "normal", "une valeur connue ne l'est pas");
+  egal(r.avant.marque, "true", "le libellé porte la marque « déduite »");
+  egal(r.avant.marqueConnue, null, "pas de marque sur une valeur connue");
+  egal(r.avant.modeleValeur, 0, "le modèle garde la case vide (0)");
+  egal(r.avant.modeleInconnue, true, "et son statut d'inconnue");
+  egal(r.avant.modeleCalculee, undefined, "la valeur déduite n'est pas rangée dans le modèle");
+  attendu(r.apres.panneau.includes("L'équilibrage est désactivé"),
+    "décoché, le panneau dit que l'équilibrage est désactivé");
+  attendu(!r.apres.deduitPeint, "décoché, aucune valeur déduite n'est peinte");
+  egal(r.apres.caseCochee, false, "la case est bien décochée");
 });
 
 test("aperçu : cliquer un libellé sélectionne son nœud", "complexe", async p => {

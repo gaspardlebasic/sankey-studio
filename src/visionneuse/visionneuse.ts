@@ -43,7 +43,7 @@ function demarrer(): void {
 
     /** Une infobulle sur chaque nœud : son nom, ce qui le traverse. */
     function infobulles(): void {
-        const affiche = modeleAffiche(model, deplies);
+        const affiche = modeleAffiche(model, deplies, d.options);
         const entree = new Map<string, number>(), sortie = new Map<string, number>();
         const unite = new Map<string, string>();
         affiche.links.forEach(l => {

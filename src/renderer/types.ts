@@ -287,6 +287,13 @@ export interface SankeyOptions {
             show: boolean;
             color: string;
         };
+        /**
+         * Déduire les valeurs de flux INCONNUES (case « Valeur du flux » vide)
+         * par l'équilibre entrées = sorties de chaque nœud. La déduction se
+         * propage de proche en proche ; la valeur s'écrit en italique dans
+         * l'aperçu mais n'est jamais réécrite dans le classeur.
+         */
+        deduireInconnues: boolean;
         /** Pointe au bout des rubans, du côté du nœud d'arrivée. */
         fleches: FlecheLiens;
         showBorder: boolean;
@@ -454,6 +461,7 @@ export function defaultOptions(): SankeyOptions {
             traversee: "passage",
             // « field » de la palette BASIC : le vert des cultures.
             bio: { show: true, color: "#adcb47" },
+            deduireInconnues: true,
             fleches: defaultFleches(),
             showBorder: false,
             borderColor: "#000000",
