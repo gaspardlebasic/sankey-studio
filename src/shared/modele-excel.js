@@ -1,4 +1,5 @@
 "use strict";
+const { anneeDeLien, comparerAnnee } = require("./annees.js");
 /**
  * Schéma du classeur Sankey — SOURCE DE VÉRITÉ UNIQUE.
  *
@@ -29,8 +30,11 @@ const NODE_COLS = [
   "Parent",
   "ID parent"
 ];
-// Un lien est identifié par le couple (ID origine, ID destination) — aucune
-// donnée « externe » : les deux IDs vivent dans le tableau des nœuds.
+// Un lien est identifié par le couple (ID origine, ID destination) ET son
+// année — aucune donnée « externe » : les deux IDs vivent dans le tableau des
+// nœuds. « Année » est ajoutée EN FIN de liste, comme « Couloir » et « Type »
+// l'ont été : un classeur existant garde ainsi toutes ses colonnes à la même
+// place, et la nouvelle colonne s'ajoute à droite.
 const LINK_COLS = [
   "Filière",
   "Origine",
@@ -39,8 +43,17 @@ const LINK_COLS = [
   "Unité",
   "ID origine",
   "ID destination",
-  "Part bio / durable"
+  "Part bio / durable",
+  "Année"
 ];
+
+/**
+ * Colonne « Année » : une valeur de flux peut dépendre de l'année. Plusieurs
+ * lignes peuvent décrire le même couple (origine, destination), une par année ;
+ * l'aperçu n'en dessine qu'une à la fois (`src/shared/annees.js`). Une case
+ * vide vaut « toutes les années », et une colonne absente vaut « pas d'année ».
+ */
+const LINK_COL_ANNEE = "Année";
 
 /**
  * La colonne que le complément LIT SANS JAMAIS L'ÉCRIRE.
@@ -57,8 +70,10 @@ const LINK_COL_BIO = "Part bio / durable";
 
 /**
  * Colonnes des liens réellement écrites — et l'ordre exact des cellules que
- * `buildModelRows` produit pour chaque lien. Toute colonne en lecture seule
- * doit rester EN FIN de `LINK_COLS`, sans quoi cet alignement se romprait.
+ * `buildModelRows` produit pour chaque lien. Cet ordre est celui de
+ * `LINK_COLS` privé de la part bio : une lecture seule en fin de `LINK_COLS`
+ * ne décale donc pas les cellules produites, puisque le tableau est rempli par
+ * NOM d'en-tête et non par position.
  */
 const LINK_COLS_ECRITES = LINK_COLS.filter(c => c !== LINK_COL_BIO);
 
@@ -280,8 +295,10 @@ function buildModelRows(model, formulaMap) {
   // les voit à l'écran. À placement égal, l'ordre du modèle est conservé (tri
   // stable) : c'est celui de la saisie ou du déplacement à la main, et il ne
   // doit jamais être remplacé par l'alphabet. Un lien se range d'après son
-  // origine, puis sa destination. On trie des copies : le modèle de l'app n'est
-  // pas touché. Une hiérarchie se lit en plan : chaque enfant sous son parent.
+  // origine, puis sa destination, puis son ANNÉE : les lignes d'un même couple
+  // restent ensemble et se lisent dans l'ordre chronologique. On trie des
+  // copies : le modèle de l'app n'est pas touché. Une hiérarchie se lit en plan :
+  // chaque enfant sous son parent.
   const noeuds = rangerEnPlan(model.nodes);
   const parents = parentsValides(model.nodes);
   const liens = model.links.slice().sort((a, b) => {
@@ -292,7 +309,8 @@ function buildModelRows(model, formulaMap) {
       comparerPlacement(sa, sb) ||
       comparerPlacement(ta, tb) ||
       comparerTexte(nomDe(sa, a.source), nomDe(sb, b.source)) ||
-      comparerTexte(nomDe(ta, a.target), nomDe(tb, b.target))
+      comparerTexte(nomDe(ta, a.target), nomDe(tb, b.target)) ||
+      comparerAnnee(anneeDeLien(a), anneeDeLien(b))
     );
   });
   const nodeRows = noeuds.map(n => [
@@ -335,12 +353,24 @@ function buildModelRows(model, formulaMap) {
       prises.add(e.source);
       formules[i] = e.f;
     };
-    liens.forEach((l, i) => prendre(i, "id:" + l.source + " " + l.target));
-    liens.forEach((l, i) => prendre(i, "name:" + bouts[i].sName + " " + bouts[i].tName));
+    // L'année fait partie de l'identité d'une ligne : deux valeurs du même
+    // couple pour deux années sont deux formules distinctes, et la clé sans
+    // année reste lue en repli pour les classeurs d'avant la colonne.
+    liens.forEach((l, i) => {
+      const suffixe = anneeDeLien(l) ? "|" + anneeDeLien(l) : "";
+      prendre(i, "id:" + l.source + " " + l.target + suffixe);
+      if (suffixe) prendre(i, "id:" + l.source + " " + l.target);
+    });
+    liens.forEach((l, i) => {
+      const suffixe = anneeDeLien(l) ? "|" + anneeDeLien(l) : "";
+      prendre(i, "name:" + bouts[i].sName + " " + bouts[i].tName + suffixe);
+      if (suffixe) prendre(i, "name:" + bouts[i].sName + " " + bouts[i].tName);
+    });
   }
 
   const linkRows = liens.map((l, i) => {
     const { filiere, sName, tName } = bouts[i];
+    const annee = anneeDeLien(l);
     // Si la valeur était une formule, on la conserve (ne pas écraser un calcul).
     const formula = formules[i];
     /* Une valeur INCONNUE (case vide dans le classeur) y reste vide : le
@@ -359,14 +389,16 @@ function buildModelRows(model, formulaMap) {
       valueCell,
       { t: "s", v: l.unit || "" },
       { t: "s", v: l.source }, // ID origine
-      { t: "s", v: l.target } // ID destination
+      { t: "s", v: l.target }, // ID destination
+      { t: "s", v: annee } // Année — vide = toutes les années
     ];
   });
   return { nodeRows, linkRows };
 }
 
 module.exports = {
-  NODE_COLS, LINK_COLS, LINK_COL_BIO, LINK_COLS_ECRITES, NODE_START, GAP, LINK_START,
+  NODE_COLS, LINK_COLS, LINK_COL_ANNEE, LINK_COL_BIO, LINK_COLS_ECRITES,
+  NODE_START, GAP, LINK_START,
   toInt, toNum, couloirDe, TYPE_LABELS, typeDe, typeDepuisTexte, partBioDepuisTexte,
   comparerTexte, comparerFiliere, comparerPlacement, filiereDuLien,
   ancrerFormule, parentsValides, rangerEnPlan, buildModelRows

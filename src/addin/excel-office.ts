@@ -20,9 +20,11 @@
  */
 
 import {
-  NODE_COLS, LINK_COLS, LINK_COL_BIO, LINK_COLS_ECRITES, NODE_START, LINK_START, GAP,
+  NODE_COLS, LINK_COLS, LINK_COL_ANNEE, LINK_COL_BIO, LINK_COLS_ECRITES,
+  NODE_START, LINK_START, GAP,
   buildModelRows, toInt, toNum, typeDepuisTexte, partBioDepuisTexte
 } from "../shared/modele-excel.js";
+import { anneeDepuisCellule } from "../shared/annees.js";
 import type {
   Cellule, FormulePreservee, Modele, NodeKind
 } from "../shared/modele-excel.js";
@@ -46,6 +48,8 @@ export interface LienExcel {
   sourceId: string | null; targetId: string | null;
   sourceName: string; targetName: string;
   value: number; unit: string;
+  /** Année de la valeur ; absente quand la ligne vaut pour toutes les années. */
+  annee?: string;
   /** La case « Valeur du flux » est VIDE : le lien porte une inconnue. */
   inconnue?: boolean;
   /** Part du flux en bio / durable, de 0 à 1 (0 = colonne vide ou absente). */
@@ -60,6 +64,8 @@ export interface DonneesExcel {
   hasKind?: boolean;
   /** Idem pour « Parent » / « ID parent » : sans elles, l'app garde sa hiérarchie. */
   hasParent?: boolean;
+  /** Le tableau des liens porte-t-il « Année » ? */
+  hasAnnee?: boolean;
   /** Le tableau des liens porte-t-il « Part bio / durable » ? */
   hasBio?: boolean;
   sheetName?: string;
@@ -403,6 +409,10 @@ export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel |
           unit: texte(col(ligne, "Unité")),
           bio: partBioDepuisTexte(col(ligne, LINK_COL_BIO))
         };
+        // L'année n'est posée que lorsqu'elle existe : une ligne sans année a
+        // exactement la forme d'avant la colonne.
+        const annee = anneeDepuisCellule(col(ligne, LINK_COL_ANNEE));
+        if (annee) lien.annee = annee;
         if (inconnue) lien.inconnue = true;
         links.push(lien);
       }
@@ -422,6 +432,7 @@ export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel |
       hasLane: !!(t.noeuds && t.noeuds.index.has("Couloir")),
       hasKind: !!(t.noeuds && t.noeuds.index.has("Type")),
       hasParent: !!(t.noeuds && (t.noeuds.index.has("Parent") || t.noeuds.index.has("ID parent"))),
+      hasAnnee: !!(t.liens && t.liens.index.has(LINK_COL_ANNEE)),
       hasBio: !!(t.liens && t.liens.index.has(LINK_COL_BIO)),
       colonnesManquantes: (manquantes.noeuds.length > 0 || manquantes.liens.length > 0) ? manquantes : undefined
     };
@@ -568,6 +579,7 @@ function collecterFormules(
   if (iVal === undefined) return out;
   const iOn = ix.get("Origine"), iDn = ix.get("Destination");
   const iOi = ix.get("ID origine"), iDi = ix.get("ID destination");
+  const iAnnee = ix.get(LINK_COL_ANNEE);
 
   const lignesV = lignesDonnees(valeurs);
   const lignesF = lignesDonnees(formules);
@@ -581,9 +593,12 @@ function collecterFormules(
     const dNom = iDn === undefined ? "" : texte(v[iDn]);
     const oId = iOi === undefined ? "" : texte(v[iOi]);
     const dId = iDi === undefined ? "" : texte(v[iDi]);
+    // L'année distingue deux formules du même couple (deux années).
+    const annee = iAnnee === undefined ? "" : anneeDepuisCellule(v[iAnnee]);
+    const suffixe = annee ? "|" + annee : "";
     const e: FormulePreservee = { f: formule, source: i };
-    if (oId && dId) poser("id:" + oId + " " + dId, e);
-    if (oNom && dNom) poser("name:" + oNom + " " + dNom, e);
+    if (oId && dId) poser("id:" + oId + " " + dId + suffixe, e);
+    if (oNom && dNom) poser("name:" + oNom + " " + dNom + suffixe, e);
   }
   return out;
 }
@@ -606,12 +621,19 @@ function collecterFormules(
  * Une ligne nouvelle n'a rien à reprendre : ses colonnes étrangères sont vidées.
  */
 
-/** Ce qui identifie une ligne : une clé forte (les ID), une clé de repli (les noms). */
-interface Identite { fortes: string[]; replis: string[]; }
+/**
+ * Ce qui identifie une ligne : une clé forte (les ID), une clé de repli (les
+ * noms), et des colonnes FACULTATIVES qui complètent la clé quand elles sont
+ * renseignées. « Année » en est une : deux valeurs du même couple forment deux
+ * lignes distinctes, mais un classeur d'avant la colonne n'a pas à voir ses
+ * lignes perdre leur identité.
+ */
+interface Identite { fortes: string[]; replis: string[]; optionnelles?: string[]; }
 
 const ID_NOEUD: Identite = { fortes: ["ID"], replis: ["Noeud"] };
 const ID_LIEN: Identite = {
-  fortes: ["ID origine", "ID destination"], replis: ["Origine", "Destination"]
+  fortes: ["ID origine", "ID destination"], replis: ["Origine", "Destination"],
+  optionnelles: [LINK_COL_ANNEE]
 };
 
 /** Ce qu'on relit d'une cellule : sa formule s'il y en a une, sinon sa valeur. */
@@ -658,6 +680,11 @@ function apparierLignes(
       if (!b) return null;                       // clé incomplète : inutilisable
       bouts.push(b);
     }
+    for (const nom of ident.optionnelles || []) {
+      const i = t.index.get(nom);
+      const b = i === undefined ? "" : texte(ligne[i]).trim();
+      if (b) bouts.push(b);
+    }
     return bouts.join(" ");
   };
   const cleNouvelle = (ligne: Cellule[], cols: string[]): string | null => {
@@ -667,6 +694,11 @@ function apparierLignes(
       const b = i < 0 ? "" : texte(ligne[i] && ligne[i].v).trim();
       if (!b) return null;
       bouts.push(b);
+    }
+    for (const nom of ident.optionnelles || []) {
+      const i = nos.indexOf(nom);
+      const b = i < 0 ? "" : texte(ligne[i] && ligne[i].v).trim();
+      if (b) bouts.push(b);
     }
     return bouts.join(" ");
   };
@@ -1080,6 +1112,11 @@ function planifierLignes(
       if (!b) return null;
       bouts.push(b);
     }
+    for (const nom of ident.optionnelles || []) {
+      const i = t.index.get(nom);
+      const b = i === undefined ? "" : texte(ligne[i]).trim();
+      if (b) bouts.push(b);
+    }
     return bouts.join(" ");
   };
   const cleVoulue = (ligne: Cellule[]): string | null => {
@@ -1089,6 +1126,11 @@ function planifierLignes(
       const b = i < 0 ? "" : texte(ligne[i] && ligne[i].v).trim();
       if (!b) return null;
       bouts.push(b);
+    }
+    for (const nom of ident.optionnelles || []) {
+      const i = nos.indexOf(nom);
+      const b = i < 0 ? "" : texte(ligne[i] && ligne[i].v).trim();
+      if (b) bouts.push(b);
     }
     return bouts.join(" ");
   };
@@ -1618,7 +1660,20 @@ export async function ajouterColonnesManquantes(nomFeuille?: string): Promise<Re
 
         const currentCols = range.columnCount || 0;
         const currentHeaders = (headerRange.values && headerRange.values[0]) || [];
-        
+
+        /* Le tableau des liens est le dernier des deux : tout ce qui vit à sa
+           droite appartient à l'utilisatrice. On INSÈRE donc les colonnes
+           nouvelles à son bord droit avant de l'élargir — sinon `resize`
+           avalerait la première colonne voisine, et son contenu serait perdu.
+           C'est le même souci que pour « Parent » / « ID parent », mais de
+           l'autre côté du tableau : une colonne ajoutée un jour (« Année ») ne
+           doit pas manger un « Commentaire ». */
+        const liensEndCol = range.columnIndex + currentCols;
+        feuille.getRangeByIndexes(0, liensEndCol, 1, manquantes.liens.length)
+          .getEntireColumn()
+          .insert(Excel.InsertShiftDirection.right);
+        await context.sync();
+
         // Construire les nouveaux en-têtes : existants + manquants
         const newHeaders = currentHeaders.slice();
         manquantes.liens.forEach(h => newHeaders.push(h));

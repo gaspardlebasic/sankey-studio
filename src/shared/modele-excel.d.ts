@@ -19,14 +19,18 @@ export interface NoeudModele {
   parent?: string | null;
 }
 export interface LienModele {
-  source: string; target: string; value: number; unit?: string;
+  id?: string; source: string; target: string; value: number; unit?: string;
   /** Valeur absente du classeur : la cellule s'écrit VIDE, jamais 0. */
   inconnue?: boolean;
+  /** Année de la valeur ; absente = vaut pour toutes les années. */
+  annee?: string | null;
 }
 export interface Modele { nodes: NoeudModele[]; links: LienModele[]; }
 
 export const NODE_COLS: string[];
 export const LINK_COLS: string[];
+/** Colonne des liens qui porte l'année de la valeur. */
+export const LINK_COL_ANNEE: string;
 /** Colonne des liens que le complément lit sans jamais l'écrire. */
 export const LINK_COL_BIO: string;
 /** Colonnes des liens réellement écrites — l'ordre des cellules de linkRows. */

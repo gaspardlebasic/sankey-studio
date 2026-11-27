@@ -29,6 +29,9 @@ import {
 import { sousFlux } from "../shared/sous-flux.js";
 import { resoudreEquilibrage } from "../shared/equilibrage.js";
 import {
+    anneesDistinctes, anneeParDefaut, anneeDeLien, liensPourAnnee, cleLienAnnee
+} from "../shared/annees.js";
+import {
     peindreSousFlux, effacerSousFlux, partsPeintes, fantomeDuDessin, poserFantome
 } from "./sous-flux";
 
@@ -508,6 +511,14 @@ let animerProchainRendu = false;
  */
 let colonnesRevelees = 2;
 /**
+ * Année de la vue : les liens peuvent porter une valeur par année. Le
+ * sélecteur de l'aperçu choisit celle qu'on dessine ; sans colonne « Année »
+ * (ou avec une seule valeur), il n'y a rien à choisir et tous les liens sont
+ * dessinés. C'est un état de séance, pas un réglage : il n'est pas rangé dans
+ * l'apparence.
+ */
+let anneeChoisie = "";
+/**
  * Filtre de SOUS-FLUX de l'aperçu : les nœuds cliqués, dans l'ordre. Vide, on
  * dessine tout. Chaque clic resserre le filtre sur ce qui reste à l'écran
  * (src/shared/sous-flux.js) — c'est ce que le survol venait de montrer.
@@ -536,6 +547,8 @@ interface ExcelLink {
     sourceId: string | null; targetId: string | null;
     sourceName: string; targetName: string;
     value: number; unit: string;
+    /** Année de la valeur ; "" ou absente = vaut pour toutes les années. */
+    annee?: string;
     /** La case « Valeur du flux » est vide : le lien porte une inconnue. */
     inconnue?: boolean;
     /** Part du flux en bio / durable, de 0 à 1. */
@@ -550,6 +563,8 @@ interface ExcelData {
     hasKind?: boolean;
     /** Idem pour « Parent » / « ID parent » : sans elles, on garde la hiérarchie. */
     hasParent?: boolean;
+    /** Le tableau des liens porte-t-il « Année » ? */
+    hasAnnee?: boolean;
     /** Idem pour « Part bio / durable » dans le tableau des liens. */
     hasBio?: boolean;
     /** Colonnes manquantes dans chaque tableau (pour les classeurs anciens). */
@@ -636,6 +651,8 @@ export function createApp(root: HTMLElement): void {
         setDirty: (v: boolean) => { dirtySinceSync = v; },
         /** Déclare le classeur lu : sans ça rien ne part vers Excel (garde-fou). */
         amorce: (v: boolean) => { amorceFaite = v; },
+        /** Rejoue l'amorçage d'ouverture (lecture du classeur puis synchro). */
+        amorcer: () => amorcerDepuisClasseur(),
         wireWatchers: () => wireExcelWatchers(),
         setExcelPath: (v: string | null) => { excelPath = v; buildSidebar(); },
         nodeCount: () => model.nodes.length,
@@ -646,6 +663,10 @@ export function createApp(root: HTMLElement): void {
             buildSidebar();
         },
         links: () => model.links,
+        /** Les liens réellement dessinés (filières affichées, année choisie). */
+        liensAffiches: () => viewLinks(),
+        annee: () => anneeRetenue(),
+        annees: () => anneesCourantes(),
         selection: () => selection,
         view: () => view,
         hidden: () => Array.from(hiddenFilieres),
@@ -679,6 +700,14 @@ function buildToolbar(): void {
     devoilementEl.className = "devoilement";
     devoilementEl.hidden = true;
     toolbar.appendChild(devoilementEl);
+
+    // Dimension année : « Année [2024] », en aperçu seulement et s'il y a
+    // plusieurs années à choisir.
+    anneeEl = document.createElement("span");
+    anneeEl.className = "annee";
+    anneeEl.hidden = true;
+    construireAnnee(anneeEl);
+    toolbar.appendChild(anneeEl);
 
     // Filtre de sous-flux : « Sous-flux : A › B ✕ », quand un nœud a été cliqué.
     sousFluxEl = document.createElement("span");
@@ -824,11 +853,18 @@ function addNode(column?: number, rank?: number, lane?: number): void {
     persist();
 }
 
+/** Un lien du couple existe-t-il déjà POUR L'ANNÉE choisie ? */
+function lienExiste(sourceId: string, targetId: string): boolean {
+    const annee = anneeRetenue();
+    return model.links.some(l =>
+        l.source === sourceId && l.target === targetId && anneeDeLien(l) === annee);
+}
+
 function addLink(sourceId: string, targetId: string): void {
     if (sourceId === targetId) return;
-    const exists = model.links.some(l => l.source === sourceId && l.target === targetId);
-    if (exists) return;
+    if (lienExiste(sourceId, targetId)) return;
     snapshot();
+    const annee = anneeRetenue();
     const l: FlowLink = {
         id: newId("l"),
         source: sourceId,
@@ -836,6 +872,7 @@ function addLink(sourceId: string, targetId: string): void {
         value: 1,
         unit: ""
     };
+    if (annee) l.annee = annee;
     model.links.push(l);
     select("link", l.id);
     render();
@@ -897,6 +934,7 @@ function render(): void {
     canvas.classList.toggle("apercu", view === "preview");
     majNiveaux();
     majSousFlux();
+    majAnnee();
 
     if (view === "preview") {
         wrap.style.overflow = "hidden";
@@ -954,10 +992,19 @@ function viewNodes(): FlowNode[] {
 }
 function viewLinks(): FlowLink[] {
     const vis = new Set(viewNodes().map(n => n.id));
-    return model.links.filter(l => vis.has(l.source) && vis.has(l.target));
+    // Une seule valeur par couple : l'année choisie (les lignes sans année
+    // valent pour toutes). Sans colonne « Année », `liensPourAnnee` rend tout.
+    return liensPourAnnee(model.links, anneeRetenue())
+        .filter(l => vis.has(l.source) && vis.has(l.target));
 }
 function viewModel(): FlowModel {
     return { nodes: viewNodes(), links: viewLinks() };
+}
+
+/** Tous les liens entre les nœuds affichés, TOUTES années comprises (export HTML). */
+function liensAffichesToutesAnnees(): FlowLink[] {
+    const vis = new Set(viewNodes().map(n => n.id));
+    return model.links.filter(l => vis.has(l.source) && vis.has(l.target));
 }
 
 /** Le modèle affiché a-t-il des niveaux ? Sinon, ni ⊕ ni boutons de niveaux. */
@@ -1177,6 +1224,78 @@ function majDevoilement(): void {
     fleche(-1, "←", "Masquer la dernière colonne (flèche gauche)");
     fleche(1, "→", "Afficher la colonne suivante (flèche droite)");
     devoilementEl.appendChild(groupe);
+}
+
+/* ---- Dimension ANNÉE des valeurs de liens ----
+   Le classeur peut porter une colonne « Année » : plusieurs lignes décrivent
+   alors le même couple (origine, destination), une par année. L'aperçu n'en
+   dessine qu'une à la fois. Le sélecteur n'apparaît que s'il y a vraiment
+   quelque chose à choisir : deux années ou plus. */
+
+/** Le témoin « Année [2024] » de la barre d'outils, en aperçu seulement. */
+let anneeEl: HTMLElement | null = null;
+let anneeSelect: HTMLSelectElement | null = null;
+/** Signature de la liste affichée : évite de reconstruire les options pour rien. */
+let signatureAnnees = "";
+
+/** Les années que porte le modèle, de la plus ancienne à la plus récente. */
+function anneesCourantes(): string[] {
+    return anneesDistinctes(model.links);
+}
+
+/**
+ * L'année retenue pour le dessin. Si le modèle ne la porte plus (changement de
+ * classeur, année supprimée dans Excel), on retombe sur la plus récente.
+ */
+function anneeRetenue(): string {
+    const annees = anneesCourantes();
+    if (!annees.length) {
+        anneeChoisie = "";
+        return "";
+    }
+    if (annees.indexOf(anneeChoisie) < 0) anneeChoisie = anneeParDefaut(annees);
+    return anneeChoisie;
+}
+
+/** Met le sélecteur d'année en accord avec le modèle et la vue. */
+function majAnnee(): void {
+    if (!anneeEl) return;
+    const annees = anneesCourantes();
+    // Le choix n'a de sens que dans l'aperçu, et qu'à partir de deux années :
+    // une seule valeur dans la colonne, et il n'y a rien à changer.
+    const actif = view === "preview" && annees.length > 1;
+    anneeEl.hidden = !actif;
+    if (!actif || !anneeSelect) return;
+    const signature = annees.join("\u0000");
+    if (signature !== signatureAnnees) {
+        anneeSelect.innerHTML = "";
+        annees.forEach(a => {
+            const o = document.createElement("option");
+            o.value = a;
+            o.textContent = a;
+            anneeSelect!.appendChild(o);
+        });
+        signatureAnnees = signature;
+    }
+    anneeSelect.value = anneeRetenue();
+}
+
+/** Construit le sélecteur une fois ; `majAnnee` ne fait plus que le remplir. */
+function construireAnnee(hote: HTMLElement): void {
+    const titre = document.createElement("label");
+    titre.className = "annee-titre";
+    titre.textContent = "Année";
+    titre.htmlFor = "annee-select";
+    anneeSelect = document.createElement("select");
+    anneeSelect.id = "annee-select";
+    anneeSelect.className = "annee-select";
+    anneeSelect.addEventListener("change", () => {
+        anneeChoisie = anneeSelect!.value;
+        render();
+        buildSidebar();
+        setStatus(`Année ${anneeChoisie} — ${anneesCourantes().length} années dans le classeur.`);
+    });
+    hote.append(titre, anneeSelect);
 }
 
 /**
@@ -1722,7 +1841,7 @@ function linkDragTarget(over: FlowNode | null): FlowNode | null {
     if (!linkDrag || !over || over.id === linkDrag.from.id) return null;
     const src = linkDrag.dir === "out" ? linkDrag.from.id : over.id;
     const dst = linkDrag.dir === "out" ? over.id : linkDrag.from.id;
-    if (model.links.some(l => l.source === src && l.target === dst)) return null;
+    if (lienExiste(src, dst)) return null;
     return over;
 }
 
@@ -2175,13 +2294,16 @@ function addLinkedNode(src: FlowNode): void {
     };
     model.nodes.push(n);
     moveNodeToCell(n, column, n.lane, Number.MAX_SAFE_INTEGER);
-    model.links.push({
+    const annee = anneeRetenue();
+    const lien: FlowLink = {
         id: newId("l"),
         source: src.id,
         target: n.id,
         value: 1,
         unit: ""
-    });
+    };
+    if (annee) lien.annee = annee;
+    model.links.push(lien);
     selection = { type: "node", id: n.id };
     render();
     buildSidebar();
@@ -2409,11 +2531,14 @@ function trierColonneParValeur(column: number): void {
     });
     const valeurs = new Map<string, number>();
     const voulu = new Map<FlowNode, number>();
-    // Les valeurs que l'aperçu écrira : les inconnues déduites comprises,
-    // seulement si le réglage d'équilibrage est actif.
+    // Les valeurs que l'aperçu écrira : celles de l'année choisie, les
+    // inconnues déduites comprises, seulement si le réglage d'équilibrage est
+    // actif. Toutes les filières comptent — une filière masquée garde ses flux
+    // dans le total de sa colonne, c'est ce qui rend le rang stable.
+    const liensAnnee = liensPourAnnee(model.links, anneeRetenue());
     const liens = options.links.deduireInconnues !== false
-        ? resoudreEquilibrage(model).model.links
-        : model.links;
+        ? resoudreEquilibrage({ nodes: model.nodes, links: liensAnnee }).model.links
+        : liensAnnee;
     cellules.forEach(liste => {
         liste.forEach(n => valeurs.set(n.id, valeurNoeud(n.id, liens)));
         // À valeur égale, l'ordre d'avant départage (tri stable).
@@ -2710,8 +2835,10 @@ function buildSidebar(): void {
     // L'équilibrage sert deux fois : le bilan des inconnues, et la valeur
     // déduite du lien sélectionné. On le calcule une fois pour ce panneau ; le
     // réglage « Déduire les valeurs inconnues » décide si l'on s'en sert.
+    // Il porte sur la vue (filières affichées, année choisie) : un bilan qui
+    // mélangerait les années ne voudrait rien dire.
     const deduireInconnues = options.links.deduireInconnues !== false;
-    const equilibrage = resoudreEquilibrage(model);
+    const equilibrage = resoudreEquilibrage(viewModel());
 
     const ap = buildAlertePanel();
     if (ap) sidebar.appendChild(ap);
@@ -2803,6 +2930,7 @@ function buildSidebar(): void {
             const src = nodeById(l.source)?.name ?? "?";
             const tgt = nodeById(l.target)?.name ?? "?";
             s.appendChild(readonly("Flux", `${src} → ${tgt}`));
+            if (anneeDeLien(l)) s.appendChild(readonly("Année", anneeDeLien(l)));
             if (excelPath) {
                 const resolu = equilibrage.model.links.find(x => x.id === l.id);
                 const unite = l.unit ? " " + l.unit : "";
@@ -4205,6 +4333,7 @@ function applyProject(p: ProjectFile): void {
     // Un autre projet, une autre hiérarchie : on repart du niveau agrégé.
     deplies = new Set();
     colonnesRevelees = 2;
+    anneeChoisie = "";
     filtreSousFlux = [];
     selection = { type: null, id: "" };
 }
@@ -4855,15 +4984,21 @@ async function exportHtml(): Promise<void> {
     }
     const visibles = distinctFilieres().filter(f => !hiddenFilieres.has(f) && f);
     const titre = visibles.join(" · ") || "Diagramme de Sankey";
+    // Toutes les années voyagent dans la page : c'est le sélecteur de la
+    // visionneuse qui choisit celle qu'on dessine. Les nœuds, eux, ne dépendent
+    // pas de l'année.
+    const liens = liensAffichesToutesAnnees();
     const donnees = {
-        version: 1, titre,
+        version: 2, titre,
         // Les positions de la grille d'édition n'ont rien à faire dans la page.
         model: {
             nodes: m.nodes.map(n => { const c: Partial<FlowNode> = { ...n }; delete c.x; delete c.y; return c; }),
-            links: m.links
+            links: liens
         },
         options,
-        deplies: Array.from(deplies)
+        deplies: Array.from(deplies),
+        annee: anneeRetenue(),
+        annees: anneesDistinctes(liens)
     };
     const polices = await policesEmbarquees();
     const html = pageInteractive({ titre, donnees, code: CODE_VISIONNEUSE, polices });
@@ -5282,7 +5417,10 @@ async function amorcerDepuisClasseur(): Promise<void> {
         `Classeur lu : ${model.nodes.length} nœud(s), ${model.links.length} lien(s).`));
     // Des lignes saisies dans Excel sans identifiant viennent d'en recevoir un :
     // il faut le leur rendre, sinon elles seront recréées à la prochaine lecture.
-    if (assigned) pushToExcel({ silencieux: true });
+    // On ATTEND cette écriture : à l'ouverture, la synchro doit être finie
+    // quand le bandeau annonce le classeur lu — les « ID parent » compris.
+    // Le classeur vient d'être lu : pas de relecture de courtoisie.
+    if (assigned) await pushToExcel({ silencieux: true, valeursDejaLues: true });
 }
 
 /** Sens Excel → App : remplace le diagramme par le contenu du classeur. */
@@ -5423,12 +5561,14 @@ function mergeValuesFromExcel(data: ExcelData): void {
     const idSet = new Set(model.nodes.map(n => n.id));
     const nameToId = new Map<string, string>();
     model.nodes.forEach(n => nameToId.set(n.name, n.id));
-    const byPair = new Map(model.links.map(l => [l.source + " " + l.target, l]));
+    // La clé porte l'ANNÉE : deux valeurs du même couple ne se confondent pas.
+    const byKey = new Map(model.links.map(l =>
+        [cleLienAnnee(l.source, l.target, anneeDeLien(l)), l]));
     data.links.forEach(E => {
         const s = E.sourceId && idSet.has(E.sourceId) ? E.sourceId : nameToId.get(E.sourceName);
         const t = E.targetId && idSet.has(E.targetId) ? E.targetId : nameToId.get(E.targetName);
         if (!s || !t) return;
-        const l = byPair.get(s + " " + t);
+        const l = byKey.get(cleLienAnnee(s, t, E.annee || ""));
         if (l) {
             appliquerValeurExcel(l, E);
             if (E.unit) l.unit = E.unit;
@@ -5439,7 +5579,8 @@ function mergeValuesFromExcel(data: ExcelData): void {
 
 function markAllSynced(): void {
     syncedNodeIds = new Set(model.nodes.map(n => n.id));
-    syncedLinkIds = new Set(model.links.map(l => l.source + " " + l.target));
+    syncedLinkIds = new Set(model.links.map(l =>
+        cleLienAnnee(l.source, l.target, anneeDeLien(l))));
 }
 
 function layoutNew(n: FlowNode): void {
@@ -5481,15 +5622,38 @@ function resoudreParents(data: ExcelData, lus: [ExcelNode, FlowNode][]): boolean
             const cle = (n.filiere || "") + "\u0000" + n.name;
             if (!parNom.has(cle)) parNom.set(cle, n.id);
         });
+        const nomDe = new Map(model.nodes.map(n => [n.id, n.name]));
         const introuvables: string[] = [];
         lus.forEach(([E, n]) => {
-            let p: string | null = E.parentId && vivants.has(E.parentId) ? E.parentId : null;
-            if (!p && E.parentName) {
-                p = parNom.get((n.filiere || "") + "\u0000" + E.parentName) || null;
-                if (!p) introuvables.push(`« ${E.parentName} » (parent de ${n.name})`);
+            /* « Parent » est ce que l'utilisatrice saisit ; « ID parent » sert à
+               suivre un parent RENOMMÉ dans Excel. D'où trois cas :
+               - « Parent » nomme un nœud de la filière : c'est lui — retaper le
+                 nom range le nœud ailleurs —, sauf si l'ID désigne un homonyme
+                 (même nom) : l'ID départage alors ;
+               - « Parent » ne nomme personne : l'ID, s'il vit encore, l'emporte
+                 (le parent a changé de nom) et le nom se réécrit ;
+               - « Parent » vide : l'ID seul fait foi (saisi ou calculé à la main),
+                 et le nom se remplit. Sortir un nœud de son groupe depuis Excel,
+                 c'est donc vider les DEUX cases. */
+            const parId = E.parentId && vivants.has(E.parentId) ? E.parentId : null;
+            const nomSaisi = (E.parentName || "").trim();
+            let p: string | null = null;
+            if (nomSaisi) {
+                const parLeNom = parNom.get((n.filiere || "") + "\u0000" + nomSaisi) || null;
+                if (parId && nomDe.get(parId) === nomSaisi) p = parId;
+                else if (parLeNom) p = parLeNom;
+                else if (parId) p = parId;
+                else introuvables.push(`« ${nomSaisi} » (parent de ${n.name})`);
+            } else {
+                p = parId;
             }
             if (p === n.id) p = null;
+            // Le classeur doit porter l'ID ET le nom à jour : l'un ou l'autre
+            // décalé, et on réécrit.
             if ((E.parentId || null) !== p) aReecrire = true;
+            // Un nom introuvable reste tel quel : le réécrire effacerait la saisie.
+            const introuvable = !!nomSaisi && !p;
+            if (!introuvable && nomSaisi !== (p ? nomDe.get(p) || "" : "")) aReecrire = true;
             n.parent = p;
         });
         if (introuvables.length) {
@@ -5612,10 +5776,12 @@ function reconcileFromExcel(data: ExcelData): boolean {
     const nameToId = new Map<string, string>();
     model.nodes.forEach(n => nameToId.set(n.name, n.id));
 
-    // Un lien est identifié par le couple (idOrigine, idDestination).
-    const pairKey = (s: string, t: string) => s + " " + t;
-    const linksByPair = new Map(model.links.map(l => [pairKey(l.source, l.target), l]));
-    const excelPairs = new Set<string>();
+    // Un lien est identifié par le couple (idOrigine, idDestination) ET son
+    // année : deux valeurs du même couple pour deux années sont deux lignes.
+    const cle = (s: string, t: string, a?: string | null) => cleLienAnnee(s, t, a || "");
+    const linksByKey = new Map(model.links.map(l =>
+        [cle(l.source, l.target, anneeDeLien(l)), l]));
+    const excelKeys = new Set<string>();
     const newSyncedLinks = new Set<string>();
 
     data.links.forEach(E => {
@@ -5628,11 +5794,12 @@ function reconcileFromExcel(data: ExcelData): boolean {
         // reconnaît que par les NOMS de ses extrémités — le repli fragile, celui
         // qui confond deux homonymes et leur dispute leur formule.
         if (E.sourceId !== s || E.targetId !== t) assigned = true;
-        const key = pairKey(s, t);
-        if (excelPairs.has(key)) return; // pas de doublon de lien
-        excelPairs.add(key);
+        const annee = E.annee || "";
+        const key = cle(s, t, annee);
+        if (excelKeys.has(key)) return; // pas de doublon de lien (couple + année)
+        excelKeys.add(key);
 
-        const existing = linksByPair.get(key);
+        const existing = linksByKey.get(key);
         if (existing) {
             appliquerValeurExcel(existing, E);
             existing.unit = E.unit;
@@ -5645,30 +5812,34 @@ function reconcileFromExcel(data: ExcelData): boolean {
                 id: newId("l"), source: s, target: t, value: E.value, unit: E.unit,
                 bio: data.hasBio ? partBio(E) : 0
             };
+            if (annee) l.annee = annee;
             if (E.inconnue) l.inconnue = true;
             model.links.push(l);
-            linksByPair.set(key, l);
+            linksByKey.set(key, l);
             newSyncedLinks.add(key);
         }
     });
 
     model.links = model.links.filter(l => {
-        const key = pairKey(l.source, l.target);
-        if (excelPairs.has(key)) return true;
+        const key = cle(l.source, l.target, anneeDeLien(l));
+        if (excelKeys.has(key)) return true;
         return !syncedLinkIds.has(key); // supprimé dans Excel si déjà synchronisé
     });
     // Nettoyage des liens dont un nœud a disparu + déduplication finale.
     const seen = new Set<string>();
     model.links = model.links.filter(l => {
         if (!idSet.has(l.source) || !idSet.has(l.target)) return false;
-        const key = pairKey(l.source, l.target);
+        const key = cle(l.source, l.target, anneeDeLien(l));
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
     });
 
     syncedNodeIds = newSyncedNodes;
-    syncedLinkIds = newSyncedLinks; // contient désormais des clés de couple
+    syncedLinkIds = newSyncedLinks; // clés de couple + année
+    // L'année retenue peut avoir disparu du classeur : on retombe sur la plus
+    // récente, et le sélecteur se remet en accord au prochain rendu.
+    anneeRetenue();
 
     // Le classeur peut contenir des identifiants au-delà du compteur courant.
     syncCounterWithModel();

@@ -7,9 +7,11 @@
  */
 
 import {
-  NODE_COLS, LINK_COLS, LINK_COL_BIO, LINK_COLS_ECRITES, NODE_START, LINK_START,
+  NODE_COLS, LINK_COLS, LINK_COL_ANNEE, LINK_COL_BIO, LINK_COLS_ECRITES,
+  NODE_START, LINK_START,
   buildModelRows, toInt, toNum, typeDepuisTexte, partBioDepuisTexte
 } from "../shared/modele-excel.js";
+import { anneeDepuisCellule } from "../shared/annees.js";
 import type { FormulePreservee, Modele } from "../shared/modele-excel.js";
 import type {
   DonneesExcel, NoeudExcel, LienExcel, OptionsEcriture,
@@ -421,6 +423,7 @@ function decoderDonnees(brut: { feuille: string; noeuds: { valeurs: any[][] }; l
   const hasLane = idxN.has("Couloir");
   const hasKind = idxN.has("Type");
   const hasParent = idxN.has("Parent") || idxN.has("ID parent");
+  const hasAnnee = idxL.has(LINK_COL_ANNEE);
   const hasBio = idxL.has(LINK_COL_BIO);
 
   const colonnesManquantes: ColonnesManquantes = {
@@ -488,9 +491,11 @@ function decoderDonnees(brut: { feuille: string; noeuds: { valeurs: any[][] }; l
       || (typeof brutValeur === "string" && brutValeur.trim() === ""));
     const value = toNum(brutValeur, 0);
     const unit = String(getCellL(row, "Unité") || "").trim();
+    const annee = anneeDepuisCellule(getCellL(row, LINK_COL_ANNEE));
     const bio = partBioDepuisTexte(getCellL(row, LINK_COL_BIO));
 
     const lien: LienExcel = { sourceId, targetId, sourceName, targetName, value, unit, bio };
+    if (annee) lien.annee = annee;
     if (inconnue) lien.inconnue = true;
     links.push(lien);
   }
@@ -501,6 +506,7 @@ function decoderDonnees(brut: { feuille: string; noeuds: { valeurs: any[][] }; l
     hasLane,
     hasKind,
     hasParent,
+    hasAnnee,
     hasBio,
     sheetName: brut.feuille,
     colonnesManquantes
@@ -517,6 +523,7 @@ function extraireFormulesExistantes(valsL: any[][], formL: any[][], idxL: Map<st
   const iTgtId = idxL.get("ID destination");
   const iSrc = idxL.get("Origine");
   const iTgt = idxL.get("Destination");
+  const iAnnee = idxL.get(LINK_COL_ANNEE);
 
   if (iVal === undefined) return map;
 
@@ -529,16 +536,18 @@ function extraireFormulesExistantes(valsL: any[][], formL: any[][], idxL: Map<st
     const fp: FormulePreservee = { f: formuleSansEgal, source: r };
 
     const rowV = valsL[r];
+    const annee = iAnnee !== undefined && iAnnee < rowV.length ? anneeDepuisCellule(rowV[iAnnee]) : "";
+    const suffixe = annee ? "|" + annee : "";
     const srcId = iSrcId !== undefined && iSrcId < rowV.length ? String(rowV[iSrcId] || "").trim() : "";
     const tgtId = iTgtId !== undefined && iTgtId < rowV.length ? String(rowV[iTgtId] || "").trim() : "";
     if (srcId && tgtId) {
-      map.set(`id:${srcId} ${tgtId}`, fp);
+      map.set(`id:${srcId} ${tgtId}${suffixe}`, fp);
     }
 
     const srcName = iSrc !== undefined && iSrc < rowV.length ? String(rowV[iSrc] || "").trim() : "";
     const tgtName = iTgt !== undefined && iTgt < rowV.length ? String(rowV[iTgt] || "").trim() : "";
     if (srcName && tgtName) {
-      map.set(`name:${srcName} ${tgtName}`, fp);
+      map.set(`name:${srcName} ${tgtName}${suffixe}`, fp);
     }
   }
 

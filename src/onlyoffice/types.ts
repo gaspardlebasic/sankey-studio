@@ -21,6 +21,8 @@ export interface LienExcel {
   targetName: string;
   value: number;
   unit: string;
+  /** Année de la valeur ; absente quand la ligne vaut pour toutes les années. */
+  annee?: string;
   /** La case « Valeur du flux » est VIDE : le lien porte une inconnue. */
   inconnue?: boolean;
   bio: number;
@@ -37,6 +39,7 @@ export interface DonneesExcel {
   hasLane?: boolean;
   hasKind?: boolean;
   hasParent?: boolean;
+  hasAnnee?: boolean;
   hasBio?: boolean;
   sheetName?: string;
   colonnesManquantes?: ColonnesManquantes;

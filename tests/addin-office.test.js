@@ -582,9 +582,24 @@ function modeleMaille() {
 function classeurDepuis(modele) {
   const { nodeRows, linkRows } = buildModelRows(modele, null);
   const v = rows => rows.map(r => r.map(c => c.v));
+  // Une ligne de tableau se lit PAR NOM d'en-tête : on projette les cellules
+  // produites (ordre de LINK_COLS_ECRITES) sur l'ordre réel de LINK_COLS, qui
+  // porte la part bio (lecture seule) avant l'année (ajoutée en fin de liste).
+  const projeter = (rows, entetes, nos) => v(rows).map(ligne => {
+    // La part bio, jamais écrite, porte le 0 qu'une écriture y aurait posé.
+    const out = entetes.map(h => h === "Part bio / durable" ? 0 : "");
+    nos.forEach((h, i) => {
+      const c = entetes.indexOf(h);
+      if (c >= 0) out[c] = ligne[i];
+    });
+    return out;
+  });
   return monterClasseur([
     { nom: "Noeuds", entetes: NODE_COLS.slice(), c0: 0, lignes: v(nodeRows) },
-    { nom: "Liens", entetes: LINK_COLS.slice(), c0: LIENS_C0, lignes: v(linkRows).map(r => r.concat([0])) }
+    {
+      nom: "Liens", entetes: LINK_COLS.slice(), c0: LIENS_C0,
+      lignes: projeter(linkRows, LINK_COLS, LINK_COLS_ECRITES_TEST)
+    }
   ]);
 }
 
@@ -886,9 +901,9 @@ await test("écriture : une colonne de l'utilisatrice suit SA ligne quand l'ordr
     noeuds: RANGS_QUATRE,
     entetesLiens: avecExtra,
     liens: [
-      ["Lait", "Production bio", "Lait cru", { f: "=Q2*1000", v: 120 }, "t", "n1", "n2", "", 0.12],
-      ["Lait", "Lait cru", "Transformation", { f: "=Q3*1000", v: 95 }, "t", "n2", "n3", "", 0.095],
-      ["Lait", "Transformation", "Beurre", { f: "=Q4*1000", v: 30 }, "t", "n3", "n4", "", 0.03]
+      ["Lait", "Production bio", "Lait cru", { f: "=Q2*1000", v: 120 }, "t", "n1", "n2", "", "", 0.12],
+      ["Lait", "Lait cru", "Transformation", { f: "=Q3*1000", v: 95 }, "t", "n2", "n3", "", "", 0.095],
+      ["Lait", "Transformation", "Beurre", { f: "=Q4*1000", v: 30 }, "t", "n3", "n4", "", "", 0.03]
     ]
   });
   await office.ecrireDiagramme(deplaceTransformation());
@@ -932,8 +947,8 @@ await test("écriture : une ligne nouvelle n'hérite pas de la colonne du voisin
     noeuds: RANGS_QUATRE,
     entetesLiens: avecExtra,
     liens: [
-      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", "", 0.095],
-      ["Lait", "Transformation", "Beurre", 30, "t", "n3", "n4", "", 0.03]
+      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", "", "", 0.095],
+      ["Lait", "Transformation", "Beurre", 30, "t", "n3", "n4", "", "", 0.03]
     ]
   });
   await office.ecrireDiagramme({ nodes: QUATRE, links: LIENS_QUATRE });
@@ -1007,8 +1022,8 @@ await test("écriture : une part bio vide s'écrit 0, un commentaire vide reste 
   const c = classeurType({
     entetesLiens: entetes,
     liens: [
-      ["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", "", ""],
-      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", 0.25, "à revoir"]
+      ["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", "", "", ""],
+      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", 0.25, "", "à revoir"]
     ]
   });
   const r = await office.ecrireDiagramme(MODELE);
@@ -1536,14 +1551,14 @@ await test("ajouterColonnesManquantes : insère des colonnes vides pour écarter
     { nom: "Noeuds", entetes: NOEUDS_D_AVANT.slice(), c0: 0,
       lignes: [["Lait", "Production bio", 1, "Production", 0, "", "n1", 1, "Produit"]] },
     { nom: "Liens", entetes: LINK_COLS.slice(), c0: NOEUDS_D_AVANT.length + 1,
-      lignes: [["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", 0]] }
+      lignes: [["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", 0, ""]] }
   ]);
   const r = await office.ajouterColonnesManquantes();
   egal(r.ok, true, "réussite : " + r.message);
   egal(r.colonnesAjoutees.noeuds, ["Parent", "ID parent"], "colonnes ajoutées");
   egal(c.entetesDe("Noeuds"), NODE_COLS.slice(), "en-têtes des nœuds complets");
   egal(tableau(c, "Liens").c0, NODE_COLS.length + 1, "les liens ont glissé, une colonne vide reste");
-  egal(c.lignesDe("Liens"), [["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", 0]],
+  egal(c.lignesDe("Liens"), [["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", 0, ""]],
        "les liens sont intacts");
   egal(c.cellule(0, NODE_COLS.length).v, "", "la colonne qui sépare les tableaux est vide");
   const d = await office.lireDiagramme();
@@ -1559,6 +1574,77 @@ await test("ajouterColonnesManquantes : n'insère rien quand la place existe", a
   egal(r.ok, true, "réussite : " + r.message);
   egal(tableau(c, "Liens").c0, 20, "les liens n'ont pas bougé");
   egal(c.entetesDe("Noeuds"), NODE_COLS.slice(), "en-têtes complets");
+});
+
+/* ---- dimension ANNÉE : une valeur de flux par année ----
+   Plusieurs lignes du tableau des liens peuvent décrire le même couple, une
+   par année. Elles doivent rester distinctes à la lecture comme à l'écriture,
+   et chacune garder sa formule. */
+
+await test("année : lue en nombre, en date Excel ou en texte ; une case vide n'en est pas une", async () => {
+  classeurType({
+    liens: [
+      ["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", 0, 2024],
+      ["Lait", "Production bio", "Lait cru", 100, "t", "n1", "n2", 0, 45000],     // date : 15/03/2023
+      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", 0, "2022-2023"],
+      ["Lait", "Lait cru", "Transformation", 90, "t", "n2", "n3", 0, ""]
+    ]
+  });
+  const d = await office.lireDiagramme();
+  egal(d.hasAnnee, true, "la colonne est vue");
+  egal(d.links.map(l => [l.value, l.annee === undefined ? null : l.annee]),
+       [[120, "2024"], [100, "2023"], [95, "2022"], [90, null]],
+       "une année par ligne ; la case vide ne pose pas de champ");
+});
+
+await test("année : deux années du même couple s'écrivent en deux lignes, chacune avec sa formule", async () => {
+  const c = classeurType({
+    liens: [
+      ["Lait", "Production bio", "Lait cru", { f: "=Bilan!$C$2", v: 120 }, "t", "n1", "n2", 0, 2024],
+      ["Lait", "Production bio", "Lait cru", { f: "=Bilan!$C$3", v: 100 }, "t", "n1", "n2", 0, 2023],
+      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", 0, ""]
+    ]
+  });
+  const modele = {
+    nodes: MODELE.nodes,
+    links: [
+      { source: "n1", target: "n2", value: 120, unit: "t", annee: "2024" },
+      { source: "n1", target: "n2", value: 100, unit: "t", annee: "2023" },
+      { source: "n2", target: "n3", value: 95, unit: "t" }
+    ]
+  };
+  const r = await office.ecrireDiagramme(modele);
+  attendu(r.ok, "écriture réussie : " + (r.error || ""));
+  const iAn = LINK_COLS.indexOf("Année"), iVal = LINK_COLS.indexOf("Valeur du flux");
+  const lignes = c.lignesDe("Liens"), formules = c.formulesDe("Liens");
+  egal(lignes.map((l, i) => [l[5] + ">" + l[6], String(l[iAn]), formules[i][iVal] || l[iVal]]), [
+    ["n1>n2", "2023", "=Bilan!$C$3"],
+    ["n1>n2", "2024", "=Bilan!$C$2"],
+    ["n2>n3", "", 95]
+  ], "triées par année, chaque formule restée avec SON année, la case vide restée vide");
+});
+
+await test("année : un classeur d'avant la colonne la reçoit à droite, sans manger une colonne voisine", async () => {
+  // « Année » arrive en fin de tableau : un « Commentaire » posé juste à droite
+  // du tableau des liens (hors tableau) ne doit pas être avalé par l'élargissement.
+  const entetesLiens = LINK_COLS.filter(h => h !== "Année");
+  const c = monterClasseur([
+    { nom: "Noeuds", entetes: NODE_COLS.slice(), c0: 0,
+      lignes: [["Lait", "Production bio", 1, "Production", 0, "", "n1", 1, "Produit", "", ""]] },
+    { nom: "Liens", entetes: entetesLiens, c0: LIENS_C0,
+      lignes: [["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", 0]] }
+  ]);
+  const voisine = LIENS_C0 + entetesLiens.length;
+  const grille = tableau(c, "Liens").grille;
+  grille.ecrire(0, voisine, { v: "Commentaire", f: "" });
+  grille.ecrire(1, voisine, { v: "à garder", f: "" });
+  const lu = await office.lireDiagramme();
+  egal(lu.colonnesManquantes && lu.colonnesManquantes.liens, ["Année"], "la colonne manque");
+  const r = await office.ajouterColonnesManquantes();
+  egal(r.ok, true, "réussite : " + r.message);
+  egal(c.entetesDe("Liens"), LINK_COLS.slice(), "« Année » ajoutée en fin de tableau");
+  egal([c.cellule(0, voisine + 1).v, c.cellule(1, voisine + 1).v], ["Commentaire", "à garder"],
+       "la colonne voisine a glissé d'un cran, intacte");
 });
 
 /* ------------------------------ bilan ------------------------------ */

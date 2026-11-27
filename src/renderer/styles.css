@@ -86,6 +86,16 @@ html, body {
 #toolbar .devoilement[hidden] { display: none; }
 #toolbar .devoilement-titre { font-size: 13px; font-weight: 600; color: var(--dark); }
 #toolbar .devoilement .segmented .seg { padding: 8px 11px; }
+/* Dimension année : « Année [2024] », en aperçu et s'il y a plusieurs années. */
+#toolbar .annee { display: inline-flex; align-items: center; gap: 8px; margin-left: 10px; }
+#toolbar .annee[hidden] { display: none; }
+#toolbar .annee-titre { font-size: 13px; font-weight: 600; color: var(--dark); }
+#toolbar .annee-select {
+    font: inherit; font-size: 13px; font-weight: 600; line-height: 1;
+    padding: 8px 10px; border: 2px solid var(--dark); border-radius: var(--radius);
+    background: var(--bright); color: var(--dark); cursor: pointer;
+}
+#toolbar .annee-select:hover { background: var(--light); }
 /* Filtre de sous-flux : « Sous-flux : A › B » et sa croix, en aperçu seulement. */
 #toolbar .sous-flux-temoin { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px;
     max-width: 40vw; }

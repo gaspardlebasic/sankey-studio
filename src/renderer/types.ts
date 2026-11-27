@@ -46,6 +46,13 @@ export interface FlowLink {
     value: number; // valeur du flux (proviendra d'Excel ; défaut 1)
     unit?: string; // unité affichée avec la valeur
     /**
+     * Année de la valeur. Plusieurs liens peuvent décrire le même couple
+     * (origine, destination) pour des années différentes : c'est la même flèche
+     * du diagramme, avec une valeur par année (`src/shared/annees.js`). Absente
+     * ou vide = la valeur vaut pour toutes les années.
+     */
+    annee?: string;
+    /**
      * La valeur est INCONNUE : la case « Valeur du flux » du classeur est vide.
      * `value` vaut alors 0 dans le modèle ; l'aperçu déduit la valeur quand le
      * nœud n'a qu'une seule inconnue (`src/shared/equilibrage.js`) et l'écrit en

@@ -845,6 +845,85 @@ test("resynchro : le bouton du ruban relit le classeur, puis y réécrit ce qu'i
   }
 });
 
+test("ouverture : la fenêtre relit le classeur et y repose les ID parent avant d'annoncer",
+  "complexe", async (p, excel) => {
+  // Ce qu'on éprouve : chaque ouverture de la fenêtre (createApp → amorçage)
+  // remet le classeur d'accord — l'« ID parent » d'un enfant saisi par son seul
+  // nom, le nom d'un parent renommé dans Excel, un « Parent » laissé vide,
+  // qui se remplit depuis l'ID, et un nom retapé qui range le nœud ailleurs.
+  const n = (id, name, extra) => Object.assign({
+    id, name, column: 2, title: '', order: 0, lane: 1, kind: 'produit',
+    filiere: 'Lég', color: null, parentId: null, parentName: ''
+  }, extra);
+  excel.lecture = {
+    hasLane: true, hasKind: true, hasParent: true, hasBio: true,
+    nodes: [
+      n('E', 'Exploitations', { column: 1, kind: 'industrie' }),
+      n('L', 'Légumineuses', { order: 0 }),
+      // Saisi à la main : un nom, pas d'ID.
+      n('P', 'Pois', { order: 1, parentName: 'Légumineuses' }),
+      // Le parent a été renommé (« Légumes secs » → « Légumineuses ») : l'ID suit.
+      n('F', 'Féverole', { order: 2, parentId: 'L', parentName: 'Légumes secs' }),
+      // « Parent » vide, l'ID suffit : le nom se remplira.
+      n('S', 'Soja', { order: 3, parentId: 'L', parentName: '' }),
+      n('G', 'Graines', { order: 4 }),
+      // Nom retapé dans Excel : il l'emporte sur l'ancien ID.
+      n('T', 'Tournesol', { order: 5, parentId: 'L', parentName: 'Graines' })
+    ],
+    links: [['E', 'L', 100], ['E', 'P', 40], ['E', 'F', 25], ['E', 'S', 10], ['E', 'G', 5],
+            ['E', 'T', 3]].map(([s, t, v]) =>
+      ({ sourceId: s, targetId: t, sourceName: s, targetName: t, value: v, unit: 'kt', bio: 0 }))
+  };
+  try {
+    const r = await p(`
+      T.amorce(false);
+      await T.amorcer();
+      // Pas d'attente : l'amorçage rend la main une fois l'écriture faite.
+      const m = T.model();
+      return { parents: Object.fromEntries(m.nodes.map(x => [x.id, x.parent || null])),
+               statut: (document.getElementById('status') || {}).textContent || '' };
+    `);
+    egal(r.parents, { E: null, L: null, P: "L", F: "L", S: "L", G: null, T: "G" },
+      "nom seul, parent renommé, nom vide, nom retapé : chacun se résout comme il faut");
+    egal(excel.lectures, 1, "une seule lecture : la réécriture d'ouverture ne relit pas");
+    egal(excel.ecritures, 1, "l'ouverture réécrit le classeur, et l'a fait avant de rendre la main");
+    const ecrit = excel.derniereEcriture;
+    const parent = id => (ecrit.nodes.find(x => x.id === id) || {}).parent || null;
+    egal({ P: parent('P'), F: parent('F'), S: parent('S'), T: parent('T') },
+      { P: "L", F: "L", S: "L", T: "G" },
+      "ce qui part vers le classeur porte les parents résolus (ID parent et nom en découlent)");
+  } finally {
+    excel.lecture = null;
+    await p(`T.amorce(false); T.setDirty(false); return true;`);
+  }
+});
+
+test("ouverture : un classeur déjà d'accord n'est pas réécrit", "complexe", async (p, excel) => {
+  // Le pendant du précédent : quand ID parent et nom concordent déjà, ouvrir la
+  // fenêtre ne coûte qu'une lecture. Sans ce garde, chaque ouverture écrirait.
+  const n = (id, name, extra) => Object.assign({
+    id, name, column: 2, title: '', order: 0, lane: 1, kind: 'produit',
+    filiere: 'Lég', color: null, parentId: null, parentName: ''
+  }, extra);
+  excel.lecture = {
+    hasLane: true, hasKind: true, hasParent: true, hasBio: true,
+    nodes: [
+      n('E', 'Exploitations', { column: 1, kind: 'industrie' }),
+      n('L', 'Légumineuses', { order: 0 }),
+      n('P', 'Pois', { order: 1, parentId: 'L', parentName: 'Légumineuses' })
+    ],
+    links: [['E', 'L', 100], ['E', 'P', 40]].map(([s, t, v]) =>
+      ({ sourceId: s, targetId: t, sourceName: s, targetName: t, value: v, unit: 'kt', bio: 0 }))
+  };
+  try {
+    await p(`T.amorce(false); await T.amorcer(); return true;`);
+    egal(excel.ecritures, 0, "rien à reposer : aucune écriture");
+  } finally {
+    excel.lecture = null;
+    await p(`T.amorce(false); T.setDirty(false); return true;`);
+  }
+});
+
 test("réconciliation : une liste Excel sans ordre se range après l'ordre fait à la main",
   "complexe", async p => {
   // Ce qu'on éprouve : une case « Ordre vertical » VIDE dans Excel n'est pas
@@ -3526,6 +3605,191 @@ test("dévoilement : l'export HTML s'ouvre sur deux colonnes et suit les flèche
   egal(r.depart, [0, 1], "la page s'ouvre sur les deux premières colonnes");
   egal(r.unPas, [0, 1, 2], "la flèche droite y montre la colonne suivante");
   attendu(r.aide.includes("← →"), "l'aide de la page annonce les flèches : " + r.aide);
+});
+
+/** Classeur à deux années : A→B vaut 10 en 2023 et 30 en 2024, A→C (sans année) 20. */
+const CLASSEUR_ANNEES = `
+    const n = (id, name, column, order) => ({
+      id, name, column, title: '', order, lane: 1, kind: 'produit',
+      filiere: 'Lég', color: null, parentId: null, parentName: ''
+    });
+    const l = (s, t, value, annee) => Object.assign({ sourceId: s, targetId: t, sourceName: s,
+      targetName: t, value, unit: 'kt', bio: 0 }, annee ? { annee } : {});
+    T.setSynced();
+    T.reconcile({
+      nodes: [n('A', 'Amont', 1, 0), n('B', 'Bois', 2, 0), n('C', 'Céréales', 2, 1)],
+      links: [l('A', 'B', 10, '2023'), l('A', 'B', 30, '2024'), l('A', 'C', 20)],
+      hasLane: true, hasKind: true, hasParent: true, hasAnnee: true, hasBio: true
+    });
+    T.refresh();
+    await sleep(80);
+    /** Épaisseur peinte d'un ruban, lue sur la géométrie que le moteur a posée. */
+    const epaisseur = (racine, s, t) => {
+      const el = racine.querySelector('path[data-ruban][data-source="' + s + '"][data-target="' + t + '"]:not(.lien-bio)');
+      if (!el) return null;
+      const g = JSON.parse(el.getAttribute('data-ruban'));
+      return g.a - g.de;
+    };
+`;
+
+test("année : le sélecteur n'apparaît qu'en aperçu, et l'aperçu dessine l'année choisie",
+  "complexe", async p => {
+  const r = await p(CLASSEUR_ANNEES + `
+    await versEdition();
+    const temoin = document.querySelector('#toolbar .annee');
+    const enEdition = temoin.hidden;
+    await versApercu();
+    const enApercu = temoin.hidden;
+    const sel = temoin.querySelector('select');
+    const options = [...sel.options].map(o => o.value);
+    const parDefaut = sel.value;
+    const ratio = () => epaisseur(document, 'A', 'B') / epaisseur(document, 'A', 'C');
+    const r2024 = ratio();
+    sel.value = '2023';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await sleep(80);
+    const r2023 = ratio();
+    const rubansAB = document.querySelectorAll('#canvas path[data-ruban][data-source="A"][data-target="B"]:not(.lien-bio)').length;
+    return { enEdition, enApercu, options, parDefaut, r2024, r2023, rubansAB,
+             liens: T.liensAffiches().map(x => x.source + x.target + ':' + x.value) };
+  `);
+  egal(r.enEdition, true, "pas de sélecteur en vue d'édition");
+  egal(r.enApercu, false, "le sélecteur apparaît dans l'aperçu");
+  egal(r.options, ["2023", "2024"], "les années du classeur, dans l'ordre");
+  egal(r.parDefaut, "2024", "l'aperçu s'ouvre sur l'année la plus récente");
+  attendu(Math.abs(r.r2024 - 1.5) < 0.02, "2024 : A→B (30) fait 1,5 fois A→C (20) — vu : " + r.r2024);
+  attendu(Math.abs(r.r2023 - 0.5) < 0.02, "2023 : A→B (10) fait la moitié de A→C — vu : " + r.r2023);
+  egal(r.rubansAB, 1, "une seule flèche A→B : l'année n'en dessine qu'une");
+  egal(r.liens, ["AB:10", "AC:20"], "le lien sans année vaut pour toutes les années");
+});
+
+test("année : une seule valeur dans la colonne, et aucun sélecteur", "complexe", async p => {
+  const r = await p(`
+    const n = (id, name, column, order) => ({ id, name, column, title: '', order, lane: 1,
+      kind: 'produit', filiere: 'Lég', color: null, parentId: null, parentName: '' });
+    T.setSynced();
+    T.reconcile({
+      nodes: [n('A', 'Amont', 1, 0), n('B', 'Bois', 2, 0)],
+      links: [{ sourceId: 'A', targetId: 'B', sourceName: 'A', targetName: 'B', value: 5,
+                unit: 'kt', bio: 0, annee: '2024' }],
+      hasLane: true, hasKind: true, hasAnnee: true, hasBio: true
+    });
+    T.refresh();
+    await versApercu();
+    return { cache: document.querySelector('#toolbar .annee').hidden, liens: T.liensAffiches().length };
+  `);
+  egal(r.cache, true, "une seule année : rien à choisir, pas de sélecteur");
+  egal(r.liens, 1, "et le lien est bien dessiné");
+});
+
+test("année : relire le classeur garde les deux valeurs d'un même couple", "complexe", async p => {
+  // Une ligne par année : la réconciliation ne doit pas les prendre pour des
+  // doublons du même lien (clé couple + année).
+  const r = await p(CLASSEUR_ANNEES + `
+    return T.model().links.map(x => x.source + x.target + ':' + (x.annee || '-') + ':' + x.value).sort();
+  `);
+  egal(r, ["AB:2023:10", "AB:2024:30", "AC:-:20"], "trois lignes, trois liens");
+});
+
+test("export HTML : sélecteur d'année, dévoilement à boutons et survol du sous-flux",
+  "complexe", async p => {
+  const r = await p(CLASSEUR_ANNEES + `
+    await versApercu();
+    await cocher('Dévoilement', 'Dévoiler colonne par colonne');
+    const capte = capterExport();
+    try {
+      [...document.querySelectorAll('#toolbar button')].find(b => b.textContent.includes('HTML')).click();
+      await sleep(500);
+    } finally { capte.rendre(); }
+    const html = await capte.fichiers[0].blob.text();
+    const cadre = document.createElement('iframe');
+    cadre.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:600px;';
+    document.body.appendChild(cadre);
+    cadre.srcdoc = html;
+    await new Promise(res => cadre.onload = res);
+    await sleep(350);
+    const d = cadre.contentDocument;
+    const w = d.defaultView;
+    const zoneAnnee = d.getElementById('annee');
+    const sel = zoneAnnee.querySelector('select');
+    const options = [...sel.options].map(o => o.value);
+    const ratio = () => epaisseur(d, 'A', 'B') / epaisseur(d, 'A', 'C');
+    const r2024 = ratio();
+    sel.value = '2023';
+    sel.dispatchEvent(new w.Event('change', { bubbles: true }));
+    await sleep(700);
+    const r2023 = ratio();
+    // Survol : un nœud survolé fait peindre son sous-flux.
+    const etiquette = d.querySelector('g[data-label-for="B"]');
+    etiquette.dispatchEvent(new w.MouseEvent('mouseover', { bubbles: true }));
+    await sleep(50);
+    const survol = {
+      classe: d.getElementById('diagramme').classList.contains('survol-sous-flux'),
+      bandes: [...d.querySelectorAll('.sous-flux-bande')].map(b =>
+        b.getAttribute('data-source') + b.getAttribute('data-target')),
+      eteint: !!d.querySelector('g[data-label-for="C"].sous-flux-eteint')
+    };
+    d.getElementById('diagramme').dispatchEvent(new w.MouseEvent('mouseleave'));
+    await sleep(50);
+    const apresSortie = d.getElementById('diagramme').classList.contains('survol-sous-flux');
+    // Le dévoilement : deux colonnes seulement ici, donc pas de témoin à flèches.
+    const colonnes = d.getElementById('colonnes').hidden;
+    const aide = (d.querySelector('.aide') || {}).textContent || '';
+    cadre.remove();
+    await versEdition();
+    return { cache: zoneAnnee.hidden, options, r2024, r2023, survol, apresSortie, colonnes, aide };
+  `);
+  egal(r.cache, false, "la page porte le sélecteur d'année");
+  egal(r.options, ["2023", "2024"], "avec les années du classeur");
+  attendu(Math.abs(r.r2024 - 1.5) < 0.02, "la page s'ouvre sur l'année de l'aperçu (2024) — vu : " + r.r2024);
+  attendu(Math.abs(r.r2023 - 0.5) < 0.02, "changer d'année redessine la page — vu : " + r.r2023);
+  egal(r.survol.classe, true, "survoler un nœud estompe le reste du dessin");
+  egal(r.survol.bandes, ["AB"], "la bande du sous-flux est peinte sur le seul ruban concerné");
+  egal(r.survol.eteint, true, "le nœud hors du sous-flux s'estompe");
+  egal(r.apresSortie, false, "quitter le dessin efface le survol");
+  egal(r.colonnes, true, "deux colonnes : rien à dévoiler, pas de témoin");
+  attendu(r.aide.includes("année"), "l'aide annonce le sélecteur : " + r.aide);
+});
+
+test("dévoilement : l'export HTML porte le témoin « Colonnes » et ses deux boutons",
+  "complexe", async p => {
+  const r = await p(`
+    await versApercu();
+    await cocher('Dévoilement', 'Dévoiler colonne par colonne');
+    const capte = capterExport();
+    try {
+      [...document.querySelectorAll('#toolbar button')].find(b => b.textContent.includes('HTML')).click();
+      await sleep(500);
+    } finally { capte.rendre(); }
+    const html = await capte.fichiers[0].blob.text();
+    const cadre = document.createElement('iframe');
+    cadre.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:600px;';
+    document.body.appendChild(cadre);
+    cadre.srcdoc = html;
+    await new Promise(res => cadre.onload = res);
+    await sleep(350);
+    const d = cadre.contentDocument;
+    const zone = d.getElementById('colonnes');
+    const boutons = [...zone.querySelectorAll('button')];
+    const etat = () => ({ titre: zone.querySelector('.colonnes-titre').textContent,
+                          gauche: boutons[0].disabled, droite: boutons[1].disabled });
+    const depart = etat();
+    boutons[1].click();
+    await sleep(400);
+    const apres = etat();
+    boutons[0].click();
+    await sleep(100);
+    const retour = etat();
+    cadre.remove();
+    await versEdition();
+    return { cache: zone.hidden, nb: boutons.length, depart, apres, retour };
+  `);
+  egal(r.cache, false, "le témoin est là");
+  egal(r.nb, 2, "deux boutons, ← et →");
+  attendu(/^Colonnes 2 \/ \d+$/.test(r.depart.titre), "il s'ouvre sur deux colonnes : " + r.depart.titre);
+  egal([r.depart.gauche, r.depart.droite], [true, false], "← grisé au départ");
+  attendu(r.apres.titre.startsWith("Colonnes 3 /"), "→ montre une colonne de plus : " + r.apres.titre);
+  egal(r.retour.titre, r.depart.titre, "← revient en arrière");
 });
 
 test("dévoilement : l'export PowerPoint montre deux colonnes, puis une par clic",

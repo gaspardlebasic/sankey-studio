@@ -76,18 +76,56 @@ h1 { font-size: 17px; font-weight: 600; margin: 0; flex: 1 1 auto; }
 #niveaux button { font: inherit; min-width: 30px; padding: 5px 9px; border: 2px solid #1a1a1a;
   background: #ffffff; color: #1a1a1a; cursor: pointer; }
 #niveaux button.actif, #niveaux button:hover { background: #1a1a1a; color: #ffffff; }
+/* Dévoilement colonne par colonne : « Colonnes 2 / 6 », flèches ← →. */
+#colonnes { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+#colonnes[hidden] { display: none; }
+#colonnes .colonnes-groupe { display: inline-flex; }
+#colonnes button { font: inherit; min-width: 30px; padding: 5px 9px; border: 2px solid #1a1a1a;
+  background: #ffffff; color: #1a1a1a; cursor: pointer; }
+#colonnes button:hover:not(:disabled) { background: #1a1a1a; color: #ffffff; }
+#colonnes button:disabled { opacity: .35; cursor: default; }
+/* Dimension année : « Année [2024] », s'il y a plusieurs années. */
+#annee { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+#annee[hidden] { display: none; }
+#annee select { font: inherit; font-size: 13px; font-weight: 600; padding: 5px 8px;
+  border: 2px solid #1a1a1a; background: #ffffff; color: #1a1a1a; cursor: pointer; }
+#annee select:hover { background: #ececec; }
 .aide { font-size: 12px; color: #6b6b6b; }
 #zone { flex: 1 1 auto; min-height: 0; position: relative; }
 #diagramme { position: absolute; inset: 0; display: block; }
 .bouton-depliage { cursor: pointer; }
 .bouton-depliage:hover circle, .bouton-depliage:focus-visible circle { fill: #ececec; }
 .bouton-depliage:focus { outline: none; }
+/* Sous-flux du survol : le diagramme s'estompe, le sous-flux du nœud passe
+   par-dessus. Mêmes classes et mêmes durées que l'aperçu du complément
+   (src/renderer/sous-flux.ts). */
+#diagramme path[data-ruban],
+#diagramme rect[data-id],
+#diagramme rect[data-outline-for],
+#diagramme g[data-label-for],
+#diagramme .link-value { transition: opacity .3s cubic-bezier(0, .5, .5, 1); }
+#diagramme.survol-sous-flux path[data-ruban] { opacity: .2; }
+#diagramme.survol-sous-flux path[data-ruban].sous-flux-exclu { opacity: .05; }
+#diagramme .sous-flux-eteint { opacity: .25; }
+#diagramme .sous-flux-bande { pointer-events: none;
+  animation: sous-flux-apparition .3s cubic-bezier(0, .5, .5, 1) both; }
+#diagramme .sous-flux-calque { transition: opacity .3s cubic-bezier(0, .5, .5, 1); }
+#diagramme .sous-flux-calque.sous-flux-partant { opacity: 0; }
+@keyframes sous-flux-apparition { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  #diagramme path[data-ruban], #diagramme rect[data-id],
+  #diagramme rect[data-outline-for], #diagramme g[data-label-for],
+  #diagramme .link-value, #diagramme .sous-flux-calque { transition: none; }
+  #diagramme .sous-flux-bande { animation: none; }
+}
 </style>
 </head>
 <body>
 <header>
   <h1>${echapper(o.titre)}</h1>
   <span id="niveaux" hidden></span>
+  <span id="colonnes" hidden></span>
+  <span id="annee" hidden></span>
   <span class="aide">⊕ déplier · ⊖ replier · survol : valeurs</span>
 </header>
 <div id="zone"><svg id="diagramme" xmlns="http://www.w3.org/2000/svg"></svg></div>

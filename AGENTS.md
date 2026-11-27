@@ -413,7 +413,7 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
   `lane` = **couloir** horizontal (entier >= 1, 1 par défaut) ;
   `kind` = **type** du nœud, `"produit"` (défaut) ou `"industrie"` ;
   `parent` = ID du nœud parent (**niveaux d'agrégation**, cf. plus bas), absent = racine.
-- **FlowLink** : `id, source, target, value, unit, colorOverride?, bio?, inconnue?, calculee?`
+- **FlowLink** : `id, source, target, value, unit, annee?, colorOverride?, bio?, inconnue?, calculee?`
   (`colorOverride` = surcharge couleur propre au lien, **app only**, absente de l'Excel ;
   `bio` = part du flux en bio / durable, de 0 à 1, **lue dans le classeur et jamais réécrite**).
   `inconnue` = la case « Valeur du flux » est **vide** (le modèle porte alors `value: 0`) ;
@@ -450,7 +450,7 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
     (lecture d'une case vide, écriture qui la laisse vide) et `tests/run.js` (italique peint).
 - **Excel** : un onglet `Diagramme`, deux tableaux Excel (ListObjects) côte à côte :
   - **Noeuds** (A..K) : Filière · Noeud · Numéro de colonne d'affichage · Intitulé de la colonne d'affichage · Ordre vertical d'affichage · Couleur · ID · **Couloir** · **Type** · **Parent** · **ID parent**
-  - une colonne vide (`GAP = 1`), puis **Liens** (M..T) : Filière · Origine · Destination · Valeur du flux · Unité · ID origine · ID destination · **Part bio / durable**
+  - une colonne vide (`GAP = 1`), puis **Liens** (M..U) : Filière · Origine · Destination · Valeur du flux · Unité · ID origine · ID destination · **Part bio / durable** · **Année**
   - **Rangement imposé à l'écriture** : les nœuds descendent par **filière**, puis **colonne**,
     **couloir** et **ordre vertical**, **en plan** — chaque enfant juste sous son parent
     (`rangerEnPlan`) ; les liens suivent leur **origine**, puis leur
@@ -474,9 +474,9 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
     fait à « Valeur du flux » chez AgriParis Seine. La laisser hors des colonnes écrites la
     range parmi les **colonnes de l'utilisatrice** — sa formule survit, et elle voyage avec sa
     ligne au retri (`reporterEtrangeres`). Elle reste dans `LINK_COLS` pour qu'un classeur
-    préparé par le complément la porte d'emblée. Toute colonne en lecture seule doit rester
-    **en fin** de `LINK_COLS` : `buildModelRows` produit les cellules dans l'ordre de
-    `LINK_COLS_ECRITES`.
+    préparé par le complément la porte d'emblée. `buildModelRows` produit les cellules
+    dans l'ordre de `LINK_COLS_ECRITES` (= `LINK_COLS` sans elle) ; le tableau étant écrit
+    par nom d'en-tête, « Année » peut la suivre sans rien décaler.
     - Elle suit « Valeur du flux » sur deux points (demandés le 2026-09-07) : ses **formules
       sont posées une à une, sur leur cellule** — elle courait le même risque de colonne
       calculée, et un test le montre — et une **case vide s'y écrit `0`** (`zeroSiVide` de
@@ -499,8 +499,21 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
 - **Niveaux d'agrégation (`parent`)** — chantier en cours, voir **`PLAN-AGREGATION.md`**
   (décisions, format, étapes). Ce qui est en place (étape 1) :
   - « Parent » se saisit **à la main** (un nom), « ID parent » est rempli par le complément.
-    La relecture résout l'ID d'abord, sinon le nom **dans la même filière**
-    (`resoudreParents`) ; un nom introuvable est signalé au bandeau d'état. Sans les
+    La relecture (`resoudreParents`) lit le **nom d'abord**, dans la même filière : retaper
+    « Parent » range le nœud ailleurs (avant, l'ID gagnait et la réécriture annulait la
+    saisie). L'ID ne départage que deux homonymes, ou prend le relais quand le nom ne
+    désigne plus personne (parent **renommé** dans Excel). « Parent » vide : l'ID seul fait
+    foi — il peut être saisi ou calculé à la main —, donc sortir un nœud de son groupe depuis
+    Excel, c'est vider **les deux** cases. Un nom introuvable est signalé au bandeau d'état
+    et n'entraîne pas de réécriture (elle effacerait la saisie).
+    - **ID ET nom sont comparés au classeur** : l'un ou l'autre décalé, et l'on réécrit.
+      C'est ce qui remplit l'« ID parent » d'une ligne saisie par son nom, et le nom d'un
+      enfant dont le parent a changé de nom.
+    - **À chaque ouverture de la fenêtre** (`createApp` → `amorcerDepuisClasseur`), cette
+      réécriture est **attendue** avant que l'amorçage rende la main, et sans relecture de
+      courtoisie (`valeursDejaLues`). Tests « ouverture : … » de `tests/run.js` (un classeur
+      à remettre d'accord est écrit une fois ; un classeur d'accord ne l'est pas). Deux
+      mutations vérifiées (écriture non attendue, ID prioritaire sur le nom). Sans les
     colonnes (`hasParent` faux), l'app **garde** sa hiérarchie, comme pour les couloirs.
   - **Cas A seulement** : un enfant suit la colonne et le couloir de sa racine
     (`alignerSurParents`, réécriture si un enfant a bougé). Son ordre vertical se lit entre
@@ -554,7 +567,10 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
   - **Export HTML interactif** (bouton « HTML », `exportHtml`) : une page **autonome** —
     filières affichées, apparence, vue de présentation, visionneuse, polices. Lecture seule :
     ⊕ / ⊖, niveaux, infobulles (celles des rubans viennent du moteur, celles des nœuds de la
-    visionneuse).
+    visionneuse), **dévoilement** (si coché : témoin « Colonnes 2 / 6 », boutons ← → et
+    flèches du clavier), **survol du sous-flux** (`peindreSousFlux`, mêmes classes et mêmes
+    durées que l'aperçu, CSS recopiée dans le gabarit) et **sélecteur d'année**. Pas de
+    filtre au clic : la page reste une vue de présentation.
     - La visionneuse (`src/visionneuse/visionneuse.ts`) est un bundle **construit en premier**
       par `build.mjs`, en mémoire et minifié, puis **gravé comme texte** dans les autres
       (`__VISIONNEUSE__`, lu par `src/renderer/export-html.ts`). En `--watch`, elle n'est pas
@@ -929,11 +945,50 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
       du navigateur intégré **masqué**, les animations tournent au ralenti : ne pas y juger
       des durées.
   - Les **exports PNG / SVG suivent le filtre** (ils passent par `dessinerApercu`) ; l'export
-    HTML, non — la visionneuse n'a ni survol ni filtre.
+    HTML, non : la visionneuse a le **survol** (demandé le 2026-11-27), pas le filtre au clic.
+    Le survol y est calculé sur le modèle de l'**année choisie**, et s'efface quand on
+    redessine (année, ⊕ / ⊖) ou qu'une colonne se masque.
   - Tests : `mesurerSousFlux` (tests/helpers.js) lit la part **peinte** d'une bande au milieu
     du ruban ; deux mutations vérifiées (bande pleine au lieu de sa part, filtre ignoré au
     dessin). Les bandes portent `data-source`/`data-target` : un sélecteur de ruban qui ne les
     écarte pas les compterait pendant un survol.
+- **Dimension année des valeurs de liens** (demandée le 2026-11-27) : colonne **« Année »**,
+  ajoutée **en fin** du tableau des liens, **facultative**. Plusieurs lignes peuvent décrire
+  le même couple (origine, destination), une par année : c'est la **même flèche**, avec une
+  valeur par année. Règles pures dans `src/shared/annees.js` (Node et esbuild).
+  - **Lecture** (`anneeDepuisCellule`) : entier (« 2024 »), texte (« 2024-2025 » → la
+    première année citée) ou **date** — une colonne mise en forme en date rend un numéro de
+    série Excel (45 000 → 2023), converti. Une case vide n'est pas l'année 0 : le lien ne
+    porte pas de champ `annee` et vaut **pour toutes les années**.
+  - **Identité d'une ligne = couple + année**, partout : réconciliation (`cleLienAnnee`,
+    `syncedLinkIds`), relecture des formules (`id:…|2024`, la clé sans année restant lue en
+    repli pour un classeur d'avant), appariement des lignes à l'écriture
+    (`Identite.optionnelles`), tri (`buildModelRows` range un couple par année croissante).
+    Deux années d'un couple gardent donc chacune leur formule.
+  - **Dessin** (`liensPourAnnee`) : pour l'année choisie, la ligne datée de cette année, sinon
+    la ligne sans année du même couple ; une ligne d'une autre année n'est pas dessinée. Sans
+    année du tout, tous les liens passent : un diagramme d'avant ne bouge pas. `viewLinks`
+    l'applique, donc aperçu, vue d'édition, panneau, équilibrage, tri par valeur et exports
+    PNG / SVG / PPT suivent tous l'année choisie.
+  - **Sélecteur** « Année [2024] » dans la barre d'outils, **en aperçu seulement** et
+    **à partir de deux années** (une seule valeur : rien à choisir). Par défaut la plus
+    récente. État de séance (`anneeChoisie`), jamais rangé dans l'apparence ; si l'année
+    disparaît du classeur, on retombe sur la plus récente (`anneeRetenue`).
+  - Un lien **créé** dans l'app (tirer un lien, « + » d'un nœud) reçoit l'année choisie ; il
+    n'est refusé comme doublon que si le couple existe **pour cette année**.
+  - **Export HTML** : toutes les années voyagent dans la page (`version: 2` des données), qui
+    s'ouvre sur l'année de l'aperçu et porte son propre sélecteur.
+  - **Ajout de la colonne à un vieux classeur** (`ajouterColonnesManquantes`) : le tableau des
+    liens est le dernier des deux, donc des colonnes entières sont **insérées à son bord droit**
+    avant de l'élargir — sinon l'élargissement avalerait une colonne voisine de
+    l'utilisatrice. Mutation vérifiée.
+  - Tests : `tests/addin-office.test.js` (lecture des trois formes, deux années d'un couple
+    avec chacune sa formule, colonne voisine préservée) et `tests/run.js` (« année : … »,
+    « export HTML : … »). Mutations vérifiées : visionneuse qui ignore l'année, sans survol,
+    sélecteur visible en édition, formules indexées sans l'année.
+  - **Banc de test piégeux** : les fixtures qui écrivent leurs lignes de liens **par
+    position** (une colonne de l'utilisatrice après `LINK_COLS`) doivent porter une case pour
+    « Année » — sinon leur colonne tombe dans « Année ».
 - **La colonne « Valeur du flux » ne doit JAMAIS se remplir toute seule.** Excel a une
   correction automatique — *« Remplir les formules dans les tableaux pour créer des colonnes
   calculées »* — qui recopie sur **toutes les lignes** une formule saisie dans UNE cellule d'une

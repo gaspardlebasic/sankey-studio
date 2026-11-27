@@ -4,25 +4,35 @@
 // l'éditeur : l'export l'écrit dans la page qu'il produit. La page s'ouvre
 // donc hors ligne, sans Excel ni serveur — un fichier qu'on envoie par mail.
 //
-// Lecture seule : ⊕ / ⊖, boutons de niveaux, infobulles. Le dessin et les
+// Lecture seule : ⊕ / ⊖, boutons de niveaux, dévoilement colonne par colonne,
+// sélecteur d'année, survol du sous-flux et infobulles. Le dessin et les
 // commandes sont ceux de l'aperçu du complément (src/renderer/apercu-agrege.ts),
 // au code près.
 
 import { FlowModel, SankeyOptions } from "../renderer/types";
-import { dessinerAgrege, poserCommandesAgregees, modeleAffiche, aDesNiveaux } from "../renderer/apercu-agrege";
+import {
+    dessinerAgrege, poserCommandesAgregees, modeleAffiche, modeleDessine, aDesNiveaux
+} from "../renderer/apercu-agrege";
 import { commandeCliquee, instantane, animerTransition } from "../renderer/depliage";
 import { appliquerDevoilement, nombreDeColonnes } from "../renderer/devoilement";
+import { peindreSousFlux, effacerSousFlux } from "../renderer/sous-flux";
+import { sousFlux } from "../shared/sous-flux.js";
+import { anneesDistinctes, anneeParDefaut, liensPourAnnee } from "../shared/annees.js";
 import { depliesAuNiveau, nombreDeNiveaux } from "../shared/agregation.js";
 import type { Cadre } from "../shared/agregation.js";
 
 /** Ce que l'export écrit dans la page (`<script id="sankey-donnees">`). */
 export interface DonneesVisionneuse {
-    version: 1;
+    version: 1 | 2;
     titre: string;
     model: FlowModel;
     options: SankeyOptions;
     /** La vue de présentation : les parents dépliés à l'ouverture. */
     deplies: string[];
+    /** L'année choisie dans l'aperçu au moment de l'export. */
+    annee?: string;
+    /** Toutes les années portées par les liens (facultatif : recalculé). */
+    annees?: string[];
 }
 
 function demarrer(): void {
@@ -30,6 +40,8 @@ function demarrer(): void {
     const svg = document.getElementById("diagramme") as unknown as SVGSVGElement | null;
     const zone = document.getElementById("zone");
     const niveauxEl = document.getElementById("niveaux");
+    const colonnesEl = document.getElementById("colonnes");
+    const anneeEl = document.getElementById("annee");
     if (!brut || !svg || !zone) return;
     const d = JSON.parse(brut.textContent || "{}") as DonneesVisionneuse;
     const model = d.model;
@@ -39,11 +51,19 @@ function demarrer(): void {
     const devoilement = d.options.devoilement?.show === true;
     let colonnesRevelees = 2;
 
+    /** Les années du classeur, et celle qu'on dessine. */
+    const annees = anneesDistinctes(model.links);
+    let annee = d.annee && annees.indexOf(d.annee) >= 0 ? d.annee : anneeParDefaut(annees);
+
+    /** Le modèle de l'année choisie : une seule valeur par couple. */
+    const modeleAnnee = (): FlowModel =>
+        ({ nodes: model.nodes, links: liensPourAnnee(model.links, annee) });
+
     const fmt = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
 
     /** Une infobulle sur chaque nœud : son nom, ce qui le traverse. */
-    function infobulles(): void {
-        const affiche = modeleAffiche(model, deplies, d.options);
+    function infobulles(m: FlowModel): void {
+        const affiche = modeleAffiche(m, deplies, d.options);
         const entree = new Map<string, number>(), sortie = new Map<string, number>();
         const unite = new Map<string, string>();
         affiche.links.forEach(l => {
@@ -88,24 +108,113 @@ function demarrer(): void {
         }
     }
 
+    /* ---- Dévoilement : « Colonnes 2 / 6 », flèches ← → ---- */
+    let titreColonnes: HTMLElement | null = null;
+    let flecheGauche: HTMLButtonElement | null = null;
+    let flecheDroite: HTMLButtonElement | null = null;
+    if (colonnesEl) {
+        titreColonnes = document.createElement("span");
+        titreColonnes.className = "colonnes-titre";
+        const groupe = document.createElement("span");
+        groupe.className = "colonnes-groupe";
+        const fleche = (pas: -1 | 1, texte: string, titre: string) => {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.textContent = texte;
+            b.title = titre;
+            b.addEventListener("click", () => reveler(pas));
+            groupe.appendChild(b);
+            return b;
+        };
+        flecheGauche = fleche(-1, "←", "Masquer la dernière colonne (flèche gauche)");
+        flecheDroite = fleche(1, "→", "Afficher la colonne suivante (flèche droite)");
+        colonnesEl.append(titreColonnes, groupe);
+    }
+
     /** Ramène un nombre de colonnes montrées dans [2, total]. */
     const borner = (n: number, total: number) => Math.max(2, Math.min(Math.max(2, total), n));
 
+    function majColonnes(): void {
+        if (!colonnesEl) return;
+        const total = devoilement ? Math.max(2, nombreDeColonnes(svg!)) : 0;
+        const actif = devoilement && total > 2;
+        colonnesEl.hidden = !actif;
+        if (!actif) return;
+        const montre = borner(colonnesRevelees, total);
+        if (titreColonnes) titreColonnes.textContent = `Colonnes ${montre} / ${total}`;
+        if (flecheGauche) flecheGauche.disabled = montre <= 2;
+        if (flecheDroite) flecheDroite.disabled = montre >= total;
+    }
+
+    /* ---- Dimension année : « Année [2024] », s'il y a plusieurs années ---- */
+    let anneeSelect: HTMLSelectElement | null = null;
+    let signatureAnnees = "";
+    if (anneeEl) {
+        const label = document.createElement("label");
+        label.htmlFor = "annee-select";
+        label.textContent = "Année";
+        anneeSelect = document.createElement("select");
+        anneeSelect.id = "annee-select";
+        anneeEl.append(label, anneeSelect);
+        anneeSelect.addEventListener("change", () => {
+            annee = anneeSelect!.value;
+            dessiner(true);
+        });
+    }
+
+    function majAnnees(): void {
+        if (!anneeEl || !anneeSelect) return;
+        anneeEl.hidden = annees.length <= 1;
+        if (anneeEl.hidden) return;
+        const signature = annees.join("\u0000");
+        if (signature !== signatureAnnees) {
+            anneeSelect.innerHTML = "";
+            annees.forEach(a => {
+                const o = document.createElement("option");
+                o.value = a;
+                o.textContent = a;
+                anneeSelect!.appendChild(o);
+            });
+            signatureAnnees = signature;
+        }
+        anneeSelect.value = annee;
+    }
+
+    /** Nœud survolé : son sous-flux est peint par-dessus le dessin. */
+    let survol: string | null = null;
+    function survoler(e: MouseEvent): void {
+        const cible = e.target instanceof Element
+            ? e.target.closest("g[data-label-for], rect[data-id]") : null;
+        const id = cible && (cible.getAttribute("data-label-for") || cible.getAttribute("data-id"));
+        const visible = id && cible && cible.getAttribute("visibility") !== "hidden" ? id : null;
+        if (visible === survol) return;
+        survol = visible;
+        if (!visible) { effacerSousFlux(svg!); return; }
+        const dessine = modeleDessine(modeleAnnee(), d.options, deplies, []);
+        if (!dessine.nodes.some(n => n.id === visible)) { effacerSousFlux(svg!); return; }
+        peindreSousFlux(svg!, visible, sousFlux(dessine, visible));
+    }
+
     function dessiner(animer: boolean): void {
         const avant = animer ? instantane(svg!, cadres) : null;
+        // Le survol portait sur l'ancien dessin : il part avec lui.
+        if (survol !== null) { effacerSousFlux(svg!); survol = null; }
         const w = Math.max(200, zone!.clientWidth);
         const h = Math.max(200, zone!.clientHeight);
-        dessinerAgrege(svg!, model, d.options, deplies, w, h);
+        const base = modeleAnnee();
+        dessinerAgrege(svg!, base, d.options, deplies, w, h);
         // Le dessin est celui du diagramme entier : le dévoilement ne fait que
         // masquer les colonnes qui ne sont pas encore montrées.
         if (devoilement) {
             colonnesRevelees = borner(colonnesRevelees, nombreDeColonnes(svg!));
             appliquerDevoilement(svg!, colonnesRevelees);
         }
-        cadres = poserCommandesAgregees(svg!, model, deplies);
-        infobulles();
+        cadres = poserCommandesAgregees(svg!, base, deplies);
+        infobulles(base);
         if (avant) animerTransition(svg!, avant, cadres);
         majNiveaux();
+        majAnnees();
+        majColonnes();
     }
 
     /** Une colonne de plus (1) ou de moins (-1), sans redessiner le Sankey. */
@@ -115,10 +224,13 @@ function demarrer(): void {
         const avant = borner(colonnesRevelees, total);
         const apres = borner(avant + pas, total);
         if (apres === avant) return;
+        // La bande de survol d'une colonne cachée n'aurait plus de sens.
+        if (survol !== null) { effacerSousFlux(svg!); survol = null; }
         colonnesRevelees = apres;
         appliquerDevoilement(svg!, apres, apres > avant ? avant : undefined);
         // Les ⊕ / ⊖ ne se posent que sur les nœuds montrés : ils suivent.
-        cadres = poserCommandesAgregees(svg!, model, deplies);
+        cadres = poserCommandesAgregees(svg!, modeleAnnee(), deplies);
+        majColonnes();
     }
 
     const basculer = (cible: EventTarget | null): boolean => {
@@ -132,6 +244,12 @@ function demarrer(): void {
     svg.addEventListener("click", e => { basculer(e.target); });
     svg.addEventListener("keydown", e => {
         if ((e.key === "Enter" || e.key === " ") && basculer(e.target)) e.preventDefault();
+    });
+    svg.addEventListener("mouseover", survoler);
+    svg.addEventListener("mouseleave", () => {
+        if (survol === null) return;
+        survol = null;
+        effacerSousFlux(svg);
     });
     window.addEventListener("keydown", e => {
         if (!devoilement) return;
@@ -150,6 +268,7 @@ function demarrer(): void {
     if (aide) {
         const parties: string[] = [];
         if (devoilement) parties.push("← → colonnes");
+        if (annees.length > 1) parties.push("année : choisir");
         if (aDesNiveaux(model)) parties.push("⊕ déplier · ⊖ replier");
         parties.push("survol : valeurs");
         aide.textContent = parties.join(" · ");
