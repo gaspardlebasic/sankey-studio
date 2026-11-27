@@ -452,6 +452,11 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
     dans `buildModelRows` (`src/shared/modele-excel.js`) et **nulle part ailleurs** — une copie
     de cette règle divergerait sans qu'on le voie. Il porte sur des **copies** : le modèle de
     l'éditeur n'est jamais réordonné.
+  - **À placement égal, l'ordre du modèle tranche — jamais l'alphabet** : une liste saisie dans
+    Excel garde l'ordre de ses lignes, et un nœud déplacé à la main reste où on l'a mis. Une
+    case « Ordre vertical » **vide** n'est pas l'ordre 0 : `lireDiagramme` la marque
+    (`orderAbsent`), et `resoudreOrdresExcel` (`editor.ts`) range la ligne **à la suite de sa
+    cellule** (colonne × couloir), puis l'écriture y pose cet ordre.
   - Lecture **et** écriture sont indexées par **nom d'entête**, jamais par position : un
     classeur écrit avant l'arrivée d'une colonne n'a pas la même largeur de tableau, et les
     deux tableaux ne sont pas forcément aux mêmes adresses qu'aujourd'hui. « Couloir » puis

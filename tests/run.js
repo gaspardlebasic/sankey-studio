@@ -845,6 +845,57 @@ test("resynchro : le bouton du ruban relit le classeur, puis y réécrit ce qu'i
   }
 });
 
+test("réconciliation : une liste Excel sans ordre se range après l'ordre fait à la main",
+  "complexe", async p => {
+  // Ce qu'on éprouve : une case « Ordre vertical » VIDE dans Excel n'est pas
+  // l'ordre 0. Les lignes ajoutées à la main se rangent à la suite de leur
+  // cellule (colonne × couloir), dans l'ordre du classeur — et surtout pas
+  // dans l'ordre alphabétique, qui écraserait un placement fait dans l'app.
+  const r = await p(`
+    const avant = nodes().map(n => ({ id: n.id, name: n.name, column: n.column,
+      title: n.title || '', order: n.order, lane: n.lane || 1,
+      kind: n.kind || 'produit', filiere: n.filiere || '', color: n.color || null }));
+    const parId = () => new Map(nodes().map(n => [n.id, n]));
+    const liens = links().map(l => ({
+      sourceId: l.source, targetId: l.target,
+      sourceName: parId().get(l.source).name, targetName: parId().get(l.target).name,
+      value: l.value, unit: l.unit || '', bio: l.bio || 0
+    }));
+    const noms = [['Zèbre nouveau', 2], ['Abeille nouvelle', 2]];
+    const data = {
+      hasLane: true, hasKind: true, hasParent: false, hasBio: true,
+      nodes: avant.map(n => Object.assign({}, n, {
+        order: 0, orderAbsent: true, lane: 1, parentId: null, parentName: ''
+      })).concat(noms.map(([name, column]) => ({
+        id: null, name, column, title: '', order: 0, orderAbsent: true,
+        lane: 1, kind: 'produit', filiere: 'Lentilles', color: null,
+        parentId: null, parentName: ''
+      }))),
+      links: liens
+    };
+    const assigne = T.reconcile(data);
+    const apres = parId();
+    const existants = avant.filter(n => n.column === 2 && n.filiere === 'Lentilles');
+    return {
+      assigne,
+      avant: existants.map(n => n.order),
+      apres: existants.map(n => apres.get(n.id).order),
+      nouveaux: noms.map(([nom]) => {
+        const n = nodes().find(x => x.name === nom);
+        return n ? { nom: n.name, ordre: n.order, colonne: n.column, couloir: n.lane } : null;
+      })
+    };
+  `);
+  egal(r.assigne, true, "un ordre attribué doit demander une réécriture du classeur");
+  egal(r.apres, r.avant, "l'ordre des nœuds déjà placés à la main ne doit pas bouger");
+  egal(r.nouveaux.map(n => n && n.nom), ["Zèbre nouveau", "Abeille nouvelle"],
+    "les lignes doivent rester dans l'ordre du classeur, pas dans l'ordre alphabétique");
+  egal(r.nouveaux.map(n => n && n.ordre), [3, 4],
+    "elles se rangent à la suite de leur cellule (après les ordres 0, 1 et 2)");
+  attendu(r.nouveaux.every(n => n && n.colonne === 2 && n.couloir === 1),
+    "elles gardent la colonne et le couloir lus dans le classeur");
+});
+
 test("couloirs : le couloir 2 se range sous le couloir 1", "complexe", async p => {
   const r = await p(`
     const m = T.model();

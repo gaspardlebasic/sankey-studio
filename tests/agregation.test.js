@@ -177,10 +177,13 @@ test("rangement en plan : chaque enfant sous son parent, Parent et ID parent éc
   egal(nodeRows.map(r => r[iIdP].v), ["", "", "Leg", "Leg", "", ""], "ID parent");
 });
 
-test("sans hiérarchie, le rangement est celui d'avant", () => {
+test("sans hiérarchie, le rangement suit le placement et l'ordre de saisie, sans alphabet", () => {
+  // À placement égal, c'est l'ordre du modèle qui tranche : une liste saisie
+  // dans Excel garde l'ordre de ses lignes, et un nœud déplacé à la main reste
+  // où on l'a mis. L'alphabet, lui, réordonnait le classeur à chaque écriture.
   const nodes = [noeud("b", { column: 2 }), noeud("a", { column: 2 }), noeud("z", { column: 1, order: 3 })];
   const { nodeRows } = buildModelRows({ nodes, links: [] });
-  egal(nodeRows.map(r => r[1].v), ["z", "a", "b"], "colonne, ordre, puis nom");
+  egal(nodeRows.map(r => r[1].v), ["z", "b", "a"], "colonne, ordre, puis ordre du modèle");
 });
 
 console.log(`\n${ok}/${ok + echecs.length} tests passés`);

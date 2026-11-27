@@ -527,6 +527,8 @@ let transitionFiltre: { avant: Instantane; fantome: SVGGElement | null } | null 
 interface ExcelNode {
     id: string | null; name: string; column: number; title: string;
     order: number; lane: number; kind: NodeKind; filiere: string; color: string | null;
+    /** La case « Ordre vertical » était vide : ce n'est pas l'ordre 0. */
+    orderAbsent?: boolean;
     /** Parent : l'ID d'abord, sinon le nom saisi à la main (absents des vieux classeurs). */
     parentId?: string | null; parentName?: string;
 }
@@ -5397,7 +5399,8 @@ function layoutNew(n: FlowNode): void {
  * Fusionne les données Excel dans le modèle (par ID). Les valeurs et éditions
  * d'Excel font autorité ; les lignes sans ID sont créées (ID attribué) ; les
  * lignes disparues d'Excel mais déjà synchronisées sont supprimées.
- * Renvoie true si des IDs ont été attribués (nécessite une réécriture).
+ * Renvoie true si le classeur doit être réécrit : un ID ou un ordre vertical a
+ * été attribué à une ligne qui ne le portait pas encore.
  */
 /**
  * Ce que la dernière relecture a trouvé à redire à la hiérarchie : parents
@@ -5453,10 +5456,69 @@ function resoudreParents(data: ExcelData, lus: [ExcelNode, FlowNode][]): boolean
     return aReecrire;
 }
 
-function reconcileFromExcel(data: ExcelData): boolean {
-    let assigned = false;
+/**
+ * L'ordre vertical retenu pour chaque ligne du classeur.
+ *
+ * Une case « Ordre vertical d'affichage » VIDE n'est pas l'ordre 0 : c'est une
+ * ligne ajoutée à la main dans Excel, qui n'a encore rien dit de sa place. La
+ * lire comme 0 la mêlait aux nœuds déjà en place, puis l'écriture tranchait à
+ * égalité par le NOM — le placement fait à la main dans l'app se retrouvait
+ * alphabétisé. On range donc ces lignes À LA SUITE de leur cellule (colonne ×
+ * couloir), dans l'ordre où le classeur les donne. Un nœud déjà présent dans
+ * la même cellule garde son ordre : c'est celui de l'app, il fait autorité.
+ *
+ * `assigned` est vrai dès qu'un ordre a été attribué : le classeur ne le
+ * connaît pas encore, il faut le lui écrire.
+ */
+function resoudreOrdresExcel(
+    data: ExcelData, nodesById: Map<string, FlowNode>
+): { ordres: Map<ExcelNode, number>; assigned: boolean } {
+    const cle = (column: number, lane: number) => column + " " + lane;
+    const laneDe = (E: ExcelNode): number => {
+        if (data.hasLane) return Math.max(1, Math.round(E.lane) || 1);
+        const n = E.id ? nodesById.get(E.id) : undefined;
+        return n ? laneOf(n) : 1;
+    };
 
+    // Le plus grand ordre connu de chaque cellule, pour ranger à la suite.
+    const max = new Map<string, number>();
+    const noter = (k: string, o: number) => {
+        max.set(k, Math.max(max.has(k) ? max.get(k)! : -1, o));
+    };
+    model.nodes.forEach(n => noter(cle(n.column, laneOf(n)), n.order));
+
+    const ordres = new Map<ExcelNode, number>();
+    // 1. Les ordres explicites, et ceux qu'un nœud déjà en place garde.
+    data.nodes.forEach(E => {
+        const existant = E.id ? nodesById.get(E.id) : undefined;
+        const lane = laneDe(E);
+        if (!E.orderAbsent) {
+            ordres.set(E, E.order);
+            noter(cle(E.column, lane), E.order);
+        } else if (existant && existant.column === E.column && laneOf(existant) === lane) {
+            ordres.set(E, existant.order);
+            noter(cle(E.column, lane), existant.order);
+        }
+    });
+    // 2. Les lignes sans ordre : à la suite de leur cellule, dans l'ordre du
+    //    classeur. C'est ce qui garde la liste telle qu'elle a été saisie.
+    let assigned = false;
+    data.nodes.forEach(E => {
+        if (ordres.has(E)) return;
+        const k = cle(E.column, laneDe(E));
+        const o = (max.has(k) ? max.get(k)! : -1) + 1;
+        max.set(k, o);
+        ordres.set(E, o);
+        assigned = true;
+    });
+    return { ordres, assigned };
+}
+
+function reconcileFromExcel(data: ExcelData): boolean {
     const nodesById = new Map(model.nodes.map(n => [n.id, n]));
+    const { ordres, assigned: ordresAssignes } = resoudreOrdresExcel(data, nodesById);
+    let assigned = ordresAssignes;
+
     const excelNodeIds = new Set<string>();
     const newSyncedNodes = new Set<string>();
 
@@ -5467,7 +5529,7 @@ function reconcileFromExcel(data: ExcelData): boolean {
             const n = nodesById.get(id)!;
             lus.push([E, n]);
             n.name = E.name; n.column = E.column; n.title = E.title;
-            n.order = E.order; n.filiere = E.filiere; n.color = E.color;
+            n.order = ordres.get(E)!; n.filiere = E.filiere; n.color = E.color;
             if (data.hasLane) n.lane = E.lane;
             if (data.hasKind) n.kind = E.kind;
             excelNodeIds.add(id); newSyncedNodes.add(id);
@@ -5478,7 +5540,7 @@ function reconcileFromExcel(data: ExcelData): boolean {
                 id, name: E.name, column: E.column, title: E.title,
                 lane: data.hasLane ? E.lane : 1,
                 kind: data.hasKind ? E.kind : "produit",
-                order: E.order, filiere: E.filiere, color: E.color, x: 0, y: 0
+                order: ordres.get(E)!, filiere: E.filiere, color: E.color, x: 0, y: 0
             };
             layoutNew(n);
             model.nodes.push(n);

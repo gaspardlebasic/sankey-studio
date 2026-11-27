@@ -33,6 +33,12 @@ import type {
 export interface NoeudExcel {
   id: string | null; name: string; column: number; title: string;
   order: number; lane: number; kind: NodeKind; filiere: string; color: string | null;
+  /**
+   * La case « Ordre vertical d'affichage » était VIDE. Ce n'est pas l'ordre 0 :
+   * c'est une ligne saisie à la main, à ranger à la suite de sa cellule (cf.
+   * resoudreOrdresExcel dans editor.ts).
+   */
+  orderAbsent?: boolean;
   /** Parent (niveaux d'agrégation) : l'ID d'abord, sinon le nom saisi à la main. */
   parentId: string | null; parentName: string;
 }
@@ -345,18 +351,24 @@ export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel |
         if (ligneVide(ligne)) continue;
         const name = texte(col(ligne, "Noeud")).trim();
         if (!name) continue;
+        // Une case VIDE n'est pas l'ordre 0 : c'est une ligne ajoutée à la
+        // main, que l'éditeur rangera à la suite de sa cellule. La distinction
+        // se perdrait si on la ramenait ici au nombre 0.
+        const brutOrdre = col(ligne, "Ordre vertical d'affichage");
+        const ordreAbsent = texte(brutOrdre).trim() === "";
         nodes.push({
           id: texte(col(ligne, "ID")).trim() || null,
           name,
           column: toInt(col(ligne, "Numéro de colonne d'affichage"), 1),
           title: texte(col(ligne, "Intitulé de la colonne d'affichage")),
-          order: toInt(col(ligne, "Ordre vertical d'affichage"), 0),
+          order: toInt(brutOrdre, 0),
           lane: Math.max(1, toInt(col(ligne, "Couloir"), 1)),
           kind: typeDepuisTexte(col(ligne, "Type")),
           filiere: texte(col(ligne, "Filière")),
           color: texte(col(ligne, "Couleur")).trim() || null,
           parentId: texte(col(ligne, "ID parent")).trim() || null,
-          parentName: texte(col(ligne, "Parent")).trim()
+          parentName: texte(col(ligne, "Parent")).trim(),
+          ...(ordreAbsent ? { orderAbsent: true } : {})
         });
       }
     }

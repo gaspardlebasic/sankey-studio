@@ -138,6 +138,40 @@ await test("lecture : nœuds et liens, avec couloirs et types", async () => {
   }, "second lien : la valeur calculée est lue, pas la formule");
 });
 
+await test("lecture : un ordre vertical VIDE se distingue de l'ordre 0", async () => {
+  classeurType({
+    noeuds: [
+      ["Lait", "Production bio", 1, "Production", 0, "#adcb47", "n1", 2, "Produit"],
+      ["Lait", "Lait cru", 2, "Collecte", "", "", "n2", 2, "Produit"]
+    ]
+  });
+  const d = await office.lireDiagramme();
+  egal(d.nodes[0].orderAbsent, undefined, "un ordre explicite n'est pas marqué absent");
+  egal(d.nodes[1].order, 0, "le modèle porte 0, comme partout ailleurs");
+  egal(d.nodes[1].orderAbsent, true,
+       "mais la ligne dit que la case était vide : elle se rangera à la suite");
+});
+
+await test("écriture : à placement égal, l'ordre du modèle gagne sur l'alphabet", async () => {
+  // Deux nœuds d'une même cellule au même ordre vertical : c'est l'ordre de
+  // saisie qui doit les départager. L'alphabet les retournait, et la relecture
+  // du classeur figeait ensuite ce tri — un placement manuel perdu.
+  const modele = {
+    nodes: [
+      { id: "n1", name: "Zèbre", column: 1, order: 0, lane: 1, filiere: "Lait" },
+      { id: "n2", name: "Abeille", column: 1, order: 1, lane: 1, filiere: "Lait" },
+      { id: "n3", name: "Baleine", column: 1, order: 0, lane: 1, filiere: "Lait" },
+      { id: "n4", name: "Aba", column: 1, order: 0, lane: 2, filiere: "Lait" },
+      { id: "n5", name: "Aaa", column: 2, order: 0, lane: 1, filiere: "Lait" }
+    ],
+    links: []
+  };
+  const { nodeRows } = buildModelRows(modele, null);
+  egal(nodeRows.map(l => l[1].v),
+    ["Zèbre", "Baleine", "Abeille", "Aba", "Aaa"],
+    "colonne puis couloir d'abord, puis l'ordre de saisie à placement égal");
+});
+
 await test("lecture : une valeur VIDE est une inconnue, pas un zéro", async () => {
   classeurType({
     liens: [

@@ -238,15 +238,17 @@ function parentsValides(nodes) {
 
 /**
  * Les nœuds rangés EN PLAN : par filière, puis placement, chaque enfant juste
- * sous son parent, les frères et sœurs par ordre vertical. Sans hiérarchie,
- * c'est exactement le tri d'avant (filière · colonne · couloir · ordre · nom).
+ * sous son parent, les frères et sœurs par ordre vertical. À placement égal,
+ * c'est l'ordre du MODÈLE qui tranche — jamais l'alphabet : un nœud déplacé à
+ * la main doit rester là où on l'a mis, et une liste saisie dans Excel garder
+ * l'ordre de ses lignes. Sans hiérarchie, c'est le tri filière · colonne ·
+ * couloir · ordre, stable.
  */
 function rangerEnPlan(nodes) {
   const parents = parentsValides(nodes);
   const comparer = (a, b) =>
     comparerFiliere(a.filiere, b.filiere) ||
-    comparerPlacement(a, b) ||
-    comparerTexte(a.name, b.name);
+    comparerPlacement(a, b);
   const enfants = new Map();
   const racines = [];
   for (const n of nodes) {
@@ -275,9 +277,11 @@ function buildModelRows(model, formulaMap) {
   const nomDe = (node, id) => (node && node.name) || nameById.get(id) || "";
   // Le classeur est fait pour être LU : nœuds et liens y descendent filière par
   // filière, puis colonne, couloir et ordre vertical — l'ordre dans lequel on
-  // les voit à l'écran. Un lien se range d'après son origine, puis sa
-  // destination. On trie des copies : le modèle de l'app n'est pas touché.
-  // Une hiérarchie se lit en plan : chaque enfant juste sous son parent.
+  // les voit à l'écran. À placement égal, l'ordre du modèle est conservé (tri
+  // stable) : c'est celui de la saisie ou du déplacement à la main, et il ne
+  // doit jamais être remplacé par l'alphabet. Un lien se range d'après son
+  // origine, puis sa destination. On trie des copies : le modèle de l'app n'est
+  // pas touché. Une hiérarchie se lit en plan : chaque enfant sous son parent.
   const noeuds = rangerEnPlan(model.nodes);
   const parents = parentsValides(model.nodes);
   const liens = model.links.slice().sort((a, b) => {
