@@ -3751,6 +3751,69 @@ test("export HTML : sélecteur d'année, dévoilement à boutons et survol du so
   attendu(r.aide.includes("année"), "l'aide annonce le sélecteur : " + r.aide);
 });
 
+test("export HTML : un nœud se montre cliquable, et le cliquer filtre sur son sous-flux",
+  "complexe", async p => {
+  const r = await p(CLASSEUR_ANNEES + `
+    await versApercu();
+    const capte = capterExport();
+    try {
+      [...document.querySelectorAll('#toolbar button')].find(b => b.textContent.includes('HTML')).click();
+      await sleep(500);
+    } finally { capte.rendre(); }
+    const html = await capte.fichiers[0].blob.text();
+    const cadre = document.createElement('iframe');
+    cadre.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:600px;';
+    document.body.appendChild(cadre);
+    cadre.srcdoc = html;
+    await new Promise(res => cadre.onload = res);
+    await sleep(350);
+    const d = cadre.contentDocument;
+    const w = d.defaultView;
+    const ids = () => [...d.querySelectorAll('#diagramme rect[data-id]')]
+      .map(rc => rc.getAttribute('data-id')).sort();
+    const temoin = d.getElementById('sous-flux');
+    const curseurs = {
+      etiquette: w.getComputedStyle(d.querySelector('g[data-label-for="B"]')).cursor,
+      boite: w.getComputedStyle(d.querySelector('rect[data-id="B"]')).cursor
+    };
+    const avant = ids();
+    const cliquer = el => el.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    // Le geste réel : survoler, puis cliquer (le sous-flux part de ses bandes).
+    d.querySelector('g[data-label-for="B"]').dispatchEvent(new w.MouseEvent('mouseover', { bubbles: true }));
+    cliquer(d.querySelector('g[data-label-for="B"]'));
+    await sleep(700);
+    const filtre = { ids: ids(), cache: temoin.hidden, texte: temoin.textContent };
+    cliquer(d.querySelector('g[data-label-for="B"]'));
+    await sleep(700);
+    const recliquer = { ids: ids(), cache: temoin.hidden };
+    cliquer(d.querySelector('g[data-label-for="B"]'));
+    await sleep(700);
+    w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sleep(700);
+    const echap = ids();
+    cliquer(d.querySelector('rect[data-id="C"]'));
+    await sleep(700);
+    const parBoite = ids();
+    cliquer(d.getElementById('diagramme'));
+    await sleep(700);
+    const vide = ids();
+    const aide = (d.querySelector('.aide') || {}).textContent || '';
+    cadre.remove();
+    await versEdition();
+    return { curseurs, avant, filtre, recliquer, echap, parBoite, vide, aide };
+  `);
+  egal(r.curseurs, { etiquette: "pointer", boite: "pointer" }, "le pointeur dit qu'un nœud se clique");
+  egal(r.avant, ["A", "B", "C"], "au départ, tout le diagramme");
+  egal(r.filtre.ids, ["A", "B"], "cliquer « Bois » ne garde que ce qui passe par lui");
+  egal(r.filtre.cache, false, "le témoin du filtre apparaît");
+  attendu(r.filtre.texte.includes("Sous-flux : Bois"), "il nomme le nœud : " + r.filtre.texte);
+  egal(r.recliquer, { ids: ["A", "B", "C"], cache: true }, "recliquer le dernier nœud défait le filtre");
+  egal(r.echap, ["A", "B", "C"], "Échap défait le filtre");
+  egal(r.parBoite, ["A", "C"], "la boîte du nœud filtre aussi");
+  egal(r.vide, ["A", "B", "C"], "un clic dans le vide défait tout");
+  attendu(r.aide.includes("clic : filtrer"), "l'aide annonce le clic : " + r.aide);
+});
+
 test("dévoilement : l'export HTML porte le témoin « Colonnes » et ses deux boutons",
   "complexe", async p => {
   const r = await p(`

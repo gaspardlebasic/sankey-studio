@@ -569,8 +569,8 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
     ⊕ / ⊖, niveaux, infobulles (celles des rubans viennent du moteur, celles des nœuds de la
     visionneuse), **dévoilement** (si coché : témoin « Colonnes 2 / 6 », boutons ← → et
     flèches du clavier), **survol du sous-flux** (`peindreSousFlux`, mêmes classes et mêmes
-    durées que l'aperçu, CSS recopiée dans le gabarit) et **sélecteur d'année**. Pas de
-    filtre au clic : la page reste une vue de présentation.
+    durées que l'aperçu, CSS recopiée dans le gabarit), **filtre au clic** (cf. « Sous-flux
+    d'un nœud ») et **sélecteur d'année**. Nœuds et étiquettes portent `cursor: pointer`.
     - La visionneuse (`src/visionneuse/visionneuse.ts`) est un bundle **construit en premier**
       par `build.mjs`, en mémoire et minifié, puis **gravé comme texte** dans les autres
       (`__VISIONNEUSE__`, lu par `src/renderer/export-html.ts`). En `--watch`, elle n'est pas
@@ -944,10 +944,14 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
       Deux mutations vérifiées (rubans partant du ruban entier, fantôme absent). Dans le volet
       du navigateur intégré **masqué**, les animations tournent au ralenti : ne pas y juger
       des durées.
-  - Les **exports PNG / SVG suivent le filtre** (ils passent par `dessinerApercu`) ; l'export
-    HTML, non : la visionneuse a le **survol** (demandé le 2026-11-27), pas le filtre au clic.
-    Le survol y est calculé sur le modèle de l'**année choisie**, et s'efface quand on
-    redessine (année, ⊕ / ⊖) ou qu'une colonne se masque.
+  - Les **exports PNG / SVG suivent le filtre** (ils passent par `dessinerApercu`).
+  - **L'export HTML a le survol ET le filtre au clic** (demandés le 2026-11-27) : mêmes
+    gestes que l'aperçu — cliquer resserre, recliquer le dernier défait un cran, le vide,
+    Échap ou le ✕ du témoin « Sous-flux : A › B » défont tout — et même animation
+    (`instantane` avec `partsPeintes`, fantôme). La page part non filtrée : le filtre est
+    un état de séance, il ne voyage pas. Survol et infobulles s'y calculent sur le modèle
+    dessiné (année choisie, filtre compris). Deux mutations vérifiées (curseur retiré,
+    filtre ignoré au dessin).
   - Tests : `mesurerSousFlux` (tests/helpers.js) lit la part **peinte** d'une bande au milieu
     du ruban ; deux mutations vérifiées (bande pleine au lieu de sa part, filtre ignoré au
     dessin). Les bandes portent `data-source`/`data-target` : un sélecteur de ruban qui ne les

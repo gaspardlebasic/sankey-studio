@@ -5,7 +5,7 @@
 // donc hors ligne, sans Excel ni serveur — un fichier qu'on envoie par mail.
 //
 // Lecture seule : ⊕ / ⊖, boutons de niveaux, dévoilement colonne par colonne,
-// sélecteur d'année, survol du sous-flux et infobulles. Le dessin et les
+// sélecteur d'année, survol du sous-flux, filtre au clic et infobulles. Le dessin et les
 // commandes sont ceux de l'aperçu du complément (src/renderer/apercu-agrege.ts),
 // au code près.
 
@@ -14,11 +14,14 @@ import {
     dessinerAgrege, poserCommandesAgregees, modeleAffiche, modeleDessine, aDesNiveaux
 } from "../renderer/apercu-agrege";
 import { commandeCliquee, instantane, animerTransition } from "../renderer/depliage";
+import type { Instantane } from "../renderer/depliage";
 import { appliquerDevoilement, nombreDeColonnes } from "../renderer/devoilement";
-import { peindreSousFlux, effacerSousFlux } from "../renderer/sous-flux";
+import {
+    peindreSousFlux, effacerSousFlux, partsPeintes, fantomeDuDessin, poserFantome
+} from "../renderer/sous-flux";
 import { sousFlux } from "../shared/sous-flux.js";
 import { anneesDistinctes, anneeParDefaut, liensPourAnnee } from "../shared/annees.js";
-import { depliesAuNiveau, nombreDeNiveaux } from "../shared/agregation.js";
+import { depliesAuNiveau, nombreDeNiveaux, PREFIXE_RESTE } from "../shared/agregation.js";
 import type { Cadre } from "../shared/agregation.js";
 
 /** Ce que l'export écrit dans la page (`<script id="sankey-donnees">`). */
@@ -42,6 +45,7 @@ function demarrer(): void {
     const niveauxEl = document.getElementById("niveaux");
     const colonnesEl = document.getElementById("colonnes");
     const anneeEl = document.getElementById("annee");
+    const sousFluxEl = document.getElementById("sous-flux");
     if (!brut || !svg || !zone) return;
     const d = JSON.parse(brut.textContent || "{}") as DonneesVisionneuse;
     const model = d.model;
@@ -61,9 +65,17 @@ function demarrer(): void {
 
     const fmt = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
 
-    /** Une infobulle sur chaque nœud : son nom, ce qui le traverse. */
+    /**
+     * Filtre de SOUS-FLUX : les nœuds cliqués, dans l'ordre — le même geste que
+     * l'aperçu du complément. Cliquer un nœud resserre le filtre sur ce qui reste
+     * à l'écran, recliquer le dernier défait un cran, le vide / Échap / ✕ tout.
+     */
+    let filtre: string[] = [];
+
+    /** Une infobulle sur chaque nœud : son nom, ce qui le traverse (tel que dessiné). */
     function infobulles(m: FlowModel): void {
-        const affiche = modeleAffiche(m, deplies, d.options);
+        const affiche = filtre.length ? modeleDessine(m, d.options, deplies, filtre)
+            : modeleAffiche(m, deplies, d.options);
         const entree = new Map<string, number>(), sortie = new Map<string, number>();
         const unite = new Map<string, string>();
         affiche.links.forEach(l => {
@@ -190,19 +202,22 @@ function demarrer(): void {
         if (visible === survol) return;
         survol = visible;
         if (!visible) { effacerSousFlux(svg!); return; }
-        const dessine = modeleDessine(modeleAnnee(), d.options, deplies, []);
+        const dessine = modeleDessine(modeleAnnee(), d.options, deplies, filtre);
         if (!dessine.nodes.some(n => n.id === visible)) { effacerSousFlux(svg!); return; }
         peindreSousFlux(svg!, visible, sousFlux(dessine, visible));
     }
 
-    function dessiner(animer: boolean): void {
-        const avant = animer ? instantane(svg!, cadres) : null;
+    /** Relevé fait AVANT de poser ou défaire un filtre : d'où part l'animation. */
+    type Transition = { avant: Instantane; fantome: SVGGElement | null };
+
+    function dessiner(animer: boolean, transition?: Transition): void {
+        const avant = transition ? transition.avant : animer ? instantane(svg!, cadres) : null;
         // Le survol portait sur l'ancien dessin : il part avec lui.
         if (survol !== null) { effacerSousFlux(svg!); survol = null; }
         const w = Math.max(200, zone!.clientWidth);
         const h = Math.max(200, zone!.clientHeight);
         const base = modeleAnnee();
-        dessinerAgrege(svg!, base, d.options, deplies, w, h);
+        dessinerAgrege(svg!, base, d.options, deplies, w, h, "#ffffff", filtre);
         // Le dessin est celui du diagramme entier : le dévoilement ne fait que
         // masquer les colonnes qui ne sont pas encore montrées.
         if (devoilement) {
@@ -212,7 +227,9 @@ function demarrer(): void {
         cadres = poserCommandesAgregees(svg!, base, deplies);
         infobulles(base);
         if (avant) animerTransition(svg!, avant, cadres);
+        if (transition && transition.fantome) poserFantome(svg!, transition.fantome);
         majNiveaux();
+        majSousFlux();
         majAnnees();
         majColonnes();
     }
@@ -233,6 +250,58 @@ function demarrer(): void {
         majColonnes();
     }
 
+    /* ---- Filtre au clic : « Sous-flux : A › B ✕ » ---- */
+    const nomsParId = new Map(model.nodes.map(n => [n.id, n.name]));
+    function nomDessine(id: string): string {
+        const nom = nomsParId.get(id);
+        if (nom !== undefined) return nom;
+        const parent = id.startsWith(PREFIXE_RESTE) ? nomsParId.get(id.slice(PREFIXE_RESTE.length)) : undefined;
+        return parent !== undefined ? `${parent} (non détaillé)` : id;
+    }
+
+    function majSousFlux(): void {
+        if (!sousFluxEl) return;
+        sousFluxEl.innerHTML = "";
+        sousFluxEl.hidden = !filtre.length;
+        if (!filtre.length) return;
+        const titre = document.createElement("span");
+        titre.className = "sous-flux-titre";
+        titre.textContent = "Sous-flux : " + filtre.map(nomDessine).join(" › ");
+        titre.title = "Le diagramme ne montre que ce qui passe par ce nœud. "
+            + "Cliquer un autre nœud resserre le filtre ; cliquer le dernier, le vide ou Échap le défait.";
+        const fermer = document.createElement("button");
+        fermer.type = "button";
+        fermer.textContent = "✕";
+        fermer.title = "Revoir tout le diagramme (Échap)";
+        fermer.addEventListener("click", () => filtrer(null));
+        sousFluxEl.append(titre, fermer);
+    }
+
+    /** Pose (id) ou retire (null) un cran de filtre, puis redessine en animant. */
+    function filtrer(id: string | null): void {
+        const precedent = filtre;
+        if (id === null) filtre = [];
+        else if (filtre[filtre.length - 1] === id) filtre = filtre.slice(0, -1);
+        else filtre = [...filtre, id];
+        if (filtre.length === precedent.length && filtre.every((x, i) => x === precedent[i])) return;
+        /* Resserrer : le global s'efface (fantôme) pendant que le sous-flux
+           grandit depuis ses bandes du survol. Desserrer : ce qui revient
+           apparaît en fondu. Même mécanique que l'aperçu (editor.ts). */
+        const resserre = id !== null && filtre[filtre.length - 1] === id;
+        const transition: Transition = {
+            avant: instantane(svg!, cadres, resserre ? partsPeintes(svg!) : undefined),
+            fantome: resserre ? fantomeDuDessin(svg!) : null
+        };
+        dessiner(false, transition);
+    }
+
+    /** Le nœud visé par un clic : son étiquette ou sa boîte, s'il est montré. */
+    function noeudCible(cible: EventTarget | null): string | null {
+        const el = cible instanceof Element ? cible.closest("g[data-label-for], rect[data-id]") : null;
+        if (!el || el.getAttribute("visibility") === "hidden") return null;
+        return el.getAttribute("data-label-for") || el.getAttribute("data-id");
+    }
+
     const basculer = (cible: EventTarget | null): boolean => {
         const c = commandeCliquee(cible);
         if (!c) return false;
@@ -241,7 +310,11 @@ function demarrer(): void {
         dessiner(true);
         return true;
     };
-    svg.addEventListener("click", e => { basculer(e.target); });
+    svg.addEventListener("click", e => {
+        if (basculer(e.target)) return;
+        // Un nœud filtre sur son sous-flux ; le vide défait tout.
+        filtrer(noeudCible(e.target));
+    });
     svg.addEventListener("keydown", e => {
         if ((e.key === "Enter" || e.key === " ") && basculer(e.target)) e.preventDefault();
     });
@@ -252,6 +325,7 @@ function demarrer(): void {
         effacerSousFlux(svg);
     });
     window.addEventListener("keydown", e => {
+        if (e.key === "Escape" && filtre.length) { filtrer(null); return; }
         if (!devoilement) return;
         if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
         if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -270,7 +344,7 @@ function demarrer(): void {
         if (devoilement) parties.push("← → colonnes");
         if (annees.length > 1) parties.push("année : choisir");
         if (aDesNiveaux(model)) parties.push("⊕ déplier · ⊖ replier");
-        parties.push("survol : valeurs");
+        parties.push("survol : valeurs · clic : filtrer");
         aide.textContent = parties.join(" · ");
     }
     dessiner(false);

@@ -90,10 +90,20 @@ h1 { font-size: 17px; font-weight: 600; margin: 0; flex: 1 1 auto; }
 #annee select { font: inherit; font-size: 13px; font-weight: 600; padding: 5px 8px;
   border: 2px solid #1a1a1a; background: #ffffff; color: #1a1a1a; cursor: pointer; }
 #annee select:hover { background: #ececec; }
+/* Filtre de sous-flux : « Sous-flux : A › B ✕ », quand un nœud a été cliqué. */
+#sous-flux { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600;
+  max-width: 40vw; }
+#sous-flux[hidden] { display: none; }
+#sous-flux .sous-flux-titre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sous-flux button { font: inherit; border: none; background: none; color: #1a1a1a; cursor: pointer;
+  padding: 2px 6px; }
+#sous-flux button:hover { background: #ececec; }
 .aide { font-size: 12px; color: #6b6b6b; }
 #zone { flex: 1 1 auto; min-height: 0; position: relative; }
 #diagramme { position: absolute; inset: 0; display: block; }
 .bouton-depliage { cursor: pointer; }
+/* Un nœud se clique (filtre de sous-flux) : son étiquette comme sa boîte. */
+#diagramme g[data-label-for], #diagramme rect[data-id] { cursor: pointer; }
 .bouton-depliage:hover circle, .bouton-depliage:focus-visible circle { fill: #ececec; }
 .bouton-depliage:focus { outline: none; }
 /* Sous-flux du survol : le diagramme s'estompe, le sous-flux du nœud passe
@@ -126,6 +136,7 @@ h1 { font-size: 17px; font-weight: 600; margin: 0; flex: 1 1 auto; }
   <span id="niveaux" hidden></span>
   <span id="colonnes" hidden></span>
   <span id="annee" hidden></span>
+  <span id="sous-flux" hidden></span>
   <span class="aide">⊕ déplier · ⊖ replier · survol : valeurs</span>
 </header>
 <div id="zone"><svg id="diagramme" xmlns="http://www.w3.org/2000/svg"></svg></div>

@@ -322,7 +322,7 @@ button.linklike:hover { color: var(--dark); }
    Le dessin de l'aperçu vient du moteur, qui ignore la sélection. Ces deux
    règles ne portent donc que sur ce que l'éditeur y ajoute : la main sur les
    étiquettes, et le halo posé autour de celle du nœud choisi. */
-#canvas.apercu g[data-label-for] { cursor: pointer; }
+#canvas.apercu g[data-label-for], #canvas.apercu rect[data-id] { cursor: pointer; }
 /* Vue d'édition : accolade d'un groupe (niveaux d'agrégation) */
 /* Gris moyen : le groupe se lit sans que son trait concurrence les liens. */
 #canvas .accolade-groupe { fill: none; stroke: #a3a3a3; stroke-width: 2; pointer-events: none; }
