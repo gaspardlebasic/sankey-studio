@@ -2776,10 +2776,11 @@ function buildSidebar(): void {
                     `${k} ${mot}${k > 1 ? "s" : ""}`;
                 if (eqN.inconnuesEntrantes) sens.push(compte(eqN.inconnuesEntrantes, "entrante"));
                 if (eqN.inconnuesSortantes) sens.push(compte(eqN.inconnuesSortantes, "sortante"));
-                s.appendChild(readonly(
-                    "Inconnues de flux",
-                    eqN.etat === "boucle" ? "1 (boucle)" : sens.join(" · ")
-                ));
+                let texte = eqN.etat === "boucle" ? "1 (boucle)" : sens.join(" · ");
+                if (eqN.resolues > 0) {
+                    texte += ` — ${eqN.resolues} déduite${eqN.resolues > 1 ? "s" : ""}`;
+                }
+                s.appendChild(readonly("Inconnues de flux", texte));
             }
             s.appendChild(divider());
             panneauNiveaux(s, n);
@@ -3044,7 +3045,8 @@ function buildEquilibragePanel(eq: ReturnType<typeof resoudreEquilibrage>): HTML
     s.appendChild(hint(
         "Une valeur laissée vide dans « Valeur du flux » est une inconnue. "
         + "Quand un nœud n'en a qu'une, l'aperçu la déduit de l'égalité "
-        + "entrées = sorties et l'écrit en italique ; le classeur garde sa case vide."
+        + "entrées = sorties et l'écrit en italique ; une valeur déduite peut "
+        + "débloquer le nœud suivant, et ainsi de suite. Le classeur garde ses cases vides."
     ));
     if (!options.linkValueLabels.show) {
         s.appendChild(hint(
@@ -3062,35 +3064,47 @@ function buildEquilibragePanel(eq: ReturnType<typeof resoudreEquilibrage>): HTML
         if (e.inconnuesEntrantes) morceaux.push(compte(e.inconnuesEntrantes, "entrante"));
         if (e.inconnuesSortantes) morceaux.push(compte(e.inconnuesSortantes, "sortante"));
         const combien = e.etat === "boucle" ? "1 inconnue (boucle)" : morceaux.join(" et ");
+        const reste = e.inconnues - e.resolues;
+        // Ce que la propagation a déjà débloqué, avant la raison du blocage.
+        const deja = e.resolues > 0 && e.etat !== "resolue"
+            ? `${e.resolues} déduite${e.resolues > 1 ? "s" : ""} ; `
+            : "";
 
         const p = document.createElement("p");
         p.className = "hint";
         let suite: string;
         switch (e.etat) {
             case "resolue": {
-                const lien = eq.model.links.find(l => l.inconnue
-                    && (l.source === e.id || l.target === e.id));
-                const unite = lien && lien.unit ? " " + lien.unit : "";
-                suite = `déduite : ${formatValue(e.valeur ?? 0)}${unite}`;
+                if (e.valeur !== undefined) {
+                    const lien = eq.model.links.find(l => l.inconnue
+                        && (l.source === e.id || l.target === e.id));
+                    const unite = lien && lien.unit ? " " + lien.unit : "";
+                    suite = `déduite : ${formatValue(e.valeur)}${unite}`;
+                } else {
+                    suite = `${e.resolues} inconnue${e.resolues > 1 ? "s" : ""} `
+                        + `déduite${e.resolues > 1 ? "s" : ""}`;
+                }
                 break;
             }
             case "conflit":
-                suite = "les deux extrémités donnent des valeurs différentes";
+                suite = deja + "les deux extrémités donnent des valeurs différentes";
                 break;
             case "unites":
-                suite = "unités différentes : l'équilibre n'a pas de sens";
+                suite = deja + "unités différentes : l'équilibre n'a pas de sens";
                 break;
             case "desequilibre":
-                suite = "la valeur déduite serait nulle ou négative : données incohérentes";
+                suite = deja + "la valeur déduite serait nulle ou négative : données incohérentes";
                 break;
             case "isole":
-                suite = "aucun flux connu en face : impossible de la déduire";
+                suite = deja + "aucun flux connu en face : impossible de la déduire";
                 break;
             case "boucle":
-                suite = "boucle sur le nœud : rien ne la contraint";
+                suite = deja + "boucle sur le nœud : rien ne la contraint";
                 break;
             default:
-                suite = "plusieurs inconnues : impossible de les trancher";
+                suite = deja + (reste > 1
+                    ? `${reste} inconnues restent à trancher`
+                    : "une inconnue reste à trancher");
         }
         p.textContent = `${nom(e.id)} — ${combien} · ${suite}.`;
         s.appendChild(p);

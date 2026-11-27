@@ -50,7 +50,7 @@ test("une inconnue SORTANTE se déduit de ce qui entre moins ce qui sort", () =>
   egal(parPaire(r.model, "B", "C").calculee, true, "le lien est marqué déduit");
   egal(etat(r, "B"), {
     id: "B", inconnuesEntrantes: 0, inconnuesSortantes: 1, inconnues: 1,
-    etat: "resolue", valeur: 70
+    resolues: 1, etat: "resolue", valeur: 70
   }, "état du nœud qui calcule");
   // Le nœud d'arrivée ne calcule rien lui-même, mais la valeur est connue.
   egal(etat(r, "C").etat, "resolue", "l'autre bout sait la valeur");
@@ -67,6 +67,39 @@ test("une inconnue ENTRANTE se déduit de ce qui sort moins ce qui entre", () =>
   ]);
   const r = resoudreEquilibrage(m);
   egal(parPaire(r.model, "C", "B").value, 60, "80 sortis − 20 entrés = 60");
+});
+
+test("un lien déduit débloque l'inconnue suivante du même nœud", () => {
+  // A n'a qu'une inconnue et la déduit (100). B en avait DEUX au départ :
+  // A→B et B→C. A→B connue, B n'en a plus qu'une et la déduit à son tour (70).
+  const m = modele([
+    lien("X", "A", 100),
+    vide("A", "B"),
+    vide("B", "C"),
+    lien("B", "D", 30)
+  ], ["A", "B", "C", "D", "X"]);
+  const r = resoudreEquilibrage(m);
+  egal(parPaire(r.model, "A", "B").value, 100, "A déduit son lien sortant");
+  egal(parPaire(r.model, "B", "C").value, 70, "B déduit le sien, débloqué par A");
+  egal(etat(r, "B").inconnues, 2, "B avait deux inconnues au départ");
+  egal(etat(r, "B").resolues, 2, "les deux ont été déduites");
+  egal(etat(r, "B").etat, "resolue", "B est entièrement résolu");
+  egal(etat(r, "B").valeur, undefined, "pas de valeur unique à afficher pour B");
+  egal(r.resume, { noeuds: 3, inconnues: 2, resolues: 2, indeterminees: 0 },
+    "deux flux déduits, trois nœuds concernés");
+});
+
+test("la propagation traverse plusieurs nœuds, de proche en proche", () => {
+  const m = modele([
+    lien("X", "A", 100),
+    vide("A", "B"),
+    vide("B", "C"),
+    lien("C", "D", 100)
+  ], ["A", "B", "C", "D", "X"]);
+  const r = resoudreEquilibrage(m);
+  egal(parPaire(r.model, "A", "B").value, 100, "A déduit le premier flux");
+  egal(parPaire(r.model, "B", "C").value, 100, "B déduit le second, sans autre donnée");
+  egal(r.resume.resolues, 2, "deux flux déduits");
 });
 
 test("le modèle reçu n'est jamais modifié", () => {

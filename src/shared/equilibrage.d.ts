@@ -21,9 +21,12 @@ export interface EtatNoeudEquilibre {
   id: string;
   inconnuesEntrantes: number;
   inconnuesSortantes: number;
+  /** Inconnues du nœud AU DÉPART (avant propagation). */
   inconnues: number;
+  /** Inconnues du nœud déduites, y compris celles débloquées par propagation. */
+  resolues: number;
   etat: "aucune" | "resolue" | "indeterminee" | "boucle" | "unites" | "desequilibre" | "isole" | "conflit";
-  /** Valeur déduite pour l'unique inconnue, quand elle l'est. */
+  /** Valeur déduite pour l'unique inconnue, quand le nœud n'en avait qu'une. */
   valeur?: number;
 }
 

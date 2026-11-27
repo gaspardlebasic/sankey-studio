@@ -425,10 +425,17 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
     elle se déduit (`sorties − entrées`, ou l'inverse), s'écrit **en italique** sur son ruban
     (`data-calculee="true"`, infobulle « valeur déduite ») et le panneau la donne. La valeur
     déduite **n'est jamais réécrite dans Excel** : `buildModelRows` laisse la case vide.
-  - **Rien n'est inventé** quand la déduction n'a pas de sens : deux inconnues au même nœud
-    (indéterminé), unités qui ne s'accordent pas (une unité vide se lit dans les autres),
-    reste nul ou négatif (incohérence), aucun flux connu en face (isolé), boucle sur le nœud,
-    ou deux extrémités qui déduisent des valeurs différentes (conflit).
+  - **La déduction est récursive, jusqu'au point fixe** : une valeur déduite devient une donnée
+    connue pour l'autre extrémité du lien, qui peut n'avoir plus qu'une inconnue et la déduire à
+    son tour. Une chaîne A → B → C se remplit de proche en proche (`propager`). Un nœud qui
+    n'avait que deux inconnues peut donc les voir toutes deux déduites ; `resolues` les compte,
+    et `valeur` n'est donnée que s'il n'y en avait qu'une.
+  - **Rien n'est inventé** quand la déduction n'a pas de sens : deux inconnues qui restent au
+    même nœud (indéterminé), unités qui ne s'accordent pas (une unité vide se lit dans les
+    autres), reste nul ou négatif (incohérence), aucun flux connu en face (isolé), boucle sur le
+    nœud, ou deux extrémités qui déduisent des valeurs différentes (conflit). **Un conflit ne se
+    propage pas** : le lien est retiré des solutions, le calcul reprend sans lui, et un nœud qui
+    n'a de flux que d'un côté (source / puits) n'est pas jugé sur son équilibre.
   - L'équilibrage passe **avant la projection** des niveaux (`modeleAffiche`), et la marque
     `calculee` traverse `projeter` (`src/shared/agregation.js`).
   - Le panneau « Équilibrage des flux » liste, nœud par nœud, le nombre d'inconnues

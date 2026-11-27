@@ -1,6 +1,6 @@
 "use strict";
 /**
- * Équilibrage des nœuds — déduire une valeur de flux inconnue.
+ * Équilibrage des nœuds — déduire les valeurs de flux inconnues.
  *
  * Une valeur laissée VIDE dans la colonne « Valeur du flux » du classeur est une
  * INCONNUE. À un nœud, les flux entrants et sortants doivent s'équilibrer :
@@ -8,10 +8,16 @@
  *   somme(entrants) = somme(sortants)
  *
  * Une seule inconnue sur les flux d'un nœud se déduit donc de cette égalité.
- * Deux inconnues ou plus ne se déduisent pas (une équation, deux inconnues) ;
- * des unités qui ne s'accordent pas non plus (additionner des tonnes et des
- * litres ne dit rien) ; un reste négatif non plus (un flux ne peut pas être
- * négatif : les données sont incohérentes, on ne fabrique pas un chiffre).
+ * La déduction est RÉCURSIVE : une valeur calculée à un nœud devient une donnée
+ * connue pour l'autre extrémité du lien, qui peut à son tour n'avoir plus qu'une
+ * inconnue et la déduire. On répète jusqu'à ce que plus rien ne change (point
+ * fixe). Une chaîne A → B → C se remplit ainsi de proche en proche.
+ *
+ * Rien n'est inventé quand la déduction n'a pas de sens : deux inconnues qui
+ * restent au même nœud, unités qui ne s'accordent pas, reste nul ou négatif,
+ * aucun flux connu en face, boucle sur le nœud, ou deux bouts qui se
+ * contredisent. Un lien contredit est retiré des solutions et l'on recalcule le
+ * reste sans lui : une valeur fausse ne se propage pas plus loin.
  *
  * La déduction est un CALCUL D'AFFICHAGE : le classeur garde sa case vide, et
  * la valeur déduite ne s'y réécrit jamais. L'appelant marque le lien déduit
@@ -38,14 +44,18 @@ function uniteDe(l) {
 }
 
 /**
- * Les unités des flux connus d'un nœud s'accordent-elles avec celle de
- * l'inconnue ? Une unité vide ne contredit rien : elle se lit dans celle des
- * autres. Deux unités non vides différentes, si.
+ * Les unités des flux qui ONT une valeur s'accordent-elles avec celle de
+ * l'inconnue ? `valeurs` contient les inconnues déjà déduites : une valeur
+ * calculée est une donnée comme une autre pour l'unité.
+ *
+ * Une unité vide ne contredit rien : elle se lit dans celle des autres. Deux
+ * unités non vides différentes, si.
  */
-function unitesCompatibles(liens, inconnue) {
+function unitesCompatibles(liens, inconnue, valeurs) {
   const vues = new Set();
   for (const l of liens) {
     if (l === inconnue) continue;
+    if (estInconnue(l) && !valeurs.has(l)) continue;   // inconnue non résolue
     const u = uniteDe(l);
     if (u) vues.add(u);
   }
@@ -57,6 +67,139 @@ function unitesCompatibles(liens, inconnue) {
   return vues.size <= 1;
 }
 
+/** Les inconnues d'un nœud, chacune une fois (une boucle se voit des deux côtés). */
+function inconnuesDuNoeud(ent, sor) {
+  return Array.from(new Set(ent.concat(sor).filter(estInconnue)));
+}
+
+/**
+ * Une passe de propagation, jusqu'à ce qu'aucun nœud ne puisse plus déduire.
+ *
+ * `interdits` : les liens qu'une passe précédente a déclarés contradictoires.
+ * Ils restent des inconnues — on ne les déduit pas, et l'on recalcule le reste
+ * sans eux.
+ *
+ * Rend les valeurs déduites, le nœud qui a déduit chacune (`solveur`), les
+ * raisons des nœuds bloqués, et `suspect` : le premier lien déduit qu'un nœud
+ * contredit (ses flux connus ne s'équilibrent plus avec cette valeur).
+ */
+function propager(nodes, links, interdits) {
+  const incidents = new Map();
+  nodes.forEach(n => incidents.set(n.id, { ent: [], sor: [] }));
+  for (const l of links) {
+    const s = incidents.get(l.source);
+    const t = incidents.get(l.target);
+    if (s) s.sor.push(l);
+    if (t) t.ent.push(l);
+  }
+
+  const listes = new Map();
+  nodes.forEach(n => {
+    const { ent, sor } = incidents.get(n.id);
+    listes.set(n.id, inconnuesDuNoeud(ent, sor));
+  });
+
+  const valeurs = new Map();      // lien inconnu -> valeur déduite
+  const solveur = new Map();      // lien inconnu -> id du nœud qui l'a déduit
+  const raisons = new Map();      // id de nœud -> pourquoi il est bloqué
+  const impossibles = new Map();  // id de nœud -> reste négatif calculé
+  const restantes = new Map();    // id -> inconnues non résolues (interdites comprises)
+  const aResoudre = new Map();    // id -> inconnues encore déductibles (hors interdites)
+
+  for (const n of nodes) {
+    const list = listes.get(n.id);
+    restantes.set(n.id, list.length);
+    aResoudre.set(n.id, list.filter(l => !interdits.has(l)).length);
+  }
+
+  const file = [];
+  const enFile = new Set();
+  const enfiler = id => {
+    if (enFile.has(id) || aResoudre.get(id) !== 1) return;
+    enFile.add(id);
+    file.push(id);
+  };
+  nodes.forEach(n => enfiler(n.id));
+
+  /** Somme des flux qui ont une valeur ; `u` (l'inconnue à déduire) est exclue. */
+  const somme = (liste, u) => liste.reduce((t, l) => {
+    if (l === u) return t;
+    if (valeurs.has(l)) return t + valeurs.get(l);
+    if (estInconnue(l)) return t;                 // encore inconnue : ne compte pas
+    return t + valeurConnue(l);
+  }, 0);
+
+  while (file.length) {
+    const id = file.shift();
+    enFile.delete(id);
+    if (aResoudre.get(id) !== 1) continue;        // débloqué entre-temps
+
+    const { ent, sor } = incidents.get(id);
+    const restantesListe = listes.get(id).filter(l => !valeurs.has(l));
+    if (restantesListe.length !== 1) continue;
+    const u = restantesListe[0];
+
+    // Une boucle se trouve des deux côtés : elle s'annule dans l'équation, sa
+    // valeur n'est donc contrainte par rien.
+    if (u.source === u.target) { raisons.set(id, "boucle"); continue; }
+    if (!unitesCompatibles(ent.concat(sor), u, valeurs)) {
+      raisons.set(id, "unites");
+      continue;
+    }
+
+    const entrees = somme(ent, u);
+    const sorties = somme(sor, u);
+    // On ne déduit que ce que l'AUTRE côté contraint : une inconnue dont le côté
+    // opposé est vide pourrait valoir n'importe quoi.
+    const enEntree = ent.indexOf(u) >= 0;
+    const oppose = enEntree ? sorties : entrees;
+    const connu = enEntree ? entrees : sorties;
+    if (oppose <= 0) { raisons.set(id, "isole"); continue; }
+    const valeur = oppose - connu;
+    if (!(valeur > 0)) {
+      raisons.set(id, "desequilibre");
+      impossibles.set(id, valeur);
+      continue;
+    }
+
+    valeurs.set(u, valeur);
+    solveur.set(u, id);
+    // Le lien est maintenant connu AUX DEUX BOUTS : chacun peut avoir gagné
+    // sa dernière inconnue et se remettre dans la file.
+    for (const bout of new Set([u.source, u.target])) {
+      restantes.set(bout, restantes.get(bout) - 1);
+      aResoudre.set(bout, aResoudre.get(bout) - 1);
+      enfiler(bout);
+    }
+  }
+
+  /* Un nœud dont TOUTES les inconnues ont reçu une valeur doit s'équilibrer.
+     S'il ne le fait pas, un des chiffres déduits est faux : les deux bouts se
+     contredisent. On désigne le lien déduit par l'AUTRE bout — celui du nœud
+     lui-même s'équilibrait au moment où il l'a calculé. */
+  let suspect = null;
+  for (const n of nodes) {
+    const list = listes.get(n.id);
+    if (!list.length) continue;
+    if (list.some(l => !valeurs.has(l))) continue; // il reste une inconnue : pas de bilan
+    const { ent, sor } = incidents.get(n.id);
+    /* Une source ou un puits n'a de flux que d'un côté : son « équilibre »
+       n'est pas une contrainte, et un chiffre venu de l'autre bout n'y est pas
+       contredit. Seul un nœud qui a des flux DES DEUX CÔTÉS peut se plaindre. */
+    if (!ent.length || !sor.length) continue;
+    const e = somme(ent, null);
+    const s = somme(sor, null);
+    if (Math.abs(e - s) <= 1e-9 * Math.max(1, Math.abs(e), Math.abs(s))) continue;
+    const candidat = list.find(l => valeurs.has(l) && solveur.get(l) !== n.id)
+      || list.find(l => valeurs.has(l));
+    if (candidat) { suspect = candidat; break; }
+  }
+
+  return {
+    valeurs, solveur, raisons, impossibles, incidents, listes, suspect
+  };
+}
+
 /**
  * Équilibre le modèle : rend une copie dont les inconnues déductibles portent
  * leur valeur (`calculee: true`), et l'état de CHAQUE nœud.
@@ -66,11 +209,13 @@ function unitesCompatibles(liens, inconnue) {
  * comme avant.
  *
  * `noeuds` contient une entrée par nœud qui touche au moins un lien :
- *   { id, inconnuesEntrantes, inconnuesSortantes, inconnues, etat, valeur? }
- * `etat` vaut :
+ *   { id, inconnuesEntrantes, inconnuesSortantes, inconnues, resolues, etat, valeur? }
+ * `inconnues` est le nombre d'inconnues AU DÉPART ; `resolues` celles que la
+ * propagation a déduites ; `etat` vaut :
  *   - « aucune »       : rien à équilibrer ;
- *   - « resolue »      : une inconnue, déduite (`valeur`) ;
- *   - « indeterminee » : deux inconnues ou plus ;
+ *   - « resolue »      : toutes les inconnues du nœud sont déduites (`valeur`
+ *                        quand il n'en avait qu'une) ;
+ *   - « indeterminee » : deux inconnues ou plus restent ;
  *   - « boucle »       : l'inconnue est une boucle sur elle-même ;
  *   - « unites »       : les unités ne s'accordent pas ;
  *   - « desequilibre » : la valeur déduite serait nulle ou négative ;
@@ -81,151 +226,80 @@ function resoudreEquilibrage(model) {
   const nodes = Array.isArray(model && model.nodes) ? model.nodes : [];
   const links = Array.isArray(model && model.links) ? model.links : [];
 
-  /** Les liens qui touchent chaque nœud, dans les deux sens. */
-  const entrants = new Map();
-  const sortants = new Map();
-  const ajouter = (carte, id, l) => {
-    if (!carte.has(id)) carte.set(id, []);
-    carte.get(id).push(l);
-  };
-  for (const l of links) {
-    ajouter(sortants, l.source, l);
-    ajouter(entrants, l.target, l);
+  const inconnues = links.filter(estInconnue);
+  const aucun = () => ({
+    model,
+    noeuds: nodes.map(n => ({
+      id: n.id, inconnuesEntrantes: 0, inconnuesSortantes: 0,
+      inconnues: 0, resolues: 0, etat: "aucune"
+    })),
+    resume: { noeuds: 0, inconnues: 0, resolues: 0, indeterminees: 0 }
+  });
+  if (!inconnues.length) return aucun();
+
+  /* Propagation, puis recalcul sans les liens qu'un nœud contredit. Chaque tour
+     interdit un lien de plus : le nombre de tours est borné par le nombre
+     d'inconnues, et l'on ne propage jamais un chiffre faux. */
+  const interdits = new Set();
+  let passe = propager(nodes, links, interdits);
+  let garde = 0;
+  while (passe.suspect && garde++ <= inconnues.length) {
+    interdits.add(passe.suspect);
+    passe = propager(nodes, links, interdits);
   }
 
-  const solutions = new Map();          // lien -> valeur déduite
-  /* Une même inconnue peut être déduite par ses DEUX extrémités. On garde les
-     valeurs proposées : si les deux s'accordent, la valeur est sûre ; si elles
-     divergent, le classeur se contredit et l'on ne fabrique pas un chiffre. */
-  const candidats = new Map();          // lien -> { valeurs: number[], etats: [] }
-  const etats = new Map();              // id de nœud -> état
-
-  for (const n of nodes) {
-    const ent = entrants.get(n.id) || [];
-    const sor = sortants.get(n.id) || [];
+  const noeuds = nodes.map(n => {
+    const list = passe.listes.get(n.id) || [];
+    const initial = list.length;
+    const { ent, sor } = passe.incidents.get(n.id);
     const incEnt = ent.filter(estInconnue);
     const incSor = sor.filter(estInconnue);
-    // Une boucle se trouve des deux côtés : c'est UNE inconnue, pas deux.
-    const inconnues = new Set(incEnt.concat(incSor)).size;
-    if (!inconnues) {
-      etats.set(n.id, {
-        id: n.id, inconnuesEntrantes: 0, inconnuesSortantes: 0, inconnues: 0, etat: "aucune"
-      });
-      continue;
+    if (!initial) {
+      return {
+        id: n.id, inconnuesEntrantes: 0, inconnuesSortantes: 0,
+        inconnues: 0, resolues: 0, etat: "aucune"
+      };
     }
 
-    const etat = {
+    const resolues = list.filter(l => passe.valeurs.has(l)).length;
+    const restantes = initial - resolues;
+    let etat;
+    if (restantes === 0) etat = "resolue";
+    else if (list.some(l => interdits.has(l))) etat = "conflit";
+    else if (restantes === 1) etat = passe.raisons.get(n.id) || "indeterminee";
+    else etat = "indeterminee";
+
+    const resultat = {
       id: n.id,
       inconnuesEntrantes: incEnt.length,
       inconnuesSortantes: incSor.length,
-      inconnues,
-      etat: "indeterminee"
+      inconnues: initial,
+      resolues,
+      etat
     };
-    etats.set(n.id, etat);
-
-    if (inconnues > 1) continue;
-
-    const inconnue = incEnt[0] || incSor[0];
-    // Une boucle se trouve des deux côtés : elle s'annule dans l'équation, sa
-    // valeur n'est donc contrainte par rien.
-    if (inconnue.source === inconnue.target) {
-      etat.etat = "boucle";
-      continue;
+    // Une valeur unique ne se dit que s'il n'y avait qu'une inconnue. Un nœud
+    // dont plusieurs inconnues ont été déduites les porte sur ses liens.
+    if (initial === 1 && restantes === 0) {
+      resultat.valeur = passe.valeurs.get(list[0]);
+    } else if (etat === "desequilibre" && passe.impossibles.has(n.id)) {
+      resultat.valeur = passe.impossibles.get(n.id);
     }
-    if (!unitesCompatibles(ent.concat(sor), inconnue)) {
-      etat.etat = "unites";
-      continue;
-    }
+    return resultat;
+  });
 
-    // La valeur d'une inconnue ne compte jamais dans les flux CONNUS, même si
-    // elle porte déjà un chiffre déduit d'un calcul précédent : on repart de la
-    // donnée du classeur, sinon le calcul dériverait à chaque rendu.
-    const somme = liste => liste.reduce(
-      (t, l) => t + (estInconnue(l) ? 0 : valeurConnue(l)), 0);
-    const entrees = somme(ent);
-    const sorties = somme(sor);
-    // On ne déduit que ce que l'AUTRE côté contraint : une inconnue dont le côté
-    // opposé est vide pourrait valoir n'importe quoi.
-    const enEntree = incEnt.length === 1;
-    const opposé = enEntree ? sorties : entrees;
-    const connu = enEntree ? entrees : sorties;
-    if (opposé <= 0) {
-      etat.etat = "isole";
-      continue;
-    }
-    const valeur = opposé - connu;
-    if (!(valeur > 0)) {
-      etat.etat = "desequilibre";
-      etat.valeur = valeur;
-      continue;
-    }
-    if (!candidats.has(inconnue)) candidats.set(inconnue, { valeurs: [], etats: [] });
-    const c = candidats.get(inconnue);
-    c.valeurs.push(valeur);
-    c.etats.push(etat);
-  }
-
-  // Les deux bouts d'une même inconnue doivent dire la même chose.
-  let resolues = 0;
-  for (const [lien, c] of candidats) {
-    const v0 = c.valeurs[0];
-    const accord = c.valeurs.every(v =>
-      Math.abs(v - v0) <= 1e-9 * Math.max(1, Math.abs(v), Math.abs(v0)));
-    if (!accord) {
-      c.etats.forEach(e => { e.etat = "conflit"; delete e.valeur; });
-      continue;
-    }
-    solutions.set(lien, v0);
-    resolues++;
-    c.etats.forEach(e => { e.etat = "resolue"; e.valeur = v0; });
-  }
-
-  /* Un nœud dont l'inconnue est déduite par l'AUTRE bout n'a rien calculé
-     lui-même — sa valeur n'en est pas moins connue, et il ne doit pas rester
-     affiché comme indéterminé. */
-  const inconnueDuNoeud = new Map();
-  for (const l of links) {
-    if (!estInconnue(l)) continue;
-    inconnueDuNoeud.set(l.source, l);
-    if (l.target !== l.source) inconnueDuNoeud.set(l.target, l);
-  }
-  for (const e of etats.values()) {
-    if (e.inconnues !== 1 || e.etat === "resolue" || e.etat === "conflit") continue;
-    const l = inconnueDuNoeud.get(e.id);
-    if (!l || !solutions.has(l)) continue;
-    if (e.etat === "desequilibre") {
-      // L'autre bout donne un chiffre positif, mais celui-ci dit que ses flux
-      // connus le contredisent : c'est un conflit, pas une résolution. La
-      // valeur déduite est RETIRÉE, sinon le ruban afficherait un chiffre que
-      // l'un des deux nœuds déclare impossible.
-      solutions.delete(l);
-      resolues--;
-      const c = candidats.get(l);
-      if (c) c.etats.forEach(x => { x.etat = "conflit"; delete x.valeur; });
-      e.etat = "conflit";
-      delete e.valeur;
-      continue;
-    }
-    e.etat = "resolue";
-    e.valeur = solutions.get(l);
-  }
-
-  const noeuds = Array.from(etats.values());
   const resume = {
     noeuds: noeuds.filter(e => e.inconnues > 0).length,
     // Une inconnue touche deux nœuds : le bilan global compte les FLUX, pas
     // les bouts.
-    inconnues: new Set(links.filter(estInconnue)).size,
-    resolues,
+    inconnues: inconnues.length,
+    resolues: passe.valeurs.size,
     indeterminees: noeuds.filter(e => e.inconnues > 0 && e.etat !== "resolue").length
   };
 
-  if (!solutions.size) {
-    return { model, noeuds, resume };
-  }
+  if (!passe.valeurs.size) return { model, noeuds, resume };
 
   const liens = links.map(l => {
-    const v = solutions.get(l);
+    const v = passe.valeurs.get(l);
     if (v === undefined) return l;
     // `inconnue` reste vrai : le classeur, lui, garde sa case vide. C'est
     // `calculee` qui dit que le chiffre affiché vient de l'équilibrage.
