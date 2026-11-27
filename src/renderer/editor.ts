@@ -2767,6 +2767,20 @@ function buildSidebar(): void {
                 persist();
             }));
             s.appendChild(numberField("Ordre vertical", n.order, v => { n.order = v; render(); persist(); }));
+            // Le nombre d'inconnues de CE nœud : le bilan global les compte
+            // aussi, mais noyées dans la liste quand le diagramme en a beaucoup.
+            const eqN = equilibrage.noeuds.find(x => x.id === n.id);
+            if (eqN && eqN.inconnues > 0) {
+                const sens: string[] = [];
+                const compte = (k: number, mot: string) =>
+                    `${k} ${mot}${k > 1 ? "s" : ""}`;
+                if (eqN.inconnuesEntrantes) sens.push(compte(eqN.inconnuesEntrantes, "entrante"));
+                if (eqN.inconnuesSortantes) sens.push(compte(eqN.inconnuesSortantes, "sortante"));
+                s.appendChild(readonly(
+                    "Inconnues de flux",
+                    eqN.etat === "boucle" ? "1 (boucle)" : sens.join(" · ")
+                ));
+            }
             s.appendChild(divider());
             panneauNiveaux(s, n);
             s.appendChild(divider());
