@@ -145,6 +145,20 @@ test("deux extrémités qui se contredisent : ni l'une ni l'autre", () => {
   egal(r.resume.resolues, 0, "rien de déduit");
 });
 
+test("un bout qui donne un reste négatif contredit l'autre : conflit", () => {
+  // A déduit 100 ; B, avec 120 entrés et 80 sortis, en déduirait −40.
+  const m = modele([
+    lien("C", "A", 100),
+    vide("A", "B"),
+    lien("C", "B", 120),
+    lien("B", "D", 80)
+  ]);
+  const r = resoudreEquilibrage(m);
+  egal(parPaire(r.model, "A", "B").value, 0, "aucune valeur arbitraire");
+  egal(etat(r, "A").etat, "conflit", "le bout qui calculait 100 signale le conflit");
+  egal(etat(r, "B").etat, "conflit", "celui qui calculait −40 aussi");
+});
+
 test("une boucle sur le nœud n'est contrainte par rien", () => {
   const m = modele([lien("A", "B", 50), vide("B", "B")]);
   const r = resoudreEquilibrage(m);

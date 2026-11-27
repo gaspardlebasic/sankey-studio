@@ -192,10 +192,22 @@ function resoudreEquilibrage(model) {
   for (const e of etats.values()) {
     if (e.inconnues !== 1 || e.etat === "resolue" || e.etat === "conflit") continue;
     const l = inconnueDuNoeud.get(e.id);
-    if (l && solutions.has(l)) {
-      e.etat = "resolue";
-      e.valeur = solutions.get(l);
+    if (!l || !solutions.has(l)) continue;
+    if (e.etat === "desequilibre") {
+      // L'autre bout donne un chiffre positif, mais celui-ci dit que ses flux
+      // connus le contredisent : c'est un conflit, pas une résolution. La
+      // valeur déduite est RETIRÉE, sinon le ruban afficherait un chiffre que
+      // l'un des deux nœuds déclare impossible.
+      solutions.delete(l);
+      resolues--;
+      const c = candidats.get(l);
+      if (c) c.etats.forEach(x => { x.etat = "conflit"; delete x.valeur; });
+      e.etat = "conflit";
+      delete e.valeur;
+      continue;
     }
+    e.etat = "resolue";
+    e.valeur = solutions.get(l);
   }
 
   const noeuds = Array.from(etats.values());
