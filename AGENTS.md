@@ -413,9 +413,28 @@ réparer un `tsc` qui a fait échouer la publication. Pour republier l'arbre de 
   `lane` = **couloir** horizontal (entier >= 1, 1 par défaut) ;
   `kind` = **type** du nœud, `"produit"` (défaut) ou `"industrie"` ;
   `parent` = ID du nœud parent (**niveaux d'agrégation**, cf. plus bas), absent = racine.
-- **FlowLink** : `id, source, target, value, unit, colorOverride?, bio?`
+- **FlowLink** : `id, source, target, value, unit, colorOverride?, bio?, inconnue?, calculee?`
   (`colorOverride` = surcharge couleur propre au lien, **app only**, absente de l'Excel ;
   `bio` = part du flux en bio / durable, de 0 à 1, **lue dans le classeur et jamais réécrite**).
+  `inconnue` = la case « Valeur du flux » est **vide** (le modèle porte alors `value: 0`) ;
+  `calculee` ne se range que sur les **copies de rendu** : le chiffre affiché vient de
+  l'équilibrage du nœud, pas du classeur.
+- **Valeurs inconnues et équilibrage des nœuds** (`src/shared/equilibrage.js`, pur) :
+  - une case « Valeur du flux » **vide** est une **inconnue**, jamais un zéro. À un nœud, la
+    somme des entrants doit égaler celle des sortants : si le nœud n'a **qu'une** inconnue,
+    elle se déduit (`sorties − entrées`, ou l'inverse), s'écrit **en italique** sur son ruban
+    (`data-calculee="true"`, infobulle « valeur déduite ») et le panneau la donne. La valeur
+    déduite **n'est jamais réécrite dans Excel** : `buildModelRows` laisse la case vide.
+  - **Rien n'est inventé** quand la déduction n'a pas de sens : deux inconnues au même nœud
+    (indéterminé), unités qui ne s'accordent pas (une unité vide se lit dans les autres),
+    reste nul ou négatif (incohérence), aucun flux connu en face (isolé), boucle sur le nœud,
+    ou deux extrémités qui déduisent des valeurs différentes (conflit).
+  - L'équilibrage passe **avant la projection** des niveaux (`modeleAffiche`), et la marque
+    `calculee` traverse `projeter` (`src/shared/agregation.js`).
+  - Le panneau « Équilibrage des flux » liste, nœud par nœud, le nombre d'inconnues
+    (entrantes / sortantes) et leur sort ; le lien sélectionné dit « déduite » ou
+    « non déductible ». Éprouvé par `tests/equilibrage.test.js`, l'adaptateur Office
+    (lecture d'une case vide, écriture qui la laisse vide) et `tests/run.js` (italique peint).
 - **Excel** : un onglet `Diagramme`, deux tableaux Excel (ListObjects) côte à côte :
   - **Noeuds** (A..K) : Filière · Noeud · Numéro de colonne d'affichage · Intitulé de la colonne d'affichage · Ordre vertical d'affichage · Couleur · ID · **Couloir** · **Type** · **Parent** · **ID parent**
   - une colonne vide (`GAP = 1`), puis **Liens** (M..T) : Filière · Origine · Destination · Valeur du flux · Unité · ID origine · ID destination · **Part bio / durable**

@@ -2915,6 +2915,63 @@ test("part bio : la carte « Liens » sait éteindre le bandeau", "complexe", as
   egal(r.apres, 0, "décochée, plus aucun bandeau");
 });
 
+test("équilibrage : une inconnue unique est déduite et écrite en italique", "complexe", async p => {
+  const r = await p(`
+    try {
+      T.loadProject({
+        version: 1, idCounter: 10, options: {},
+        model: {
+          nodes: [
+            { id: 'a', name: 'Amont test', column: 1, title: 'Essai', order: 0, lane: 1, kind: 'produit', filiere: 'Essai', color: null, x: 0, y: 0 },
+            { id: 'b', name: 'Etape test', column: 2, title: 'Essai', order: 0, lane: 1, kind: 'produit', filiere: 'Essai', color: null, x: 0, y: 0 },
+            { id: 'c', name: 'Sortie test', column: 3, title: 'Essai', order: 0, lane: 1, kind: 'produit', filiere: 'Essai', color: null, x: 0, y: 0 },
+            { id: 'd', name: 'Inconnue test', column: 3, title: 'Essai', order: 1, lane: 1, kind: 'produit', filiere: 'Essai', color: null, x: 0, y: 0 }
+          ],
+          links: [
+            { id: 'l1', source: 'a', target: 'b', value: 100, unit: 't' },
+            { id: 'l2', source: 'b', target: 'c', value: 30, unit: 't' },
+            { id: 'l3', source: 'b', target: 'd', value: 0, unit: 't', inconnue: true }
+          ]
+        }
+      });
+      await sleep(120);
+      const panneau = document.querySelector('#sidebar').textContent;
+      await cocher('Liens', 'Afficher');
+      await versApercu();
+      const label = (s, t) => [...document.querySelectorAll('#canvas .link-value')]
+        .find(el => el.getAttribute('data-source') === s && el.getAttribute('data-target') === t);
+      const deduit = label('b', 'd');
+      const connu = label('a', 'b');
+      const modele = T.model().links.find(l => l.id === 'l3');
+      return {
+        panneau,
+        texte: deduit && deduit.firstChild.nodeValue,
+        texteConnu: connu && connu.firstChild.nodeValue,
+        style: deduit && getComputedStyle(deduit).fontStyle,
+        styleConnu: connu && getComputedStyle(connu).fontStyle,
+        marque: deduit && deduit.getAttribute('data-calculee'),
+        marqueConnue: connu && connu.getAttribute('data-calculee'),
+        modeleValeur: modele && modele.value,
+        modeleInconnue: modele && modele.inconnue,
+        modeleCalculee: modele && modele.calculee
+      };
+    } finally {
+      await versEdition();
+    }
+  `);
+  attendu(r.panneau.includes("Équilibrage des flux"), "le panneau doit annoncer l'équilibrage");
+  attendu(r.panneau.includes("déduite : 70 t"), "le panneau doit donner la valeur déduite");
+  egal(r.texte, "70 t", "la valeur déduite doit être écrite sur le ruban");
+  egal(r.texteConnu, "100 t", "les valeurs connues restent inchangées");
+  egal(r.style, "italic", "la valeur déduite est en italique");
+  egal(r.styleConnu, "normal", "une valeur connue ne l'est pas");
+  egal(r.marque, "true", "le libellé porte la marque « déduite »");
+  egal(r.marqueConnue, null, "pas de marque sur une valeur connue");
+  egal(r.modeleValeur, 0, "le modèle garde la case vide (0)");
+  egal(r.modeleInconnue, true, "et son statut d'inconnue");
+  egal(r.modeleCalculee, undefined, "la valeur déduite n'est pas rangée dans le modèle");
+});
+
 test("aperçu : cliquer un libellé sélectionne son nœud", "complexe", async p => {
   const r = await p(`
     const cible = one('Féverolle');

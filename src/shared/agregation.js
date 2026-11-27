@@ -165,6 +165,9 @@ function projeter(model, deplies) {
       f = { id: "agg:" + s + "->" + t, source: s, target: t, value: 0, unit: "", bio: 0, liens: [] };
       flux.set(cle, f);
     }
+    // Une part déduite par équilibrage rend le flux affiché déduit, même s'il
+    // somme aussi des parts connues : le chiffre écrit en italique dit vrai.
+    if (l.calculee) f.calculee = true;
     // La part bio d'une part propre est celle du lien qui la porte.
     const bio = Math.max(0, Math.min(1, toNum(l.bio, 0)));
     f.bio = (f.bio * f.value + bio * propre) / (f.value + propre);

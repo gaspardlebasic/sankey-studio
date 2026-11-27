@@ -21,6 +21,8 @@ export interface LienExcel {
   targetName: string;
   value: number;
   unit: string;
+  /** La case « Valeur du flux » est VIDE : le lien porte une inconnue. */
+  inconnue?: boolean;
   bio: number;
 }
 

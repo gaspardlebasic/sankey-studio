@@ -40,6 +40,8 @@ export interface LienExcel {
   sourceId: string | null; targetId: string | null;
   sourceName: string; targetName: string;
   value: number; unit: string;
+  /** La case « Valeur du flux » est VIDE : le lien porte une inconnue. */
+  inconnue?: boolean;
   /** Part du flux en bio / durable, de 0 à 1 (0 = colonne vide ou absente). */
   bio: number;
 }
@@ -371,15 +373,26 @@ export async function lireDiagramme(nomFeuille?: string): Promise<DonneesExcel |
         const s = texte(col(ligne, "Origine")).trim();
         const d = texte(col(ligne, "Destination")).trim();
         if (!s || !d) continue;
-        links.push({
+        // Sans la colonne « Valeur du flux », le classeur ne dit rien des
+        // valeurs : ce n'est pas la même chose qu'une colonne pleine de vides.
+        const aValeur = ix.has("Valeur du flux");
+        const brutValeur = aValeur ? col(ligne, "Valeur du flux") : undefined;
+        /* Une case VIDE n'est pas un zéro : c'est une inconnue. Le modèle la
+           garde vide et l'aperçu la déduit de l'équilibre du nœud s'il le peut
+           (src/shared/equilibrage.js) — sans jamais la réécrire ici. */
+        const inconnue = aValeur && (brutValeur === null || brutValeur === undefined
+          || (typeof brutValeur === "string" && brutValeur.trim() === ""));
+        const lien: LienExcel = {
           sourceId: texte(col(ligne, "ID origine")).trim() || null,
           targetId: texte(col(ligne, "ID destination")).trim() || null,
           sourceName: s,
           targetName: d,
-          value: toNum(col(ligne, "Valeur du flux"), 0),
+          value: toNum(brutValeur, 0),
           unit: texte(col(ligne, "Unité")),
           bio: partBioDepuisTexte(col(ligne, LINK_COL_BIO))
-        });
+        };
+        if (inconnue) lien.inconnue = true;
+        links.push(lien);
       }
     }
 

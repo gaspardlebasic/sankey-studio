@@ -52,6 +52,8 @@ interface ELink {
     colorOverride: string | null;
     /** Part du flux en bio / durable, de 0 à 1 (0 = rien à recouvrir). */
     bio: number;
+    /** La valeur affichée a été déduite par équilibrage : elle s'écrit en italique. */
+    calculee?: boolean;
     y0?: number;
     y1?: number;
     width?: number;
@@ -902,7 +904,8 @@ function drawSankey(
             unit: l.unit || "",
             colorOverride: l.colorOverride ?? null,
             brut: l.value > 0 ? l.value : 0,
-            bio: partBio(l)
+            bio: partBio(l),
+            calculee: l.calculee === true
         }));
 
     const layerById = couchesModele(model, denseByRaw);
@@ -1258,7 +1261,8 @@ function drawSankey(
         const t = (d.target as ENode).name;
         const part = partBio(d);
         const bio = part > 0 ? ` · dont ${Math.round(part * 100)} % bio / durable` : "";
-        return `${s} → ${t} : ${formatNumber(d.value)}${bio}`;
+        const deduit = d.calculee ? " · valeur déduite par équilibrage" : "";
+        return `${s} → ${t} : ${formatNumber(d.value)}${bio}${deduit}`;
     };
 
     gLinks
@@ -1441,7 +1445,9 @@ function drawSankey(
         };
         gLinkValues
             .selectAll("text")
-            .data(liens.filter(l => (l.width ?? 0) >= vfs * 0.9))
+            // Une valeur DÉDUITE s'écrit même sur un ruban mince : c'est elle
+            // qu'on vient lire, et un flux déduit petit disparaîtrait sinon.
+            .data(liens.filter(l => (l.width ?? 0) >= vfs * 0.9 || l.calculee))
             .enter()
             .append("text")
             // Classe et extrémités : la valeur écrite se retrouve dans le
@@ -1464,12 +1470,23 @@ function drawSankey(
             .style("font-family", V.fontFamily)
             .style("font-size", vfs + "px")
             .style("font-weight", String(V.weight))
-            .style("font-style", V.italic ? "italic" : "normal")
+            // Une valeur déduite s'écrit en italique, quoi que dise le réglage
+            // général : c'est le signe qu'elle ne vient pas du classeur.
+            .style("font-style", (d: ELink) =>
+                d.calculee || V.italic ? "italic" : "normal")
             .style("pointer-events", "none")
+            .attr("data-calculee", (d: ELink) => (d.calculee ? "true" : null))
             .text((d: ELink) => {
                 const unit = (d.unit || fallbackUnit).trim();
                 const v = formatValeurLien(d.value, V.multiplicateur, V.chiffresSignificatifs);
                 return texteAffiche(unit ? `${v} ${unit}` : v, V);
+            })
+            .each(function (this: SVGTextElement, d: ELink) {
+                if (!d.calculee) return;
+                const t = document.createElementNS("http://www.w3.org/2000/svg", "title");
+                t.textContent = "Valeur déduite par équilibrage des flux du nœud "
+                    + "(inconnue dans le classeur).";
+                this.appendChild(t);
             });
     }
 

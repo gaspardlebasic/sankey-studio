@@ -53,6 +53,11 @@ Sur un Excel sans `DialogApi 1.2`, l'éditeur reste dans le volet.
 - **Aperçu Sankey en direct**, porté du visuel Power BI : colonnes, courbes, dégradés, centrage
   vertical, étiquettes. Option « par filière » : un Sankey par filière, empilés, avec une échelle
   commune si on la demande.
+- **Valeurs inconnues et équilibrage** : une case « Valeur du flux » laissée **vide** est une
+  inconnue. Quand un nœud n'en a qu'une, l'aperçu la déduit de l'égalité entrées = sorties et
+  l'écrit **en italique** sur son ruban ; le panneau « Équilibrage des flux » compte les
+  inconnues nœud par nœud et dit pourquoi une valeur n'a pas pu être déduite. La valeur calculée
+  **n'est jamais réécrite dans Excel** : la case reste vide.
 - **Panneau d'apparence** en cartes repliables : liens (couleur, dégradé, opacité, courbure,
   bordure), nœuds, étiquettes, titres de colonnes, valeurs des liens, marges du graphique.
   **Couleur par lien** possible, sinon le lien prend celle de son nœud d'origine.

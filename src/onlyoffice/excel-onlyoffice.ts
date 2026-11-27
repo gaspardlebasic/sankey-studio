@@ -478,11 +478,21 @@ function decoderDonnees(brut: { feuille: string; noeuds: { valeurs: any[][] }; l
     const rawTgtId = getCellL(row, "ID destination");
     const targetId = rawTgtId !== null && rawTgtId !== undefined && String(rawTgtId).trim() !== "" ? String(rawTgtId).trim() : null;
 
-    const value = toNum(getCellL(row, "Valeur du flux"), 0);
+    // Sans la colonne, le classeur ne dit rien des valeurs : ce n'est pas la
+    // même chose qu'une colonne pleine de vides.
+    const aValeur = idxL.has("Valeur du flux");
+    const brutValeur = aValeur ? getCellL(row, "Valeur du flux") : undefined;
+    /* Une case VIDE n'est pas un zéro : c'est une inconnue. Le modèle la garde
+       vide et l'aperçu la déduit de l'équilibre du nœud s'il le peut. */
+    const inconnue = aValeur && (brutValeur === null || brutValeur === undefined
+      || (typeof brutValeur === "string" && brutValeur.trim() === ""));
+    const value = toNum(brutValeur, 0);
     const unit = String(getCellL(row, "Unité") || "").trim();
     const bio = partBioDepuisTexte(getCellL(row, LINK_COL_BIO));
 
-    links.push({ sourceId, targetId, sourceName, targetName, value, unit, bio });
+    const lien: LienExcel = { sourceId, targetId, sourceName, targetName, value, unit, bio };
+    if (inconnue) lien.inconnue = true;
+    links.push(lien);
   }
 
   return {

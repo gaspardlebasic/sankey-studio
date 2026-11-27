@@ -339,9 +339,15 @@ function buildModelRows(model, formulaMap) {
     const { filiere, sName, tName } = bouts[i];
     // Si la valeur était une formule, on la conserve (ne pas écraser un calcul).
     const formula = formules[i];
+    /* Une valeur INCONNUE (case vide dans le classeur) y reste vide : le
+       chiffre déduit par équilibrage n'est qu'un affichage, et l'écrire ici
+       effacerait la question — le classeur ne dirait plus que la donnée
+       manque. Une formule existante, elle, se préserve. */
     const valueCell = formula
       ? { t: "f", f: ancrerFormule(formula), v: l.value }
-      : { t: "n", v: l.value };
+      : l.inconnue
+        ? { t: "s", v: "" }
+        : { t: "n", v: l.value };
     return [
       { t: "s", v: filiere },
       { t: "s", v: sName },

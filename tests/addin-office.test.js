@@ -138,6 +138,41 @@ await test("lecture : nœuds et liens, avec couloirs et types", async () => {
   }, "second lien : la valeur calculée est lue, pas la formule");
 });
 
+await test("lecture : une valeur VIDE est une inconnue, pas un zéro", async () => {
+  classeurType({
+    liens: [
+      ["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", 0],
+      ["Lait", "Lait cru", "Transformation", "", "t", "n2", "n3", 0]
+    ]
+  });
+  const d = await office.lireDiagramme();
+  egal(d.links[1].value, 0, "le modèle porte 0, comme pour une case vide");
+  egal(d.links[1].inconnue, true, "et le lien dit que la valeur est inconnue");
+  attendu(!("inconnue" in d.links[0]), "un zéro explicite n'est pas une inconnue");
+});
+
+await test("écriture : une valeur inconnue reste VIDE dans le classeur", async () => {
+  const c = classeurType({
+    liens: [
+      ["Lait", "Production bio", "Lait cru", 120, "t", "n1", "n2", 0],
+      ["Lait", "Lait cru", "Transformation", 95, "t", "n2", "n3", 0]
+    ]
+  });
+  const modele = JSON.parse(JSON.stringify(MODELE));
+  modele.links[1].value = 0;
+  modele.links[1].inconnue = true;
+  const r = await office.ecrireDiagramme(modele);
+  attendu(r.ok, "écriture réussie : " + (r.error || ""));
+  const iVal = LINK_COLS.indexOf("Valeur du flux");
+  const ligne = c.lignesDe("Liens")
+    .find(l => l[1] === "Lait cru" && l[2] === "Transformation");
+  attendu(!!ligne, "la ligne du lien existe");
+  egal(ligne[iVal], "", "la case est vidée, jamais remplie d'un 0");
+  const encore = await office.ecrireDiagramme(modele);
+  attendu(encore.ok, "seconde écriture réussie : " + (encore.error || ""));
+  egal(encore.cellules, 0, "la case vide reste vide : rien à réécrire");
+});
+
 await test("lecture : sans « Couloir » ni « Type », l'app garde les siennes", async () => {
   const sansExtras = NODE_COLS.filter(c => ["Couloir", "Type", "Parent", "ID parent"].indexOf(c) < 0);
   classeurType({

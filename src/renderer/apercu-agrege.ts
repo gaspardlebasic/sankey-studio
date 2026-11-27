@@ -9,6 +9,7 @@ import { FlowModel, FlowNode, SankeyOptions } from "./types";
 import { renderSankey, renderSankeyGroups } from "./engine";
 import { projeter } from "../shared/agregation.js";
 import type { Cadre } from "../shared/agregation.js";
+import { resoudreEquilibrage } from "../shared/equilibrage.js";
 import { poserCommandes } from "./depliage";
 import { filtrerChaine } from "../shared/sous-flux.js";
 
@@ -26,11 +27,17 @@ export function aDesNiveaux(m: FlowModel): boolean {
  * Avec, sa projection (src/shared/agregation.js) : un parent déplié cède sa
  * place à ses enfants, et la part de ses flux qu'ils ne détaillent pas va à son
  * « (non détaillé) », grisé.
+ *
+ * Dans les deux cas, l'équilibrage passe d'abord : une valeur de flux inconnue
+ * qu'un nœud permet de déduire est calculée AVANT la projection, sinon les
+ * totaux des parents repliés seraient faux. Le calcul ne touche pas le modèle
+ * de l'éditeur.
  */
 export function modeleAffiche(m: FlowModel, deplies: Set<string>): FlowModel {
-    if (!aDesNiveaux(m)) return m;
-    const p = projeter(m, deplies);
-    const parId = new Map(m.links.map(l => [l.id, l]));
+    const resolu = resoudreEquilibrage(m).model;
+    if (!aDesNiveaux(resolu)) return resolu;
+    const p = projeter(resolu, deplies);
+    const parId = new Map(resolu.links.map(l => [l.id, l]));
     return {
         nodes: p.nodes.map(n => n.virtuel ? { ...n, color: COULEUR_RESTE } : n),
         links: p.links.map(a => {
@@ -38,7 +45,11 @@ export function modeleAffiche(m: FlowModel, deplies: Set<string>): FlowModel {
             // (couleur propre comprise) ; un flux sommé n'a que la sienne.
             const seul = a.liens.length === 1 ? parId.get(a.liens[0] || "") : undefined;
             const base = seul ? { ...seul } : { id: a.id, unit: a.unit };
-            return { ...base, source: a.source, target: a.target, value: a.value, bio: a.bio };
+            const lien: FlowModel["links"][number] = {
+                ...base, source: a.source, target: a.target, value: a.value, bio: a.bio
+            };
+            if (a.calculee) lien.calculee = true;
+            return lien;
         })
     };
 }
@@ -78,12 +89,17 @@ export function groupesParFiliere(m: FlowModel): { nom: string; model: FlowModel
 export function blocsDessines(
     m: FlowModel, options: SankeyOptions, deplies: Set<string>, filtre: string[] = []
 ): { empiles: boolean; blocs: { nom: string; model: FlowModel }[] } {
-    const groupes = groupesParFiliere(m).map(g => ({ nom: g.nom, model: modeleAffiche(g.model, deplies) }));
+    /* L'équilibrage se calcule sur le diagramme ENTIER, avant de le découper
+       par filière : un flux qui traverse deux filières reste un flux du nœud,
+       même s'il disparaît de l'aperçu séparé. */
+    const resolu = resoudreEquilibrage(m).model;
+    const groupes = groupesParFiliere(resolu)
+        .map(g => ({ nom: g.nom, model: modeleAffiche(g.model, deplies) }));
     const empiles = options.filieres.split && groupes.length > 1;
     if (!filtre.length) {
-        return { empiles, blocs: empiles ? groupes : [{ nom: "", model: modeleAffiche(m, deplies) }] };
+        return { empiles, blocs: empiles ? groupes : [{ nom: "", model: modeleAffiche(resolu, deplies) }] };
     }
-    const tout = empiles ? reunir(groupes.map(g => g.model)) : modeleAffiche(m, deplies);
+    const tout = empiles ? reunir(groupes.map(g => g.model)) : modeleAffiche(resolu, deplies);
     const filtre_ = filtrerChaine(tout, filtre);
     if (!empiles) return { empiles, blocs: [{ nom: "", model: filtre_ }] };
     return { empiles, blocs: groupesParFiliere(filtre_).filter(g => g.model.nodes.length) };

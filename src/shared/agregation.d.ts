@@ -10,6 +10,8 @@ export const NOM_RESTE: string;
 export interface LienAgregeable {
   id?: string; source: string; target: string; value: number;
   unit?: string; bio?: number;
+  /** La valeur du lien a été déduite par équilibrage (affichage en italique). */
+  calculee?: boolean;
 }
 
 export interface Hierarchie {
@@ -33,6 +35,8 @@ export type NoeudAffiche<N> = N & {
 
 export interface LienAffiche {
   id: string; source: string; target: string; value: number; unit: string; bio: number;
+  /** La valeur affichée vient, au moins en partie, de l'équilibrage des nœuds. */
+  calculee?: boolean;
   /** Les liens du modèle dont une part propre se retrouve ici. */
   liens: (string | undefined)[];
 }

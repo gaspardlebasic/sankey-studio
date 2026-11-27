@@ -27,6 +27,7 @@ import {
     dessinerAgrege, poserCommandesAgregees, aDesNiveaux as aDesNiveauxModele, modeleDessine
 } from "./apercu-agrege";
 import { sousFlux } from "../shared/sous-flux.js";
+import { resoudreEquilibrage } from "../shared/equilibrage.js";
 import {
     peindreSousFlux, effacerSousFlux, partsPeintes, fantomeDuDessin, poserFantome
 } from "./sous-flux";
@@ -533,6 +534,8 @@ interface ExcelLink {
     sourceId: string | null; targetId: string | null;
     sourceName: string; targetName: string;
     value: number; unit: string;
+    /** La case « Valeur du flux » est vide : le lien porte une inconnue. */
+    inconnue?: boolean;
     /** Part du flux en bio / durable, de 0 à 1. */
     bio?: number;
 }
@@ -2372,10 +2375,13 @@ function editColumnTitle(column: number): void {
 /**
  * Flux d'un nœud : le plus grand de ce qui entre et de ce qui sort, comme
  * l'épaisseur que lui donne d3 (et la valeur que l'aperçu écrit sous son nom).
+ * `liens` permet de lire les valeurs DÉDUITES par équilibrage, comme le fait
+ * l'aperçu : un tri par valeur qui ignorerait l'inconnue résolue rangerait la
+ * colonne autrement que ce qu'on voit.
  */
-function valeurNoeud(id: string): number {
+function valeurNoeud(id: string, liens: FlowLink[] = model.links): number {
     let entree = 0, sortie = 0;
-    model.links.forEach(l => {
+    liens.forEach(l => {
         const v = l.value > 0 ? l.value : 0;
         if (l.target === id) entree += v;
         if (l.source === id) sortie += v;
@@ -2401,8 +2407,10 @@ function trierColonneParValeur(column: number): void {
     });
     const valeurs = new Map<string, number>();
     const voulu = new Map<FlowNode, number>();
+    // Les valeurs que l'aperçu écrira : les inconnues déduites comprises.
+    const liens = resoudreEquilibrage(model).model.links;
     cellules.forEach(liste => {
-        liste.forEach(n => valeurs.set(n.id, valeurNoeud(n.id)));
+        liste.forEach(n => valeurs.set(n.id, valeurNoeud(n.id, liens)));
         // À valeur égale, l'ordre d'avant départage (tri stable).
         const parValeur = liste.slice()
             .sort((a, b) => a.order - b.order)
@@ -2694,8 +2702,15 @@ function buildSidebar(): void {
         : null;
     sidebar.innerHTML = "";
 
+    // L'équilibrage sert deux fois : le bilan des inconnues, et la valeur
+    // déduite du lien sélectionné. On le calcule une fois pour ce panneau.
+    const equilibrage = resoudreEquilibrage(model);
+
     const ap = buildAlertePanel();
     if (ap) sidebar.appendChild(ap);
+
+    const eq = buildEquilibragePanel(equilibrage);
+    if (eq) sidebar.appendChild(eq);
 
     const ep = buildExcelPanel();
     if (ep) sidebar.appendChild(ep);
@@ -2767,7 +2782,27 @@ function buildSidebar(): void {
             const tgt = nodeById(l.target)?.name ?? "?";
             s.appendChild(readonly("Flux", `${src} → ${tgt}`));
             if (excelPath) {
-                s.appendChild(readonly("Valeur du flux", formatValue(l.value) + (l.unit ? " " + l.unit : "")));
+                const resolu = equilibrage.model.links.find(x => x.id === l.id);
+                const unite = l.unit ? " " + l.unit : "";
+                if (l.inconnue) {
+                    if (resolu && resolu.calculee) {
+                        s.appendChild(readonly(
+                            "Valeur du flux", formatValue(resolu.value) + unite + " — déduite"));
+                        s.appendChild(hint(
+                            "Case vide dans le classeur : cette valeur est déduite de "
+                            + "l'équilibre entrées = sorties de son nœud. Elle s'écrit en "
+                            + "italique dans l'aperçu et n'est pas réécrite dans Excel."
+                        ));
+                    } else {
+                        s.appendChild(readonly("Valeur du flux", "Inconnue — non déductible"));
+                        s.appendChild(hint(
+                            "Case vide dans le classeur, et son nœud ne permet pas de la "
+                            + "déduire seule. Le bilan « Équilibrage des flux » dit pourquoi."
+                        ));
+                    }
+                } else {
+                    s.appendChild(readonly("Valeur du flux", formatValue(l.value) + unite));
+                }
                 // La part bio suit la valeur : même origine (le classeur), même
                 // raison de ne pas être modifiable ici — nous n'écrivons jamais
                 // sa colonne, une saisie faite là serait perdue sans le dire.
@@ -2977,6 +3012,81 @@ function buildAlerteRecopieVive(a: Remplissage): HTMLElement {
         + "« Valeur du flux » (copier ▸ collage spécial ▸ valeurs)."
     ));
     s.appendChild(boutonLuEtMasque());
+    return s;
+}
+
+/**
+ * Le bilan des inconnues de flux, nœud par nœud. Une case « Valeur du flux »
+ * laissée vide est une inconnue : l'aperçu la déduit quand le nœud n'en a
+ * qu'une (src/shared/equilibrage.js) et l'écrit en italique. Les nœuds qui
+ * gardent une inconnue indéterminée sont nommés ici — sans cela, le chiffre
+ * manquant dans l'aperçu n'aurait aucune explication.
+ */
+function buildEquilibragePanel(eq: ReturnType<typeof resoudreEquilibrage>): HTMLElement | null {
+    const touche = eq.noeuds.filter(e => e.inconnues > 0);
+    if (!touche.length) return null;
+
+    const s = section("Équilibrage des flux");
+    s.appendChild(hint(
+        "Une valeur laissée vide dans « Valeur du flux » est une inconnue. "
+        + "Quand un nœud n'en a qu'une, l'aperçu la déduit de l'égalité "
+        + "entrées = sorties et l'écrit en italique ; le classeur garde sa case vide."
+    ));
+    if (!options.linkValueLabels.show) {
+        s.appendChild(hint(
+            "Les valeurs des liens ne sont pas affichées : coche « Liens ▸ Valeurs "
+            + "des liens ▸ Afficher » pour lire les valeurs déduites dans l'aperçu."
+        ));
+    }
+
+    const nom = (id: string) => nodeById(id)?.name || id;
+    const MAX = 8;
+    touche.slice(0, MAX).forEach(e => {
+        const compte = (n: number, sens: string) =>
+            `${n} inconnue${n > 1 ? "s" : ""} ${sens}`;
+        const morceaux: string[] = [];
+        if (e.inconnuesEntrantes) morceaux.push(compte(e.inconnuesEntrantes, "entrante"));
+        if (e.inconnuesSortantes) morceaux.push(compte(e.inconnuesSortantes, "sortante"));
+        const combien = e.etat === "boucle" ? "1 inconnue (boucle)" : morceaux.join(" et ");
+
+        const p = document.createElement("p");
+        p.className = "hint";
+        let suite: string;
+        switch (e.etat) {
+            case "resolue": {
+                const lien = eq.model.links.find(l => l.inconnue
+                    && (l.source === e.id || l.target === e.id));
+                const unite = lien && lien.unit ? " " + lien.unit : "";
+                suite = `déduite : ${formatValue(e.valeur ?? 0)}${unite}`;
+                break;
+            }
+            case "conflit":
+                suite = "les deux extrémités donnent des valeurs différentes";
+                break;
+            case "unites":
+                suite = "unités différentes : l'équilibre n'a pas de sens";
+                break;
+            case "desequilibre":
+                suite = "la valeur déduite serait nulle ou négative : données incohérentes";
+                break;
+            case "isole":
+                suite = "aucun flux connu en face : impossible de la déduire";
+                break;
+            case "boucle":
+                suite = "boucle sur le nœud : rien ne la contraint";
+                break;
+            default:
+                suite = "plusieurs inconnues : impossible de les trancher";
+        }
+        p.textContent = `${nom(e.id)} — ${combien} · ${suite}.`;
+        s.appendChild(p);
+    });
+    if (touche.length > MAX) {
+        s.appendChild(hint(
+            `Et ${touche.length - MAX} autre${touche.length - MAX > 1 ? "s" : ""} nœud`
+            + `${touche.length - MAX > 1 ? "s" : ""} dans le même cas.`
+        ));
+    }
     return s;
 }
 
@@ -5213,6 +5323,20 @@ function syncCounterWithModel(): void {
     idCounter = Math.max(idCounter, guessCounter());
 }
 
+/**
+ * Reporte sur un lien la valeur lue dans le classeur. Une case vide est une
+ * INCONNUE : elle vaut 0 dans le modèle, et `inconnue` dit pourquoi — c'est
+ * l'aperçu qui déduira la valeur (src/shared/equilibrage.js), sans l'écrire.
+ */
+function appliquerValeurExcel(l: FlowLink, E: ExcelLink): void {
+    l.value = E.value;
+    if (E.inconnue) l.inconnue = true;
+    else delete l.inconnue;
+    // Le modèle de l'éditeur ne porte jamais un calcul d'affichage : une valeur
+    // déduite est recalculée à chaque rendu, à partir des données du classeur.
+    delete l.calculee;
+}
+
 function mergeValuesFromExcel(data: ExcelData): void {
     const idSet = new Set(model.nodes.map(n => n.id));
     const nameToId = new Map<string, string>();
@@ -5224,7 +5348,7 @@ function mergeValuesFromExcel(data: ExcelData): void {
         if (!s || !t) return;
         const l = byPair.get(s + " " + t);
         if (l) {
-            l.value = E.value;
+            appliquerValeurExcel(l, E);
             if (E.unit) l.unit = E.unit;
             if (data.hasBio) l.bio = partBio(E);
         }
@@ -5368,7 +5492,7 @@ function reconcileFromExcel(data: ExcelData): boolean {
 
         const existing = linksByPair.get(key);
         if (existing) {
-            existing.value = E.value;
+            appliquerValeurExcel(existing, E);
             existing.unit = E.unit;
             // Sans la colonne, le classeur ne dit rien de la part bio : on garde
             // celle de l'app plutôt que de tout remettre à zéro (cf. hasLane).
@@ -5379,6 +5503,7 @@ function reconcileFromExcel(data: ExcelData): boolean {
                 id: newId("l"), source: s, target: t, value: E.value, unit: E.unit,
                 bio: data.hasBio ? partBio(E) : 0
             };
+            if (E.inconnue) l.inconnue = true;
             model.links.push(l);
             linksByPair.set(key, l);
             newSyncedLinks.add(key);

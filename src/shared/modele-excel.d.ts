@@ -20,6 +20,8 @@ export interface NoeudModele {
 }
 export interface LienModele {
   source: string; target: string; value: number; unit?: string;
+  /** Valeur absente du classeur : la cellule s'écrit VIDE, jamais 0. */
+  inconnue?: boolean;
 }
 export interface Modele { nodes: NoeudModele[]; links: LienModele[]; }
 

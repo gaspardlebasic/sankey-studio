@@ -45,6 +45,18 @@ export interface FlowLink {
     target: string; // id du nœud de destination
     value: number; // valeur du flux (proviendra d'Excel ; défaut 1)
     unit?: string; // unité affichée avec la valeur
+    /**
+     * La valeur est INCONNUE : la case « Valeur du flux » du classeur est vide.
+     * `value` vaut alors 0 dans le modèle ; l'aperçu déduit la valeur quand le
+     * nœud n'a qu'une seule inconnue (`src/shared/equilibrage.js`) et l'écrit en
+     * italique, sans jamais la réécrire dans le classeur.
+     */
+    inconnue?: boolean;
+    /**
+     * La valeur affichée a été DÉDUITE par équilibrage. Ne se range que sur les
+     * copies produites pour le rendu : le modèle de l'éditeur garde l'inconnue.
+     */
+    calculee?: boolean;
     colorOverride?: string | null; // couleur propre au lien (apparence, app only)
     /**
      * Part du flux qui est bio / durable, de 0 à 1. Absente = 0, et le ruban se
